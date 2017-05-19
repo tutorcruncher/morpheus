@@ -25,7 +25,8 @@ Individual message info contains:
 * user identifier, eg. id
 * tags - ways to reference this message (eg. invoice id)
 * context
-
+* PDF attachment html
+* and/or S3 path for attachments
 
 ### 2 message auth
 
@@ -49,8 +50,9 @@ New jobs are created to send each message.
 
 ### 6 each message is sent
 
-* message is rendered from context
-* message is sent to sending service
+* message rendered from context
+* attachments either pulled from S3 or PDF generated from html
+* message sent to sending service
 * message body, subject, context, tags, sending response (with SMS this needs to include cost of send) 
 are added to elasticsearch under `/message/{company-code}`, es will create the id.
 
