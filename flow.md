@@ -46,9 +46,11 @@ The job main job starts, templates are pulled from S3. How do we use shared memo
 
 Info about the "message group" is saved to elasticsearch to become the parent in a parent-child relationship. 
 
-New jobs are created to send each message. 
+New jobs are created to send each message.
 
 ### 6 each message is sent
+
+Perhaps do message and PDF rendering (which are CPU bound and require the templates) in the main job.
 
 * message rendered from context
 * attachments either pulled from S3 or PDF generated from html
@@ -64,6 +66,7 @@ Webhooks from the sending service update the elasticsearch documents for each me
 
 upstream apps can get data about sent messages:
 * aggregate data on all sent messages, delivery rates etc.
+* check how a job/"send group" is getting on
 * searchable list of sent messages
 * filtered list of messages based on `group_id` or tags (eg. invoice number)
 * cost of messages sent in a given period
