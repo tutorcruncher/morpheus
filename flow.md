@@ -21,9 +21,9 @@ Shared info contains:
 * tags - ways to reference all these message (eg. email definition)
 
 Individual message info contains:
+* user's first and last name 
 * destination address
-* user identifier, eg. id
-* tags - ways to reference this message (eg. invoice id)
+* tags - ways to reference this message (eg. user id invoice id)
 * context
 * PDF attachment html
 * and/or S3 path for attachments
