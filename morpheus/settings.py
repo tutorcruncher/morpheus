@@ -1,5 +1,5 @@
 from arq import RedisSettings
-from pydantic import BaseSettings, Module
+from pydantic import BaseSettings, PyObject
 
 
 class Settings(BaseSettings):
@@ -10,7 +10,9 @@ class Settings(BaseSettings):
 
     auth_key: str = ...
 
-    sender_cls: Module = 'morpheus.worker.Sender'
+    sender_cls: PyObject = 'morpheus.worker.Sender'
+    mandrill_key: str = ...
+    mandrill_url = 'https://mandrillapp.com/api/1.0'
 
     @property
     def redis_settings(self) -> RedisSettings:

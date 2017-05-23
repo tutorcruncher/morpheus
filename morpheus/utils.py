@@ -7,7 +7,6 @@ from typing import Optional, Type
 import msgpack
 from aiohttp.web import Application, HTTPBadRequest, Request, HTTPUnauthorized  # noqa
 from pydantic import BaseModel, ValidationError
-from .worker import Sender
 
 
 class ContentType(str, Enum):
@@ -31,6 +30,7 @@ class Session(BaseModel):
 
 class View:
     def __init__(self, request):
+        from .worker import Sender
         self.request: Request = request
         self.app: Application = request.app
         self.session: Optional[Session] = request.get('session')

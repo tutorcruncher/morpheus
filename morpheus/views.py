@@ -1,44 +1,12 @@
-from enum import Enum
-from typing import Dict, List
+from pathlib import Path
 
 import msgpack
 from aiohttp.web import HTTPConflict, Response
-from pydantic import BaseModel, constr
 
-from .utils import ServiceView, WebModel
+from .models import SendModel
+from .utils import ServiceView
 
-
-class SendMethod(str, Enum):
-    email_mandrill = 'email-mandrill'
-    email_ses = 'email-ses'
-    email_test = 'email-test'
-    sms_messagebird = 'sms-messagebird'
-    sms_test = 'sms-test'
-
-
-class RecipientModel(BaseModel):
-    first_name: str = None
-    last_name: str = None
-    user_id: int = None
-    address: str = ...
-    tags: dict = None
-    context: dict = {}
-    pdf_html: List[Dict[str, str]] = []
-
-
-class SendModel(WebModel):
-    id: constr(min_length=20, max_length=40) = ...
-    outer_template: str = None
-    main_template: str = ...
-    subject_template: str = None
-    company_code: str = ...
-    from_address: str = ...
-    reply_to: str = None
-    method: SendMethod = ...
-    subaccount: str = None
-    analytics_tags: List[str] = []
-    context: dict = {}
-    recipients: List[RecipientModel] = ...
+THIS_DIR = Path(__file__).parent.resolve()
 
 
 class SendView(ServiceView):
@@ -52,9 +20,16 @@ class SendView(ServiceView):
             recipients_key = f'recipients:{m.id}'
             data = m.values
             recipients = data.pop('recipients')
-            await redis.lpush(recipients_key, *map(self.encode_recipients, recipients))
-            await redis.expire(group_key, 86400)
-            await redis.expire(recipients_key, 86400)
+            from_ = data.pop('from_address')
+            data.update(
+                from_email=from_.email,
+                from_name=from_.name,
+            )
+            pipe = redis.pipeline()
+            pipe.lpush(recipients_key, *map(self.encode_recipients, recipients))
+            pipe.expire(group_key, 86400)
+            pipe.expire(recipients_key, 86400)
+            await pipe.execute()
             await self.sender.send(recipients_key, **data)
         return Response(text='201 job enqueued\n', status=201)
 
