@@ -23,6 +23,7 @@ class AttachmentModel(BaseModel):
 
 
 class RecipientModel(BaseModel):
+    # TODO prepend to_ to first_name, last_name, address
     first_name: str = None
     last_name: str = None
     user_id: int = None
@@ -33,7 +34,7 @@ class RecipientModel(BaseModel):
 
 
 class SendModel(WebModel):
-    id: constr(min_length=20, max_length=40) = ...
+    uid: constr(min_length=20, max_length=40) = ...
     main_template: str = (THIS_DIR / 'extra' / 'default-email-template.mustache').read_text()
     markdown_template: str = ...
     mustache_partials: Dict[str, str] = None

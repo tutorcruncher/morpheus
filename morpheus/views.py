@@ -13,11 +13,11 @@ class SendView(ServiceView):
     async def call(self, request):
         m: SendModel = await self.request_data(SendModel)
         async with await self.sender.get_redis_conn() as redis:
-            group_key = f'group:{m.id}'
+            group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
-                raise HTTPConflict(text=f'Send group with id "{m.id}" already exists\n')
-            recipients_key = f'recipients:{m.id}'
+                raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+            recipients_key = f'recipients:{m.uid}'
             data = m.values
             recipients = data.pop('recipients')
             from_ = data.pop('from_address')

@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import re
+import uuid
 from collections import namedtuple
 
 import chevron
@@ -12,6 +13,7 @@ from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent
 from pydf import AsyncPydf
 
+from .es import ElasticSearch
 from .logs import setup_logging
 from .models import SendMethod
 from .settings import Settings
@@ -82,6 +84,7 @@ class Sender(Actor):
 
     async def startup(self):
         self.session = ClientSession(loop=self.loop)
+        self.es = ElasticSearch(settings=self.settings, loop=self.loop)
         setup_logging(self.settings)
 
     async def shutdown(self):
@@ -90,7 +93,7 @@ class Sender(Actor):
     @concurrent
     async def send(self,
                    recipients_key, *,
-                   id,
+                   uid,
                    main_template,
                    markdown_template,
                    mustache_partials,
@@ -109,9 +112,10 @@ class Sender(Actor):
             coro = self._send_test
         else:
             raise NotImplementedError()
-        analytics_tags = [id] + analytics_tags
+        analytics_tags = [uid] + analytics_tags
+        main_logger.info('sending group %s via %s', uid, method)
         base_kwargs = dict(
-            group_id=id,
+            group_id=uid,
             main_template=main_template,
             markdown_template=markdown_template,
             mustache_partials=mustache_partials,
@@ -123,7 +127,6 @@ class Sender(Actor):
             subaccount=subaccount,
             analytics_tags=analytics_tags,
         )
-        main_logger.info('sending group %s via %s', id, method)
 
         drain = Drain(redis_pool=await self.get_redis_pool())
         async with drain:
@@ -181,6 +184,7 @@ class Sender(Actor):
             else:
                 text = await r.text()
                 main_logger.error('mandrill error %s:%s, response: %s\n%s', j.group_id, j.address, r.status, text)
+            data = await r.json()
 
     async def _send_test(self, j: Job):
         email_info = self._get_email_info(j)
@@ -199,10 +203,12 @@ class Sender(Actor):
                 content=(await self._generate_base64_pdf(a['html']))[:20] + '...',
             ) for a in j.pdf_attachments]
         )
+        msg_id = uuid.uuid4()
         test_logger.info(
-            'sending message to %s: "%s"\ndata: %s\ncontent:\n%s',
-            j.address, email_info.subject, json.dumps(data, indent=2), email_info.html_body
+            'sending message to %s: "%s"\nmsg id: %s\ndata: %s\ncontent:\n%s',
+            j.address, email_info.subject, msg_id, json.dumps(data, indent=2), email_info.html_body
         )
+        await self._store_msg(msg_id, j, email_info)
 
     def _get_email_info(self, j: Job) -> EmailInfo:
         full_name = f'{j.first_name} {j.last_name}'.strip(' ')
@@ -236,6 +242,22 @@ class Sender(Actor):
             margin_right='8mm',
         )
         return base64.b64encode(pdf_content).decode()
+
+    async def _store_msg(self, uid, j: Job, email_info: EmailInfo):
+        await self.es.post(
+            f'messages/{j.company_code}/{uid}',
+            group_id=j.group_id,
+            to_first_name=j.first_name,
+            to_last_name=j.last_name,
+            to_email=j.address,
+            from_email=j.from_email,
+            from_name=j.from_name,
+            search_tags=j.search_tags,
+            analytics_tags=j.analytics_tags,
+            subject=email_info.subject,
+            html_body=email_info.html_body,
+            attachments=[a['name'] for a in j.pdf_attachments]
+        )
 
 
 class Worker(BaseWorker):

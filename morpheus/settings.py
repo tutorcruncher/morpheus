@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     log_level = 'DEBUG'
     commit: str = None
     server_name = '-'
+    elastic_url = 'http://localhost:9200'
+    elastic_username = 'elastic'
+    elastic_password = 'changeme'
 
     @property
     def redis_settings(self) -> RedisSettings:

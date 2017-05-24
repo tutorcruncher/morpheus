@@ -39,10 +39,10 @@ def setup_logging(settings: Settings):
                 'handlers': ['sentry'],
                 'level': 'ERROR',
             },
-            'arq': {
-                'handlers': ['sentry'],
-                'level': settings.log_level,
-            },
+            # 'arq': {
+            #     'handlers': ['sentry'],
+            #     'level': settings.log_level,
+            # },
         },
     }
     logging.config.dictConfig(config)
