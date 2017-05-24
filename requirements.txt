@@ -3,5 +3,5 @@ aioredis==0.3.1
 arq==0.6.1
 chevron==0.9.0
 msgpack-python==0.4.8
-pydantic==0.0.5
-python-pdf==0.30
+pydantic==0.0.6
+python-pdf==0.33

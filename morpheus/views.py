@@ -26,7 +26,7 @@ class SendView(ServiceView):
                 from_name=from_.name,
             )
             pipe = redis.pipeline()
-            pipe.lpush(recipients_key, *map(self.encode_recipients, recipients))
+            pipe.lpush(recipients_key, *[self.encode_recipients(r) for r in recipients])
             pipe.expire(group_key, 86400)
             pipe.expire(recipients_key, 86400)
             await pipe.execute()
@@ -34,4 +34,6 @@ class SendView(ServiceView):
         return Response(text='201 job enqueued\n', status=201)
 
     def encode_recipients(self, recipient):
-        return msgpack.packb(recipient.values, use_bin_type=True)
+        values = recipient.values
+        values['pdf_attachments'] = [a.values for a in values['pdf_attachments']]
+        return msgpack.packb(values, use_bin_type=True)

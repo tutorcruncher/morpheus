@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     sender_cls: PyObject = 'morpheus.worker.Sender'
     mandrill_key: str = ...
     mandrill_url = 'https://mandrillapp.com/api/1.0'
+    raven_dsn: str = None
+    log_level = 'DEBUG'
+    commit: str = None
+    server_name = '-'
 
     @property
     def redis_settings(self) -> RedisSettings:

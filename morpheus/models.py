@@ -17,6 +17,11 @@ class SendMethod(str, Enum):
     sms_test = 'sms-test'
 
 
+class AttachmentModel(BaseModel):
+    name: str = ...
+    html: str = ...
+
+
 class RecipientModel(BaseModel):
     first_name: str = None
     last_name: str = None
@@ -24,7 +29,7 @@ class RecipientModel(BaseModel):
     address: str = ...
     search_tags: dict = None
     context: dict = {}
-    pdf_html: List[Dict[str, str]] = []
+    pdf_attachments: List[AttachmentModel] = []
 
 
 class SendModel(WebModel):

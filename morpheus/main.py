@@ -1,5 +1,6 @@
 from aiohttp.web import Application
 
+from .logs import setup_logging
 from .settings import Settings
 from .views import SendView
 
@@ -17,6 +18,7 @@ async def app_cleanup(app):
 
 def create_app(loop, settings: Settings=None):
     settings = settings or Settings()
+    setup_logging(settings)
     app = Application(client_max_size=1024**2*100)  # TODO middleware
     app['settings'] = settings
 
