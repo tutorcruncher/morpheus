@@ -1,5 +1,5 @@
-
 import logging
+import logging.config
 
 from .settings import Settings
 

@@ -2,7 +2,7 @@
 
 ### 1 send request comes in
 
-POST request with msgpack body sign by shared key.
+POST request with msgpack body signed by shared key.
 
 data consists of two parts: shared information about all the emails to send, details
 on each individual email.

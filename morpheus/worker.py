@@ -8,14 +8,16 @@ from collections import namedtuple
 import chevron
 import misaka
 import msgpack
+from datetime import datetime
 from misaka import HtmlRenderer, Markdown
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent
+from arq.utils import to_unix_ms
 from pydf import AsyncPydf
 
 from .es import ElasticSearch
 from .logs import setup_logging
-from .models import SendMethod
+from .models import SendMethod, MessageStatus
 from .settings import Settings
 
 test_logger = logging.getLogger('morpheus.test')
@@ -51,6 +53,7 @@ Job = namedtuple(
     'Job',
     [
         'group_id',
+        'send_method',
         'first_name',
         'last_name',
         'user_id',
@@ -81,6 +84,7 @@ class Sender(Actor):
         super().__init__(**kwargs)
         self.session = None
         self.apydf = AsyncPydf()
+        self.mandrill_send_url = self.settings.mandrill_url + '/messages/send.json'
 
     async def startup(self):
         self.session = ClientSession(loop=self.loop)
@@ -116,6 +120,7 @@ class Sender(Actor):
         main_logger.info('sending group %s via %s', uid, method)
         base_kwargs = dict(
             group_id=uid,
+            send_method=method,
             main_template=main_template,
             markdown_template=markdown_template,
             mustache_partials=mustache_partials,
@@ -128,7 +133,7 @@ class Sender(Actor):
             analytics_tags=analytics_tags,
         )
 
-        drain = Drain(redis_pool=await self.get_redis_pool())
+        drain = Drain(redis_pool=await self.get_redis_pool(), raise_task_exception=True)
         async with drain:
             async for raw_queue, raw_data in drain.iter(recipients_key):
                 if not raw_queue:
@@ -177,14 +182,14 @@ class Sender(Actor):
             data['message']['headers'] = {
                 'Reply-To': j.reply_to,
             }
-        url = self.settings.mandrill_url + '/messages/send.json'
-        async with self.session.post(url, json=data) as r:
+        async with self.session.post(self.mandrill_send_url, json=data) as r:
             if r.status == 200:
                 main_logger.debug('mandrill send to %s:%s, good response', j.group_id, j.address)
             else:
                 text = await r.text()
                 main_logger.error('mandrill error %s:%s, response: %s\n%s', j.group_id, j.address, r.status, text)
             data = await r.json()
+            print(data)
 
     async def _send_test(self, j: Job):
         email_info = self._get_email_info(j)
@@ -204,11 +209,12 @@ class Sender(Actor):
             ) for a in j.pdf_attachments]
         )
         msg_id = uuid.uuid4()
+        send_ts = datetime.utcnow()
         test_logger.info(
-            'sending message to %s: "%s"\nmsg id: %s\ndata: %s\ncontent:\n%s',
-            j.address, email_info.subject, msg_id, json.dumps(data, indent=2), email_info.html_body
+            'sending message to %s: "%s"\nmsg id: %s\nts: %s\ndata: %s\ncontent:\n%s',
+            j.address, email_info.subject, msg_id, send_ts, json.dumps(data, indent=2), email_info.html_body
         )
-        await self._store_msg(msg_id, j, email_info)
+        await self._store_msg(msg_id, send_ts, j, email_info)
 
     def _get_email_info(self, j: Job) -> EmailInfo:
         full_name = f'{j.first_name} {j.last_name}'.strip(' ')
@@ -243,9 +249,13 @@ class Sender(Actor):
         )
         return base64.b64encode(pdf_content).decode()
 
-    async def _store_msg(self, uid, j: Job, email_info: EmailInfo):
+    async def _store_msg(self, uid, send_ts, j: Job, email_info: EmailInfo):
+        ts = to_unix_ms(send_ts)[0]
         await self.es.post(
             f'messages/{j.company_code}/{uid}',
+            send_ts=ts,
+            update_ts=ts,
+            status=MessageStatus.sent,
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
@@ -255,8 +265,14 @@ class Sender(Actor):
             search_tags=j.search_tags,
             analytics_tags=j.analytics_tags,
             subject=email_info.subject,
-            html_body=email_info.html_body,
-            attachments=[a['name'] for a in j.pdf_attachments]
+            body=email_info.html_body,
+            attachments=[a['name'] for a in j.pdf_attachments],
+            events=[
+                dict(
+                    ts=ts,
+                    status=MessageStatus.sent,
+                )
+            ]
         )
 
 

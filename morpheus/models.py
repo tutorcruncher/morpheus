@@ -17,6 +17,17 @@ class SendMethod(str, Enum):
     sms_test = 'sms-test'
 
 
+class MessageStatus(str, Enum):
+    sent = 'sent'
+    deferred = 'deferred'
+    opened = 'opened'
+    soft_bounced = 'soft_bounced'
+    hard_bounced = 'hard_bounced'
+    spam = 'spam'
+    unsub = 'unsub'
+    reject = 'reject'
+
+
 class AttachmentModel(BaseModel):
     name: str = ...
     html: str = ...
