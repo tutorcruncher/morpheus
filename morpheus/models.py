@@ -2,6 +2,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List
 
+from datetime import datetime
+
 from pydantic import BaseModel, NameEmail, constr
 
 from .utils import WebModel
@@ -18,11 +20,16 @@ class SendMethod(str, Enum):
 
 
 class MessageStatus(str, Enum):
-    sent = 'sent'
-    deferred = 'deferred'
-    opened = 'opened'
-    soft_bounced = 'soft_bounced'
-    hard_bounced = 'hard_bounced'
+    """
+    compatible with mandrill webhook event field
+    https://mandrill.zendesk.com/hc/en-us/articles/205583307-Message-Event-Webhook-format
+    """
+    send = 'send'
+    deferral = 'deferral'
+    hard_bounce = 'hard_bounce'
+    soft_bounce = 'soft_bounce'
+    open = 'open'
+    click = 'click'
     spam = 'spam'
     unsub = 'unsub'
     reject = 'reject'
@@ -58,3 +65,15 @@ class SendModel(WebModel):
     analytics_tags: List[str] = []
     context: dict = {}
     recipients: List[RecipientModel] = ...
+
+
+class MandrillWebhook(WebModel):
+    ts: datetime = ...
+    event: MessageStatus = ...
+    message_id: str = ...
+
+    class Config:
+        allow_extra = True
+        fields = {
+            'message_id': '_id',
+        }

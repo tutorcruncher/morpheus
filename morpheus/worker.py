@@ -12,7 +12,6 @@ from datetime import datetime
 from misaka import HtmlRenderer, Markdown
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent
-from arq.utils import to_unix_ms
 from pydf import AsyncPydf
 
 from .es import ElasticSearch
@@ -92,6 +91,7 @@ class Sender(Actor):
         setup_logging(self.settings)
 
     async def shutdown(self):
+        self.es.close()
         self.session.close()
 
     @concurrent
@@ -250,12 +250,12 @@ class Sender(Actor):
         return base64.b64encode(pdf_content).decode()
 
     async def _store_msg(self, uid, send_ts, j: Job, email_info: EmailInfo):
-        ts = to_unix_ms(send_ts)[0]
         await self.es.post(
-            f'messages/{j.company_code}/{uid}',
-            send_ts=ts,
-            update_ts=ts,
-            status=MessageStatus.sent,
+            f'messages/{j.send_method}/{uid}',
+            company=j.company_code,
+            send_ts=send_ts,
+            update_ts=send_ts,
+            status=MessageStatus.send,
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
@@ -267,12 +267,7 @@ class Sender(Actor):
             subject=email_info.subject,
             body=email_info.html_body,
             attachments=[a['name'] for a in j.pdf_attachments],
-            events=[
-                dict(
-                    ts=ts,
-                    status=MessageStatus.sent,
-                )
-            ]
+            events=[]
         )
 
 

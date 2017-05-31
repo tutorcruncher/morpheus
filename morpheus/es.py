@@ -1,10 +1,12 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 
 from aiohttp import BasicAuth, ClientSession
 from aiohttp.hdrs import METH_GET, METH_DELETE, METH_POST, METH_PUT
 from aiohttp.web_response import Response
+from arq.utils import to_unix_ms
 
 from .settings import Settings
 
@@ -15,15 +17,27 @@ class ElasticSearchError(RuntimeError):
     pass
 
 
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return to_unix_ms(obj)[0]
+        return super().default(obj)
+
+
 class ElasticSearch:
     def __init__(self, settings: Settings, loop=None):
         self.settings = settings
         self.loop = loop or asyncio.get_event_loop()
         self.session = ClientSession(
             loop=self.loop,
-            auth=BasicAuth(settings.elastic_username, settings.elastic_password)
+            auth=BasicAuth(settings.elastic_username, settings.elastic_password),
+            json_serialize=self.encode_json,
         )
         self.root = self.settings.elastic_url.rstrip('/') + '/'
+
+    @classmethod
+    def encode_json(cls, data):
+        return json.dumps(data, cls=CustomJSONEncoder)
 
     def close(self):
         self.session.close()
@@ -43,9 +57,13 @@ class ElasticSearch:
     async def _request(self, method, uri, **data) -> Response:
         async with self.session.request(method, self.root + uri, json=data) as r:
             if r.status not in (200, 201):
-                data = await r.json()
+                data = await r.text()
+                try:
+                    data = json.dumps(json.loads(data), indent=2)
+                except ValueError:
+                    pass
                 raise ElasticSearchError(
-                    f'{method} {uri}, bad response {r.status}, response:\n{json.dumps(data, indent=2)}'
+                    f'{method} {uri}, bad response {r.status}, response:\n{data}'
                 )
             main_logger.debug('%s /%s -> %s', method, uri, r.status)
             return r
@@ -73,27 +91,31 @@ class ElasticSearch:
             )
 
 
+KEYWORD = {'type': 'keyword'}
+DATE = {'type': 'date'}
+TEXT = {'type': 'text'}
 MAPPINGS = {
     'messages': {
-        'group_id': {'type': 'keyword'},
-        'method': {'type': 'keyword'},
-        'send_ts': {'type': 'date'},
-        'update_ts': {'type': 'date'},
-        'status': {'type': 'keyword'},
-        'to_first_name': {'type': 'keyword'},
-        'to_last_name': {'type': 'keyword'},
-        'to_email': {'type': 'keyword'},
-        'from_email': {'type': 'keyword'},
-        'from_name': {'type': 'keyword'},
-        'search_tags': {'type': 'keyword'},
-        'analytics_tags': {'type': 'keyword'},
-        'subject': {'type': 'text'},
-        'body': {'type': 'text'},
-        'attachments': {'type': 'keyword'},
+        'group_id': KEYWORD,
+        'company': KEYWORD,
+        'method': KEYWORD,
+        'send_ts': DATE,
+        'update_ts': DATE,
+        'status': KEYWORD,
+        'to_first_name': KEYWORD,
+        'to_last_name': KEYWORD,
+        'to_email': KEYWORD,
+        'from_email': KEYWORD,
+        'from_name': KEYWORD,
+        'search_tags': KEYWORD,
+        'analytics_tags': KEYWORD,
+        'subject': TEXT,
+        'body': TEXT,
+        'attachments': KEYWORD,
         'events': {
             'properties': {
-                'ts': {'type': 'date'},
-                'status': {'type': 'keyword'},
+                'ts': DATE,
+                'status': KEYWORD,
                 'extra': {
                     'type': 'object',
                     'dynamic': 'true',
