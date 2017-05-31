@@ -5,7 +5,10 @@ from random import random
 from typing import Optional, Type
 
 import msgpack
-from aiohttp.web import Application, HTTPBadRequest, Request, HTTPUnauthorized  # noqa
+from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, Request  # noqa
+from cryptography.fernet import InvalidToken
+from datetime import datetime, timezone
+
 from pydantic import BaseModel, ValidationError
 
 
@@ -22,10 +25,10 @@ class WebModel(BaseModel):
             raise HTTPBadRequest(text=e.display_errors)
 
 
-class Session(BaseModel):
-    user_id: int = ...
+class Session(WebModel):
     company: str = ...
-    is_admin: bool = False
+    user_id: int = ...
+    expires: datetime = ...
 
 
 class View:
@@ -33,7 +36,7 @@ class View:
         from .worker import Sender
         self.request: Request = request
         self.app: Application = request.app
-        self.session: Optional[Session] = request.get('session')
+        self.session: Optional[Session] = None
         self.sender: Sender = request.app['sender']
 
     @classmethod
@@ -93,4 +96,25 @@ class ServiceView(View):
         if request.app['settings'].auth_key != request.headers.get('Authorization', ''):
             # avoid the need for constant time compare on auth key
             await asyncio.sleep(random())
-            raise HTTPUnauthorized(text='Invalid "Authorization" header')
+            raise HTTPForbidden(text='Invalid "Authorization" header')
+
+
+class UserView(View):
+    """
+    Views used by users via ajax, "Authorization" header is Fernet encrypted user data.
+    """
+    async def authenticate(self, request):
+        token = request.headers.get('Authorization', '')
+        try:
+            raw_data = self.app['fernet'].decrypt(token.encode())
+        except InvalidToken:
+            await asyncio.sleep(random())
+            raise HTTPForbidden(text='Invalid token')
+
+        try:
+            data = msgpack.unpackb(raw_data, encoding='utf8')
+        except ValueError:
+            raise HTTPBadRequest(text='bad auth data')
+        self.session = Session(**data)
+        if self.session.expires < datetime.utcnow().replace(tzinfo=timezone.utc):
+            raise HTTPForbidden(text='token expired')

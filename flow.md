@@ -70,3 +70,9 @@ upstream apps can get data about sent messages:
 * searchable list of sent messages
 * filtered list of messages based on `group_id` or tags (eg. invoice number)
 * cost of messages sent in a given period
+
+# User views
+
+* list of messages (of a given method) optionally searched
+* aggregated messages of a given type filtered
+* messages associated with an item, where item could be `user-123`, `invoice-282845`, `broadcast`

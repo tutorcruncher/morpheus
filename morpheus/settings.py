@@ -1,5 +1,5 @@
 from arq import RedisSettings
-from pydantic import BaseSettings, PyObject
+from pydantic import BaseSettings, PyObject, constr
 
 
 class Settings(BaseSettings):
@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     elastic_url = 'http://localhost:9200'
     elastic_username = 'elastic'
     elastic_password = 'changeme'
+    user_fernet_key = b'i am not secure but 32 bits long'
 
     @property
     def redis_settings(self) -> RedisSettings:

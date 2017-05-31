@@ -4,7 +4,7 @@ import msgpack
 from aiohttp.web import HTTPConflict, Response
 
 from .models import SendModel, MandrillWebhook
-from .utils import ServiceView, View
+from .utils import ServiceView, UserView, View
 
 THIS_DIR = Path(__file__).parent.resolve()
 
@@ -34,32 +34,115 @@ class SendView(ServiceView):
         return Response(text='201 job enqueued\n', status=201)
 
 
-async def update_message_status(app, m: MandrillWebhook, es_type):
-        update_uri = f'messages/{es_type}/{m.message_id}/_update'
-        await app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
-        data = m.values
-        data.pop('message_id')
-        await app['es'].post(
-            update_uri,
-            script={
-                'lang': 'painless',
-                'inline': 'ctx._source.events.add(params.event)',
-                'params': {
-                    'event': {
-                        'ts': data.pop('ts'),
-                        'status': data.pop('event'),
-                        'extra': data,
-                    }
-                }
-            }
-        )
-
-
 class TestWebhookView(View):
     """
     Simple view to update messages "sent" with email-test
     """
+    es_type = 'email-test'
+
+    async def update_message_status(self, m: MandrillWebhook):
+            update_uri = f'messages/{self.es_type}/{m.message_id}/_update'
+            await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
+            data = m.values
+            data.pop('message_id')
+            await self.app['es'].post(
+                update_uri,
+                script={
+                    'lang': 'painless',
+                    'inline': 'ctx._source.events.add(params.event)',
+                    'params': {
+                        'event': {
+                            'ts': data.pop('ts'),
+                            'status': data.pop('event'),
+                            'extra': data,
+                        }
+                    }
+                }
+            )
+
     async def call(self, request):
         m: MandrillWebhook = await self.request_data(MandrillWebhook)
-        await update_message_status(request.app, m, 'email-test')
-        return Response(text='message status updated\n', status=200)
+        await self.update_message_status(m)
+        return Response(text='message status updated\n')
+
+
+class UserMessageView(UserView):
+    async def call(self, request):
+        query = request.GET.get('q')
+        es_query = {
+            'query': {
+                'bool': {
+                    'filter': [
+                        {'term': {'company': self.session.company}},
+                    ]
+                }
+            }
+        }
+        if query:
+            es_query['query']['bool']['should'] = [
+                {'simple_query_string': {
+                    'query': query,
+                    'fields': ['to_*^3', 'subject^2', '_all'],
+                    'lenient': True,
+                }}
+            ]
+        else:
+            es_query['sort'] = {
+                'update_ts': {'order': 'desc'}
+            }
+        r = await self.app['es'].post(
+            'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), **es_query
+        )
+        return Response(body=await r.text(), content_type='application/json')
+
+
+AGGREGATION_FILTER = {
+    'aggs': {
+        '_': {
+            'filter': {
+                'term': {
+                    'company': 'foobar'
+                }
+                # TODO allow more filtering here, filter to last X days.
+            },
+            'aggs': {
+                '_': {
+                    'date_histogram': {
+                        'field': 'send_ts',
+                        'interval': 'day'
+                    },
+                    'aggs': {
+                        'sent': {
+                            'filter': {
+                                'match_all': {}
+                            }
+                        },
+                        'open': {
+                            'filter': {
+                                'term': {
+                                    'status': 'open'
+                                }
+                            }
+                        },
+                        'hard_bounce': {
+                            'filter': {
+                                'term': {
+                                    'status': 'hard_bounce'
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+class UserAggregationView(UserView):
+    async def call(self, request):
+        r = await self.app['es'].post(
+            'messages/{[method]}/_search?size=0&filter_path=aggregations'.format(request.match_info),
+            **AGGREGATION_FILTER
+        )
+        return Response(body=await r.text(), content_type='application/json')
