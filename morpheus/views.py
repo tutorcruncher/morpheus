@@ -1,9 +1,11 @@
+import asyncio
+import json
 from pathlib import Path
 
 import msgpack
-from aiohttp.web import HTTPConflict, HTTPMovedPermanently, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, Response
 
-from .models import MandrillWebhook, MessageStatus, SendModel
+from .models import MandrillWebhook, MandrillSingleWebhook, MessageStatus, SendModel
 from .utils import ServiceView, UserView, View
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -53,13 +55,10 @@ class SendView(ServiceView):
         return Response(text='201 job enqueued\n', status=201)
 
 
-class TestWebhookView(View):
-    """
-    Simple view to update messages "sent" with email-test
-    """
-    es_type = 'email-test'
+class GeneralWebhookView(View):
+    es_type = NotImplementedError
 
-    async def update_message_status(self, m: MandrillWebhook):
+    async def update_message_status(self, m: MandrillSingleWebhook):
             update_uri = f'messages/{self.es_type}/{m.message_id}/_update'
             await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
             data = m.values
@@ -79,9 +78,38 @@ class TestWebhookView(View):
                 }
             )
 
+
+class TestWebhookView(GeneralWebhookView):
+    """
+    Simple view to update messages "sent" with email-test
+    """
+    es_type = 'email-test'
+
     async def call(self, request):
-        m: MandrillWebhook = await self.request_data(MandrillWebhook)
+        m: MandrillSingleWebhook = await self.request_data(MandrillSingleWebhook)
         await self.update_message_status(m)
+        return Response(text='message status updated\n')
+
+
+class MandrillWebhookView(GeneralWebhookView):
+    """
+    Update messages sent with mandrill
+    """
+    es_type = 'email-mandrill'
+
+    async def call(self, request):
+        try:
+            events = (await request.post())['mandrill_events']
+        except KeyError:
+            raise HTTPBadRequest(text='"mandrill_events" not found in post data')
+
+        try:
+            events = await json.loads(events)
+        except ValueError as e:
+            raise HTTPBadRequest(text=f'invalid request json data: {e}')
+
+        coros = [self.update_message_status(m) for m in MandrillWebhook(events=events).events]
+        await asyncio.gather(coros)
         return Response(text='message status updated\n')
 
 

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     mandrill_key: str = ...
     mandrill_url = 'https://mandrillapp.com/api/1.0'
     raven_dsn: str = None
-    log_level = 'DEBUG'
+    log_level = 'INFO'
     commit: str = '-'
     release_date: str = '-'
     server_name = '-'

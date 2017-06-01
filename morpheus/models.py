@@ -66,7 +66,7 @@ class SendModel(WebModel):
     recipients: List[RecipientModel] = ...
 
 
-class MandrillWebhook(WebModel):
+class MandrillSingleWebhook(WebModel):
     ts: datetime = ...
     event: MessageStatus = ...
     message_id: str = ...
@@ -76,3 +76,7 @@ class MandrillWebhook(WebModel):
         fields = {
             'message_id': '_id',
         }
+
+
+class MandrillWebhook(WebModel):
+    events: List[MandrillSingleWebhook] = ...

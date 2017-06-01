@@ -134,7 +134,12 @@ class Sender(Actor):
             analytics_tags=analytics_tags,
         )
 
-        drain = Drain(redis_pool=await self.get_redis_pool(), raise_task_exception=True)
+        drain = Drain(
+            redis_pool=await self.get_redis_pool(),
+            raise_task_exception=True,
+            max_concurrent_tasks=30,
+            shutdown_delay=10,
+        )
         async with drain:
             async for raw_queue, raw_data in drain.iter(recipients_key):
                 if not raw_queue:
@@ -170,8 +175,6 @@ class Sender(Actor):
                 subaccount=j.subaccount,
                 tags=j.analytics_tags,
                 inline_css=True,
-                # google analytics ?
-                # inline_css ?,
                 attachments=[dict(
                     type='application/pdf',
                     name=a['name'],
@@ -183,6 +186,7 @@ class Sender(Actor):
             data['message']['headers'] = {
                 'Reply-To': j.reply_to,
             }
+        send_ts = datetime.utcnow()
         async with self.session.post(self.mandrill_send_url, json=data) as r:
             if r.status == 200:
                 main_logger.debug('mandrill send to %s:%s, good response', j.group_id, j.address)
@@ -190,7 +194,10 @@ class Sender(Actor):
                 text = await r.text()
                 main_logger.error('mandrill error %s:%s, response: %s\n%s', j.group_id, j.address, r.status, text)
             data = await r.json()
-            print(data)
+            assert len(data) == 1, data
+            data = data[0]
+            assert data['email'] == j.address, data
+            await self._store_msg(data['_id'], send_ts, j, email_info)
 
     async def _send_test(self, j: Job):
         email_info = self._get_email_info(j)

@@ -21,7 +21,7 @@ async def app_cleanup(app):
 def create_app(loop, settings: Settings=None):
     settings = settings or Settings()
     setup_logging(settings)
-    app = Application(client_max_size=1024**2*100)  # TODO middleware
+    app = Application(client_max_size=1024**2*100)
 
     index_html = (THIS_DIR / 'extra/index.html').read_text()
     for key in ('commit', 'release_date'):
