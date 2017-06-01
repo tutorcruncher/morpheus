@@ -2,20 +2,27 @@ language: python
 
 services:
 - redis-server
-- elasticsearch
 
 cache: pip
+
+addons:
+  apt:
+    packages:
+    - oracle-java8-set-default
 
 python:
 - '3.6'
 
 install:
 - make install
+- curl -O https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-5.4.0.deb
+- sudo dpkg -i --force-confnew elasticsearch-5.4.0.deb
+- sudo service elasticsearch start
 
 before_script:
 - pip freeze
 - sleep 10  # wait for es to come up
-- curl -u elastic:changeme localhost:9200
+- curl -v localhost:9200
 
 script:
 - make lint
