@@ -45,7 +45,7 @@ class RecipientModel(BaseModel):
     last_name: str = None
     user_id: int = None
     address: str = ...
-    search_tags: dict = None
+    search_tags: List[str] = []
     context: dict = {}
     pdf_attachments: List[AttachmentModel] = []
 

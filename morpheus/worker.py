@@ -5,6 +5,7 @@ import re
 import uuid
 from collections import namedtuple
 from datetime import datetime
+from pathlib import Path
 
 import chevron
 import misaka
@@ -195,7 +196,6 @@ class Sender(Actor):
     async def _send_test(self, j: Job):
         email_info = self._get_email_info(j)
         data = dict(
-            subject=email_info.subject,
             from_email=j.from_email,
             from_name=j.from_name,
             reply_to=j.reply_to,
@@ -211,10 +211,18 @@ class Sender(Actor):
         )
         msg_id = uuid.uuid4()
         send_ts = datetime.utcnow()
-        test_logger.info(
-            'sending message to %s: "%s"\nmsg id: %s\nts: %s\ndata: %s\ncontent:\n%s',
-            j.address, email_info.subject, msg_id, send_ts, json.dumps(data, indent=2), email_info.html_body
+        output = (
+            f'to: {j.address}\n'
+            f'msg id: {msg_id}\n'
+            f'ts: {send_ts}\n'
+            f'subject: {email_info.subject}\n'
+            f'data: {json.dumps(data, indent=2)}\n'
+            f'content: {email_info.html_body}\n'
         )
+        Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
+        save_path = self.settings.test_output / f'{msg_id}.txt'
+        test_logger.info('sending message: %s (saved to %s)', output, save_path)
+        save_path.write_text(output)
         await self._store_msg(msg_id, send_ts, j, email_info)
 
     def _get_email_info(self, j: Job) -> EmailInfo:

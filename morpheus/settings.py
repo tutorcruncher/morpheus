@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import BaseSettings, PyObject
 
 from arq import RedisSettings
@@ -23,6 +25,7 @@ class Settings(BaseSettings):
     elastic_username = 'elastic'
     elastic_password = 'changeme'
     user_fernet_key = b'i am not secure but 32 bits long'
+    test_output: Path = '/tmp/morpheus/tests'
 
     @property
     def redis_settings(self) -> RedisSettings:

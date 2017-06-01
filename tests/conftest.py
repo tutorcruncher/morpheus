@@ -5,8 +5,12 @@ from morpheus.settings import Settings
 
 
 @pytest.fixture
-def settings():
-    return Settings()
+def settings(tmpdir):
+    return Settings(
+        auth_key='testing-key',
+        test_output=str(tmpdir),
+        mandrill_key='testing',
+    )
 
 
 @pytest.fixture
@@ -19,6 +23,7 @@ def cli(loop, test_client, settings):
         redis_pool = await app['sender'].get_redis_pool()
         async with redis_pool.get() as redis:
             await redis.flushdb()
+        await app['es'].create_indices(True)
 
     async def shutdown(app):
         await app['sender'].shutdown()

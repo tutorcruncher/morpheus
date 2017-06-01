@@ -2,6 +2,7 @@ language: python
 
 services:
 - redis-server
+- elasticsearch
 
 cache: pip
 
@@ -11,6 +12,7 @@ python:
 install:
 - make install
 - pip freeze
+- sleep 10  # wait for es to come up
 
 script:
 - make lint
