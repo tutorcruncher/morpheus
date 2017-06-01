@@ -198,6 +198,7 @@ class Sender(Actor):
         data = dict(
             from_email=j.from_email,
             from_name=j.from_name,
+            group_id=j.group_id,
             reply_to=j.reply_to,
             to_email=j.address,
             to_name=email_info.full_name,
@@ -209,7 +210,7 @@ class Sender(Actor):
                 content=(await self._generate_base64_pdf(a['html']))[:20] + '...',
             ) for a in j.pdf_attachments]
         )
-        msg_id = uuid.uuid4()
+        msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_id}-{j.address}')
         send_ts = datetime.utcnow()
         output = (
             f'to: {j.address}\n'

@@ -43,21 +43,21 @@ class ElasticSearch:
     def close(self):
         self.session.close()
 
-    async def get(self, uri):
-        return await self._request(METH_GET, uri)
+    async def get(self, uri, **kwargs):
+        return await self._request(METH_GET, uri, **kwargs)
 
-    async def delete(self, uri):
-        return await self._request(METH_DELETE, uri)
+    async def delete(self, uri, **kwargs):
+        return await self._request(METH_DELETE, uri, **kwargs)
 
-    async def post(self, uri, **data):
-        return await self._request(METH_POST, uri, **data)
+    async def post(self, uri, **kwargs):
+        return await self._request(METH_POST, uri, **kwargs)
 
-    async def put(self, uri, **data):
-        return await self._request(METH_PUT, uri, **data)
+    async def put(self, uri, **kwargs):
+        return await self._request(METH_PUT, uri, **kwargs)
 
-    async def _request(self, method, uri, **data) -> Response:
+    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
         async with self.session.request(method, self.root + uri, json=data) as r:
-            if r.status not in (200, 201):
+            if r.status not in allowed_statuses:
                 data = await r.text()
                 try:
                     data = json.dumps(json.loads(data), indent=2)
@@ -74,7 +74,7 @@ class ElasticSearch:
         Create mappings for indices
         """
         for index_name, mapping in MAPPINGS.items():
-            r = await self.get(index_name)
+            r = await self.get(index_name, allowed_statuses=(200, 404))
             if r.status != 404:
                 if delete_existing:
                     main_logger.warning('deleting index %s', index_name)

@@ -40,6 +40,7 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/', index, name='index')
     app.router.add_get('/robots.txt', robots_txt, name='robots-txt')
     app.router.add_get('/favicon.ico', favicon, name='favicon')
+
     app.router.add_post('/send/', SendView.view(), name='send')
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
 
