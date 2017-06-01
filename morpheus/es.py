@@ -4,8 +4,9 @@ import logging
 from datetime import datetime
 
 from aiohttp import BasicAuth, ClientSession
-from aiohttp.hdrs import METH_GET, METH_DELETE, METH_POST, METH_PUT
+from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web_response import Response
+
 from arq.utils import to_unix_ms
 
 from .settings import Settings
@@ -107,8 +108,7 @@ MAPPINGS = {
         'to_email': KEYWORD,
         'from_email': KEYWORD,
         'from_name': KEYWORD,
-        'search_tags': KEYWORD,
-        'analytics_tags': KEYWORD,
+        'tags': KEYWORD,
         'subject': TEXT,
         'body': TEXT,
         'attachments': KEYWORD,

@@ -1,14 +1,13 @@
 import asyncio
+from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
 from random import random
-from typing import Optional, Type
+from typing import Optional, Type  # noqa
 
 import msgpack
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, Request  # noqa
 from cryptography.fernet import InvalidToken
-from datetime import datetime, timezone
-
 from pydantic import BaseModel, ValidationError
 
 
@@ -33,7 +32,7 @@ class Session(WebModel):
 
 class View:
     def __init__(self, request):
-        from .worker import Sender
+        from .worker import Sender  # noqa
         self.request: Request = request
         self.app: Application = request.app
         self.session: Optional[Session] = None

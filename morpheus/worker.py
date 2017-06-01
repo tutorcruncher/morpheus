@@ -4,19 +4,20 @@ import logging
 import re
 import uuid
 from collections import namedtuple
+from datetime import datetime
 
 import chevron
 import misaka
 import msgpack
-from datetime import datetime
-from misaka import HtmlRenderer, Markdown
 from aiohttp import ClientSession
-from arq import Actor, BaseWorker, Drain, concurrent
+from misaka import HtmlRenderer, Markdown
 from pydf import AsyncPydf
+
+from arq import Actor, BaseWorker, Drain, concurrent
 
 from .es import ElasticSearch
 from .logs import setup_logging
-from .models import SendMethod, MessageStatus
+from .models import MessageStatus, SendMethod
 from .settings import Settings
 
 test_logger = logging.getLogger('morpheus.test')
@@ -33,11 +34,11 @@ class TCHtmlRenderer(HtmlRenderer, object):
 
 class TCMarkdown:
     def __init__(self, escape=False):
-        flags = misaka.HTML_HARD_WRAP
+        flags = [misaka.HTML_HARD_WRAP]
         if escape:
-            flags |= misaka.HTML_ESCAPE
+            flags.append(misaka.HTML_ESCAPE)
         render = TCHtmlRenderer(flags=flags)
-        self.md = Markdown(render, extensions=misaka.EXT_NO_INTRA_EMPHASIS)
+        self.md = Markdown(render, extensions=[misaka.EXT_NO_INTRA_EMPHASIS])
 
     def __call__(self, md_str):
         if isinstance(md_str, bytes):
@@ -82,7 +83,7 @@ class Sender(Actor):
         self.redis_settings = self.settings.redis_settings
         super().__init__(**kwargs)
         self.session = None
-        self.apydf = AsyncPydf()
+        self.apydf = AsyncPydf(loop=self.loop)
         self.mandrill_send_url = self.settings.mandrill_url + '/messages/send.json'
 
     async def startup(self):
@@ -262,8 +263,7 @@ class Sender(Actor):
             to_email=j.address,
             from_email=j.from_email,
             from_name=j.from_name,
-            search_tags=j.search_tags,
-            analytics_tags=j.analytics_tags,
+            tags=j.search_tags + j.analytics_tags,
             subject=email_info.subject,
             body=email_info.html_body,
             attachments=[a['name'] for a in j.pdf_attachments],

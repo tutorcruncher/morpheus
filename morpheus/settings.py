@@ -1,5 +1,6 @@
+from pydantic import BaseSettings, PyObject
+
 from arq import RedisSettings
-from pydantic import BaseSettings, PyObject, constr
 
 
 class Settings(BaseSettings):
@@ -15,7 +16,8 @@ class Settings(BaseSettings):
     mandrill_url = 'https://mandrillapp.com/api/1.0'
     raven_dsn: str = None
     log_level = 'DEBUG'
-    commit: str = None
+    commit: str = '-'
+    release_date: str = '-'
     server_name = '-'
     elastic_url = 'http://localhost:9200'
     elastic_username = 'elastic'

@@ -1,12 +1,31 @@
 from pathlib import Path
 
 import msgpack
-from aiohttp.web import HTTPConflict, Response
+from aiohttp.web import HTTPConflict, HTTPMovedPermanently, Response
 
-from .models import SendModel, MandrillWebhook
+from .models import MandrillWebhook, MessageStatus, SendModel
 from .utils import ServiceView, UserView, View
 
 THIS_DIR = Path(__file__).parent.resolve()
+
+
+async def index(request):
+    return Response(text=request.app['index_html'], content_type='text/html')
+
+
+ROBOTS = """\
+User-agent: *
+Allow: /$
+Disallow: /
+"""
+
+
+async def robots_txt(request):
+    return Response(text=ROBOTS, content_type='text/plain')
+
+
+async def favicon(request):
+    raise HTTPMovedPermanently('https://secure.tutorcruncher.com/favicon.ico')
 
 
 class SendView(ServiceView):
@@ -112,31 +131,25 @@ AGGREGATION_FILTER = {
                         'interval': 'day'
                     },
                     'aggs': {
-                        'sent': {
+                        'all': {
                             'filter': {
                                 'match_all': {}
                             }
                         },
-                        'open': {
-                            'filter': {
-                                'term': {
-                                    'status': 'open'
-                                }
-                            }
-                        },
-                        'hard_bounce': {
-                            'filter': {
-                                'term': {
-                                    'status': 'hard_bounce'
-                                }
-                            }
-                        }
                     }
                 }
             }
         }
     }
 }
+for status in MessageStatus:
+    AGGREGATION_FILTER['aggs']['_']['aggs']['_'][status] = {
+        'filter': {
+            'term': {
+                'status': status
+            }
+        }
+    }
 
 
 class UserAggregationView(UserView):
@@ -144,5 +157,23 @@ class UserAggregationView(UserView):
         r = await self.app['es'].post(
             'messages/{[method]}/_search?size=0&filter_path=aggregations'.format(request.match_info),
             **AGGREGATION_FILTER
+        )
+        return Response(body=await r.text(), content_type='application/json')
+
+
+class UserTaggedMessageView(UserView):
+    async def call(self, request):
+        r = await self.app['es'].post(
+            'messages/{[method]}/_search?filter_path=hits'.format(request.match_info),
+            query={
+                'bool': {
+                    'filter': [
+                        {'term': {'company': self.session.company}},
+                    ] + [
+                        {'term': {'tags': t}} for t in request.GET.get('q')
+                    ]
+                }
+            },
+            sort={'update_ts': {'order': 'desc'}}
         )
         return Response(body=await r.text(), content_type='application/json')

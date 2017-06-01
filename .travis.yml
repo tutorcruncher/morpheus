@@ -1,0 +1,21 @@
+language: python
+
+services:
+- redis-server
+
+cache: pip
+
+python:
+- '3.6'
+
+install:
+- make install
+- pip freeze
+
+script:
+- make lint
+- make test
+
+after_success:
+- ls -lha
+- bash <(curl -s https://codecov.io/bash)
