@@ -1,4 +1,3 @@
-import string
 
 
 async def test_index(cli):
