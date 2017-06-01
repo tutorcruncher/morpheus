@@ -11,8 +11,11 @@ python:
 
 install:
 - make install
+
+before_script:
 - pip freeze
 - sleep 10  # wait for es to come up
+- curl -u elastic:changeme localhost:9200
 
 script:
 - make lint

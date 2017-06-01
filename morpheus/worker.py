@@ -2,7 +2,6 @@ import base64
 import json
 import logging
 import re
-import uuid
 from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
