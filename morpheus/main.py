@@ -9,8 +9,8 @@ from .es import ElasticSearch
 from .logs import setup_logging
 from .models import SendMethod
 from .settings import Settings
-from .views import (THIS_DIR, SendView, TestWebhookView, UserAggregationView, UserMessageView, UserTaggedMessageView,
-                    favicon, index, robots_txt)
+from .views import (THIS_DIR, MandrillWebhookView, SendView, TestWebhookView, UserAggregationView, UserMessageView,
+                    UserTaggedMessageView, favicon, index, robots_txt)
 
 
 async def app_cleanup(app):
@@ -43,6 +43,7 @@ def create_app(loop, settings: Settings=None):
 
     app.router.add_post('/send/', SendView.view(), name='send')
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
+    app.router.add_post('/webhook/mandrill/', MandrillWebhookView.view(), name='webhook-mandrill')
 
     user_prefix = '/user/{method:%s}/' % '|'.join(m.value for m in SendMethod)
     app.router.add_get(user_prefix, UserMessageView.view(), name='user-messages')

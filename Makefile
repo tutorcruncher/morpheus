@@ -12,7 +12,7 @@ isort:
 .PHONY: lint
 lint:
 	flake8 morpheus/ tests/
-#	pytest morpheus -p no:sugar -q
+	pytest morpheus -p no:sugar -q
 
 .PHONY: test
 test:

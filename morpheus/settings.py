@@ -1,8 +1,7 @@
 from pathlib import Path
 
-from pydantic import BaseSettings, PyObject
-
 from arq import RedisSettings
+from pydantic import BaseSettings, PyObject
 
 
 class Settings(BaseSettings):

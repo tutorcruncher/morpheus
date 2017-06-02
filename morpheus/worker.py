@@ -10,10 +10,9 @@ import chevron
 import misaka
 import msgpack
 from aiohttp import ClientSession
+from arq import Actor, BaseWorker, Drain, concurrent
 from misaka import HtmlRenderer, Markdown
 from pydf import AsyncPydf
-
-from arq import Actor, BaseWorker, Drain, concurrent
 
 from .es import ElasticSearch
 from .logs import setup_logging

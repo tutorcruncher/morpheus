@@ -1,3 +1,4 @@
+import json
 
 
 async def test_index(cli):
@@ -55,7 +56,7 @@ async def test_send_message(cli, tmpdir):
     assert '"to_email": "foobar@example.com",\n' in msg_file
 
 
-async def test_update_message(cli, message_id):
+async def test_webhook(cli, message_id):
     r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
     data = await r.json()
     assert data['_source']['status'] == 'send'
@@ -75,3 +76,41 @@ async def test_update_message(cli, message_id):
     assert data['_source']['status'] == 'open'
     assert len(data['_source']['events']) == 1
     assert data['_source']['update_ts'] > first_update_ts
+
+
+async def test_mandrill_send(cli, message_data):
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
+    assert r.status == 404, await r.text()
+    message_data['method'] = 'email-mandrill'
+    r = await cli.post('/send/', json=message_data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['_source']['to_email'] == 'foobar@testing.com'
+
+
+async def test_mandrill_webhook(cli):
+    await cli.server.app['es'].post(
+        f'messages/email-mandrill/test-webhook',
+        company='foobar',
+        send_ts=123,
+        update_ts=123,
+        status='send',
+        to_email='testing@example.com',
+        events=[]
+    )
+    r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
+    assert r.status == 200
+    data = await r.json()
+    assert len(data['_source']['events']) == 0
+    messages = [{'ts': int(1e10), 'event': 'open', '_id': 'test-webhook', 'foobar': ['hello', 'world']}]
+    data = {'mandrill_events': json.dumps(messages)}
+    r = await cli.post('/webhook/mandrill/', data=data)
+    assert r.status == 200, await r.text()
+    r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
+    assert r.status == 200
+    data = await r.json()
+    assert len(data['_source']['events']) == 1
+    assert data['_source']['update_ts'] == 1e13
+    assert data['_source']['status'] == 'open'

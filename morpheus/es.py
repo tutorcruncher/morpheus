@@ -6,7 +6,6 @@ from datetime import datetime
 from aiohttp import BasicAuth, ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web_response import Response
-
 from arq.utils import to_unix_ms
 
 from .settings import Settings
@@ -57,7 +56,7 @@ class ElasticSearch:
 
     async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
         async with self.session.request(method, self.root + uri, json=data) as r:
-            if r.status not in allowed_statuses:
+            if allowed_statuses != '*' and r.status not in allowed_statuses:
                 data = await r.text()
                 try:
                     data = json.dumps(json.loads(data), indent=2)

@@ -5,7 +5,7 @@ from pathlib import Path
 import msgpack
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, Response
 
-from .models import MandrillWebhook, MandrillSingleWebhook, MessageStatus, SendModel
+from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendModel
 from .utils import ServiceView, UserView, View
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -56,7 +56,7 @@ class SendView(ServiceView):
 
 
 class GeneralWebhookView(View):
-    es_type = NotImplementedError
+    es_type = None
 
     async def update_message_status(self, m: MandrillSingleWebhook):
             update_uri = f'messages/{self.es_type}/{m.message_id}/_update'
@@ -104,12 +104,12 @@ class MandrillWebhookView(GeneralWebhookView):
             raise HTTPBadRequest(text='"mandrill_events" not found in post data')
 
         try:
-            events = await json.loads(events)
+            events = json.loads(events)
         except ValueError as e:
-            raise HTTPBadRequest(text=f'invalid request json data: {e}')
+            raise HTTPBadRequest(text=f'invalid json data: {e}')
 
         coros = [self.update_message_status(m) for m in MandrillWebhook(events=events).events]
-        await asyncio.gather(coros)
+        await asyncio.gather(*coros)
         return Response(text='message status updated\n')
 
 
