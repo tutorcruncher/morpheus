@@ -23,30 +23,7 @@ test_logger = logging.getLogger('morpheus.test')
 main_logger = logging.getLogger('morpheus.main')
 
 
-class TCHtmlRenderer(HtmlRenderer, object):
-    def __del__(self):  # pragma: no cover
-        try:
-            HtmlRenderer.__del__(self)
-        except AttributeError:
-            pass
-
-
-class TCMarkdown:
-    def __init__(self, escape=False):
-        flags = [misaka.HTML_HARD_WRAP]
-        if escape:
-            flags.append(misaka.HTML_ESCAPE)
-        render = TCHtmlRenderer(flags=flags)
-        self.md = Markdown(render, extensions=[misaka.EXT_NO_INTRA_EMPHASIS])
-
-    def __call__(self, md_str):
-        if isinstance(md_str, bytes):
-            md_str = md_str.decode()
-        md_str = re.sub(r'\r\n', '\n', md_str)
-        return self.md(md_str)
-
-
-markdown = TCMarkdown()
+markdown = Markdown(HtmlRenderer(flags=[misaka.HTML_HARD_WRAP]), extensions=[misaka.EXT_NO_INTRA_EMPHASIS])
 
 Job = namedtuple(
     'Job',
@@ -287,3 +264,13 @@ class Sender(Actor):
 
 class Worker(BaseWorker):
     shadows = [Sender]
+
+    def __init__(self, **kwargs):
+        self.settings = Settings(sender_cls='app.worker.Sender')
+        kwargs['redis_settings'] = self.settings.redis_settings
+        super().__init__(**kwargs)
+
+    async def shadow_kwargs(self):
+        d = await super().shadow_kwargs()
+        d['settings'] = self.settings
+        return d

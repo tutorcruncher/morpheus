@@ -1,0 +1,15 @@
+version: '2.1'
+
+services:
+  logs:
+    entrypoint:
+    - '/bin/logspout'
+    - '${LOGSPOUT_ENDPOINT}'
+
+  nginx:
+    build: nginx/prod
+    restart: always
+    ports:
+    - 443:443
+    depends_on:
+    - web

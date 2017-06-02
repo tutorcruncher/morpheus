@@ -4,9 +4,9 @@ import re
 import pytest
 from aiohttp.web import Application, json_response
 
-from morpheus.es import ElasticSearch
-from morpheus.main import create_app
-from morpheus.settings import Settings
+from morpheus.app.es import ElasticSearch
+from morpheus.app.main import create_app
+from morpheus.app.settings import Settings
 
 
 @pytest.fixture(scope='session')
@@ -55,7 +55,7 @@ def settings(tmpdir, mock_external):
         test_output=str(tmpdir),
         mandrill_key='good-mandrill-testing-key',
         log_level='ERROR',
-        mandrill_url=mock_external.app['server_name'] + '/mandrill'
+        mandrill_url=mock_external.app['server_name'] + '/mandrill',
     )
 
 

@@ -1,0 +1,13 @@
+version: '2.1'
+services:
+  logs:
+    ports:
+    - 8001:80
+
+  nginx:
+    build: nginx/dev
+    restart: always
+    ports:
+    - 8000:80
+    depends_on:
+    - web

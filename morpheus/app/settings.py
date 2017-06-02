@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     auth_key: str = ...
 
-    sender_cls: PyObject = 'morpheus.worker.Sender'
+    sender_cls: PyObject = 'morpheus.app.worker.Sender'
     mandrill_key: str = ...
     mandrill_url = 'https://mandrillapp.com/api/1.0'
     raven_dsn: str = None
