@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     commit: str = '-'
     release_date: str = '-'
     server_name = '-'
-    elastic_url = 'http://localhost:9200'
+    elastic_host = 'localhost'
+    elastic_port = 9200
     elastic_username = 'elastic'
     elastic_password = 'changeme'
     user_fernet_key = b'i am not secure but 32 bits long'
@@ -34,3 +35,7 @@ class Settings(BaseSettings):
             database=self.redis_database,
             password=self.redis_password,
         )
+
+    @property
+    def elastic_url(self):
+        return f'http://{self.elastic_host}:{self.elastic_port}'

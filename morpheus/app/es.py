@@ -70,8 +70,15 @@ class ElasticSearch:
 
     async def create_indices(self, delete_existing=False):
         """
-        Create mappings for indices
+        Create mappings for indices, this method is "lenient",
+        eg. it retries for 5 seconds if es appears to not be up yet
         """
+        for i in range(50):
+            r = await self.get('', allowed_statuses='*')
+            if r.status == 200:
+                break
+            await asyncio.sleep(0.1, loop=self.loop)
+
         for index_name, mapping in MAPPINGS.items():
             r = await self.get(index_name, allowed_statuses=(200, 404))
             if r.status != 404:

@@ -1,16 +1,29 @@
 import base64
+import logging
 import re
 from html import escape
 
+import async_timeout
 from aiohttp.web import Application
 from cryptography.fernet import Fernet
 
 from .es import ElasticSearch
 from .logs import setup_logging
+from .middleware import ErrorLoggingMiddleware
 from .models import SendMethod
 from .settings import Settings
 from .views import (THIS_DIR, MandrillWebhookView, SendView, TestWebhookView, UserAggregationView, UserMessageView,
                     UserTaggedMessageView, favicon, index, robots_txt)
+
+logger = logging.getLogger('morpheus.main')
+
+
+async def app_startup(app):
+    with async_timeout.timeout(5, loop=app.loop):
+        redis_pool = await app['sender'].get_redis_pool()
+        async with redis_pool.get() as redis:
+            info = await redis.info()
+            logger.info('redis version: %s', info['server']['redis_version'])
 
 
 async def app_cleanup(app):
@@ -21,7 +34,7 @@ async def app_cleanup(app):
 def create_app(loop, settings: Settings=None):
     settings = settings or Settings()
     setup_logging(settings)
-    app = Application(client_max_size=1024**2*100)
+    app = Application(client_max_size=1024**2*100, middlewares=(ErrorLoggingMiddleware(),))
 
     index_html = (THIS_DIR / 'extra/index.html').read_text()
     for key in ('commit', 'release_date'):
@@ -35,6 +48,7 @@ def create_app(loop, settings: Settings=None):
         fernet=Fernet(base64.urlsafe_b64encode(settings.user_fernet_key)),
     )
 
+    app.on_startup.append(app_startup)
     app.on_cleanup.append(app_cleanup)
 
     app.router.add_get('/', index, name='index')

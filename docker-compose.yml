@@ -1,10 +1,8 @@
 version: '2.1'
 
 volumes:
- es_data:
-  driver: local
- redis_data:
-  driver: local
+ es_data: {}
+ redis_data: {}
 
 services:
   logs:
@@ -45,8 +43,7 @@ services:
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
       APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY}
       APP_REDIS_HOST: redis
-      APP_ELASTIC_URL: 'http://elastic:9200'
-      BIND: 0.0.0.0:8000
+      APP_ELASTIC_HOST: elastic
       APP_COMMIT: ${COMMIT}
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
@@ -67,7 +64,7 @@ services:
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
       APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY}
       APP_REDIS_HOST: redis
-      APP_ELASTIC_URL: 'http://elastic:9200'
+      APP_ELASTIC_HOST: elastic
       APP_COMMIT: ${COMMIT}
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
