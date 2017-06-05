@@ -4,7 +4,7 @@ import json
 async def test_index(cli):
     r = await cli.get('/')
     assert r.status == 200
-    assert 'Morpheus, for more information see' in await r.text()
+    assert 'Morpheus - The Greek God' in await r.text()
 
 
 async def test_index_head(cli):

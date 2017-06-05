@@ -3,11 +3,12 @@ FROM python:3.6-alpine
 RUN apk --update --no-cache add gcc g++ musl-dev zlib-dev libuv libffi-dev openssl-dev make \
  && rm -rf /var/cache/apk/*
 
-# installing these locally means minor changes to requirements should slow donwn build too much
-RUN pip install cffi cryptography multidict uvloop
+# having a seperate file for packages which are slow to install speeds up some builts a lot
+ADD ./requirements_one.txt /home/root/requirements_one.txt
+RUN pip install -r /home/root/requirements_one.txt
 
-ADD ./requirements.txt /home/root/requirements.txt
-RUN pip install -r /home/root/requirements.txt
+ADD ./requirements_two.txt /home/root/requirements_two.txt
+RUN pip install -r /home/root/requirements_two.txt
 
 ADD ./app /home/root/app
 ADD ./run.py /home/root/run.py

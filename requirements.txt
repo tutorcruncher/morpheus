@@ -1,4 +1,5 @@
 # this should install everything you need for development or testing, you might also want to install "ipython"
--r morpheus/requirements.txt
+-r morpheus/requirements_one.txt
+-r morpheus/requirements_two.txt
 -r tests/requirements.txt
 aiohttp-devtools==0.4
