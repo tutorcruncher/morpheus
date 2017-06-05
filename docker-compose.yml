@@ -24,6 +24,7 @@ services:
         soft: -1
         hard: -1
     mem_limit: 1g
+    restart: always
     volumes:
     - es_data:/usr/share/elasticsearch/data
 

@@ -13,7 +13,7 @@ from .middleware import ErrorLoggingMiddleware
 from .models import SendMethod
 from .settings import Settings
 from .views import (THIS_DIR, MandrillWebhookView, SendView, TestWebhookView, UserAggregationView, UserMessageView,
-                    UserTaggedMessageView, favicon, index, styles_css, robots_txt)
+                    UserTaggedMessageView, favicon, index, robots_txt, styles_css)
 
 logger = logging.getLogger('morpheus.main')
 

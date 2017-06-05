@@ -9,3 +9,4 @@ dist/
 .coverage
 htmlcov/
 nginx/prod/keys
+activate.prod.sh
