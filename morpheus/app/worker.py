@@ -112,8 +112,8 @@ class Sender(Actor):
         drain = Drain(
             redis_pool=await self.get_redis_pool(),
             raise_task_exception=True,
-            max_concurrent_tasks=30,
-            shutdown_delay=10,
+            max_concurrent_tasks=10,
+            shutdown_delay=60,
         )
         async with drain:
             async for raw_queue, raw_data in drain.iter(recipients_key):

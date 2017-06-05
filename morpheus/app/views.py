@@ -3,8 +3,9 @@ import json
 from pathlib import Path
 
 import msgpack
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, HTTPNotFound, Response
 
+from .es import ElasticSearchError
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendModel
 from .utils import ServiceView, UserView, View
 
@@ -66,7 +67,11 @@ class GeneralWebhookView(View):
 
     async def update_message_status(self, m: MandrillSingleWebhook):
             update_uri = f'messages/{self.es_type}/{m.message_id}/_update'
-            await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
+            try:
+                await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
+            except ElasticSearchError as e:
+                if e.status == 404:
+                    raise HTTPNotFound(text='document not found')
             data = m.values
             data.pop('message_id')
             await self.app['es'].post(
@@ -115,7 +120,10 @@ class MandrillWebhookView(GeneralWebhookView):
             raise HTTPBadRequest(text=f'invalid json data: {e}')
 
         coros = [self.update_message_status(m) for m in MandrillWebhook(events=events).events]
-        await asyncio.gather(*coros)
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception):
+                raise r
         return Response(text='message status updated\n')
 
 

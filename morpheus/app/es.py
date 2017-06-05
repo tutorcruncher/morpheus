@@ -14,7 +14,18 @@ main_logger = logging.getLogger('morpheus.elastic')
 
 
 class ElasticSearchError(RuntimeError):
-    pass
+    def __init__(self, method, uri, response, data):
+        self.method = method
+        self.uri = uri
+        self.response = response
+        self.status = response.status
+        try:
+            self.data = json.dumps(json.loads(data), indent=2)
+        except ValueError:
+            self.data = data
+
+    def __str__(self):
+        return f'{self.method} {self.uri}, bad response {self.status}, response:\n{self.data}'
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -57,14 +68,7 @@ class ElasticSearch:
     async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
         async with self.session.request(method, self.root + uri, json=data) as r:
             if allowed_statuses != '*' and r.status not in allowed_statuses:
-                data = await r.text()
-                try:
-                    data = json.dumps(json.loads(data), indent=2)
-                except ValueError:
-                    pass
-                raise ElasticSearchError(
-                    f'{method} {uri}, bad response {r.status}, response:\n{data}'
-                )
+                raise ElasticSearchError(method, uri, r, await r.text())
             main_logger.debug('%s /%s -> %s', method, uri, r.status)
             return r
 
@@ -86,7 +90,7 @@ class ElasticSearch:
                     main_logger.warning('deleting index %s', index_name)
                     await self.delete(index_name)
                 else:
-                    main_logger.warning('index %s already exists, not creating', index_name)
+                    main_logger.info('elasticsearch index %s already exists, not creating', index_name)
                     continue
             main_logger.info('creating index %s...', index_name)
             await self.put(index_name, mappings={

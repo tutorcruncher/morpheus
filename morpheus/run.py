@@ -101,5 +101,34 @@ def elasticsearch_setup(ctx, force):
     _elasticsearch_setup(ctx.obj['settings'], force)
 
 
+EXEC_LINES = [
+    'import asyncio, os, re, sys',
+    'from datetime import datetime, timedelta, timezone',
+    'from pprint import pprint as pp',
+    '',
+    'from app.settings import Settings',
+    '',
+    'loop = asyncio.get_event_loop()',
+    'await_ = loop.run_until_complete',
+    'settings = Settings()',
+]
+EXEC_LINES += (
+    ['print("\\n    Python {v.major}.{v.minor}.{v.micro}\\n".format(v=sys.version_info))'] +
+    [f'print("    {l}")' for l in EXEC_LINES]
+)
+
+
+@cli.command()
+def shell():
+    from IPython import start_ipython
+    from IPython.terminal.ipapp import load_default_config
+    c = load_default_config()
+
+    c.TerminalIPythonApp.display_banner = False
+    c.TerminalInteractiveShell.confirm_exit = False
+    c.InteractiveShellApp.exec_lines = EXEC_LINES
+    start_ipython(argv=(), config=c)
+
+
 if __name__ == '__main__':
     cli(obj={})

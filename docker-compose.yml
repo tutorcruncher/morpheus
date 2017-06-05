@@ -1,8 +1,8 @@
 version: '2.1'
 
 volumes:
- es_data: {}
- redis_data: {}
+  es_data: {}
+  redis_data: {}
 
 services:
   logs:
@@ -27,6 +27,8 @@ services:
     restart: always
     volumes:
     - es_data:/usr/share/elasticsearch/data
+    depends_on:
+    - logs
 
   redis:
     image: redis:3.0-alpine

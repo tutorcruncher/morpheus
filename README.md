@@ -21,3 +21,47 @@ What will *morpheus* do?
 Here's a picture to help explain:
 
 ![Morpheus and Iris](https://raw.githubusercontent.com/samuelcolvin/files/master/morpheus.png)
+
+## Usage
+
+### Running locally
+
+Set up your environment
+
+    source activate.sh
+
+then
+
+    docker-compose up -d --build
+    
+`--build` makes sure to build any changes to the morpheus image, `-d` is detach
+
+At the same time in another window
+
+    until $(curl -so /dev/null http://localhost:8001/logs -I && true); do printf .; sleep 0.1; done && curl -s http://localhost:8001/logs
+    
+To view the logs
+
+You can also run either the web or worker with
+
+    ./morpheus/run.py web
+    # OR
+    ./morpheus/run.py worker
+
+You'll need elastic search and redis installed.
+
+### To deploy
+
+
+
+Set up your environment
+
+    source activate.sh
+
+(this assumes you have a `prod` gnome profile setup to differentiate commands going to the production server)
+
+then
+
+    ./deploy/deploy
+
+That same command should also work to update the deployment after a change.
