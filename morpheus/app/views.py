@@ -14,6 +14,12 @@ THIS_DIR = Path(__file__).parent.resolve()
 async def index(request):
     return Response(text=request.app['index_html'], content_type='text/html')
 
+STYLES = (THIS_DIR / 'extra/styles.css').read_text()
+
+
+async def styles_css(request):
+    return Response(text=STYLES, content_type='text/css')
+
 
 ROBOTS = """\
 User-agent: *

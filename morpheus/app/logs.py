@@ -13,13 +13,13 @@ def setup_logging(settings: Settings):
         'disable_existing_loggers': False,
         'formatters': {
             'morpheus.default': {
-                'format': '%(levelname)s %(name)s %(message)s',
+                'format': '%(levelname)s %(name)s: %(message)s',
             },
         },
         'handlers': {
             'morpheus.default': {
-                'level': settings.log_level,
-                'class': 'logging.StreamHandler',
+                'level': 'DEBUG',
+                'class': 'arq.logs.ColourHandler',
                 'formatter': 'morpheus.default',
             },
             'sentry': {

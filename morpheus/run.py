@@ -17,7 +17,7 @@ logger = logging.getLogger('morpheus.main')
 
 
 async def _check_port_open(host, port, loop):
-    steps, delay = 100, 0.1
+    steps, delay = 20, 0.5
     for i in range(steps):
         try:
             await loop.create_connection(lambda: asyncio.Protocol(), host=host, port=port)
@@ -46,7 +46,6 @@ def cli(ctx):
     """
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    logger.info('settings: %s', settings)
     ctx.obj['settings'] = settings
 
 
@@ -57,14 +56,14 @@ def web(ctx):
     Serve the application
     If the database doesn't already exist it will be created.
     """
-    logger.info('waiting for elastic search and redis to come up...')
     settings = ctx.obj['settings']
+    logger.info('settings: %s', settings)
+    logger.info('waiting for elasticsearch and redis to come up...')
     # give es a chance to come up fully, this just prevents lots of es errors, create_indices is itself lenient
-    sleep(1)
+    sleep(4)
     _check_services_ready(settings)
 
     _elasticsearch_setup(settings)
-
     logger.info('starting server...')
     asyncio.get_event_loop().close()
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -79,8 +78,12 @@ def worker(ctx):
     """
     Run the worker
     """
-    logger.info('waiting for redis to come up...')
+    logger.info('waiting for elasticsearch and redis to come up...')
+    sleep(4)
     _check_services_ready(ctx.obj['settings'])
+    # redis/the network occasionally hangs and gets itself in a mess if we try to connect too early,
+    # even once it's "up", hence 2 second wait
+    sleep(2)
     RunWorkerProcess('app/worker.py', 'Worker')
 
 

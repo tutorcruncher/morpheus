@@ -15,12 +15,11 @@ from misaka import HtmlRenderer, Markdown
 from pydf import AsyncPydf
 
 from .es import ElasticSearch
-from .logs import setup_logging
 from .models import MessageStatus, SendMethod
 from .settings import Settings
 
-test_logger = logging.getLogger('morpheus.test')
-main_logger = logging.getLogger('morpheus.main')
+test_logger = logging.getLogger('morpheus.worker.test')
+main_logger = logging.getLogger('morpheus.worker')
 
 
 markdown = Markdown(HtmlRenderer(flags=[misaka.HTML_HARD_WRAP]), extensions=[misaka.EXT_NO_INTRA_EMPHASIS])
@@ -63,9 +62,9 @@ class Sender(Actor):
         self.mandrill_send_url = self.settings.mandrill_url + '/messages/send.json'
 
     async def startup(self):
+        main_logger.info('Sender initialising session and elasticsearch...')
         self.session = ClientSession(loop=self.loop)
         self.es = ElasticSearch(settings=self.settings, loop=self.loop)
-        setup_logging(self.settings)
 
     async def shutdown(self):
         self.es.close()

@@ -1,0 +1,28 @@
+body {
+  margin: 10px auto;
+  width: 35rem;
+  font-family: monospace;
+  background-color: #2d2d2d;
+  color: white;
+}
+
+section {
+  text-align: center;
+  padding-top: 20px;
+}
+
+@media (max-width: 35rem) {
+  body {
+    font-size: 2.3vw;
+  }
+}
+
+pre {
+  width: 22rem;
+  margin: 0 auto;
+}
+
+a {
+  color: #9090e0 !important;
+  text-decoration: none !important;
+}

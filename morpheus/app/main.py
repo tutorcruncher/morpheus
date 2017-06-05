@@ -13,7 +13,7 @@ from .middleware import ErrorLoggingMiddleware
 from .models import SendMethod
 from .settings import Settings
 from .views import (THIS_DIR, MandrillWebhookView, SendView, TestWebhookView, UserAggregationView, UserMessageView,
-                    UserTaggedMessageView, favicon, index, robots_txt)
+                    UserTaggedMessageView, favicon, index, styles_css, robots_txt)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -52,7 +52,8 @@ def create_app(loop, settings: Settings=None):
     app.on_cleanup.append(app_cleanup)
 
     app.router.add_get('/', index, name='index')
-    app.router.add_get('/robots.txt', robots_txt, name='robots-txt')
+    app.router.add_get('/robots.txt', robots_txt, name='robots.txt')
+    app.router.add_get('/styles.css', styles_css, name='styles.css')
     app.router.add_get('/favicon.ico', favicon, name='favicon')
 
     app.router.add_post('/send/', SendView.view(), name='send')
