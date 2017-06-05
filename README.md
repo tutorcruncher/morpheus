@@ -20,7 +20,7 @@ What will *morpheus* do?
 
 Here's a picture to help explain:
 
-![Morpheus and Iris](https://raw.githubusercontent.com/samuelcolvin/files/master/morpheus.png)
+![Morpheus and Iris](https://raw.githubusercontent.com/tutorcruncher/morpheus/master/morpheus.png)
 
 ## Usage
 

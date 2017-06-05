@@ -1,6 +1,10 @@
+html {
+  font-size: 13px;
+}
+
 body {
   margin: 10px auto;
-  width: 35rem;
+  width: 60ch;
   font-family: monospace;
   background-color: #2d2d2d;
   color: white;
@@ -8,17 +12,24 @@ body {
 
 section {
   text-align: center;
-  padding-top: 20px;
+  padding-top: 1.5rem;
 }
 
-@media (max-width: 35rem) {
+section p {
+  margin: 0 0 1rem;
+}
+
+@media (max-width: 60ch) {
   body {
     font-size: 2.3vw;
+  }
+  img {
+    width: 80vw;
   }
 }
 
 pre {
-  width: 22rem;
+  width: 46ch;
   margin: 0 auto;
 }
 
