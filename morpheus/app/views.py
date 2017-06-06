@@ -93,6 +93,7 @@ class GeneralWebhookView(View):
                     raise
             logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
             data = m.values
+            msg = data.get('msg', {})
             await self.app['es'].post(
                 update_uri,
                 script={
@@ -102,10 +103,10 @@ class GeneralWebhookView(View):
                         'event': {
                             'ts': data['ts'],
                             'status': data['event'],
-                            'user_agent': data.get('user_agent'),
-                            'location': data.get('location'),
-                            'msg': {
-                                f: data['msg'].get(f) for f in MSG_FIELDS
+                            'extra': {
+                                'user_agent': data.get('user_agent'),
+                                'location': data.get('location'),
+                                **{f: msg.get(f) for f in MSG_FIELDS},
                             },
                         }
                     }
@@ -115,7 +116,7 @@ class GeneralWebhookView(View):
 
 class TestWebhookView(GeneralWebhookView):
     """
-    Simple view to update messages "sent" with email-test
+    Simple view to update messages faux-sent with email-test
     """
     es_type = 'email-test'
 

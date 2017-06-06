@@ -26,6 +26,7 @@ async def mandrill_send_view(request):
         {
             'email': to_email,
             '_id': re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{to_email}'),
+            'status': 'queued',
         }
     ])
 
