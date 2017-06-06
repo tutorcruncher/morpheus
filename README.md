@@ -50,13 +50,39 @@ You can also run either the web or worker with
 
 You'll need elastic search and redis installed.
 
+### To prepare for deploy
+
+Get ssl `cert.pem and `key.pem` and put htem in `./nginx/prod/keys`, generate a password file for glances
+
+    sudo apt install apache2-utils
+    sudo htpasswd -c nginx/prod/pword <username>
+
+Create `activate.prod.sh`:
+
+```shell
+#!/usr/bin/env bash
+. env/bin/activate
+export SCALEWAY_ORGANIZATION='...1'
+export SCALEWAY_TOKEN='...'
+export SERVER_NAME='morpheus'
+export LOGSPOUT_ENDPOINT='.'
+export RAVEN_DSN='.'
+export APP_AUTH_KEY='...'
+export APP_MANDRILL_KEY='...'
+export APP_USER_FERNET_KEY='...'
+
+echo "enabling docker machine..."
+eval $(docker-machine env morpheus)
+
+export MODE='PRODUCTION'
+export PS1="PROD $PS1"
+```
+
 ### To deploy
-
-
 
 Set up your environment
 
-    source activate.sh
+    ./start-prod.sh
 
 (this assumes you have a `prod` gnome profile setup to differentiate commands going to the production server)
 

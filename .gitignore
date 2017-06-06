@@ -10,3 +10,4 @@ dist/
 htmlcov/
 nginx/prod/keys
 activate.prod.sh
+nginx/prod/htpasswd

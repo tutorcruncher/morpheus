@@ -10,28 +10,32 @@ services:
     environment:
       SYSLOG_HOSTNAME: 'morpheus'
     volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
+    - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: always
 
-  monitor:
-    build: monitor
+  glances:
+    image: nicolargo/glances:stable
+    pid: host
     environment:
-      SYSLOG_HOSTNAME: 'morpheus'
+      GLANCES_OPT: '-w'
+    ports:
+    - 61208-61209:61208-61209
     volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
-#    restart: always
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+    - logs
 
   elastic:
     image: docker.elastic.co/elasticsearch/elasticsearch:5.4.1
     environment:
     - cluster.name=docker-cluster
-    - bootstrap.memory_lock=true
+#    - bootstrap.memory_lock=true
     - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    mem_limit: 1g
+#    ulimits:
+#      memlock:
+#        soft: -1
+#        hard: -1
+#    mem_limit: 1g
     restart: always
     volumes:
     - es_data:/usr/share/elasticsearch/data
