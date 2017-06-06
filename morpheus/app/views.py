@@ -64,6 +64,18 @@ class SendView(ServiceView):
         return Response(text='201 job enqueued\n', status=201)
 
 
+MSG_FIELDS = (
+    'bounce_description',
+    'clicks',
+    'diag',
+    'reject',
+    'opens',
+    'resends',
+    'smtp_events',
+    'state',
+)
+
+
 class GeneralWebhookView(View):
     es_type = None
 
@@ -73,14 +85,14 @@ class GeneralWebhookView(View):
                 await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
             except ElasticSearchError as e:
                 if e.status == 404:
-                    # we still return 200 here to avoid mandrill repeated trying to send the event
-                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
+                    # we still return 200 here to avoid mandrill repeatedly trying to send the event
+                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.event,
+                                   extra={'data': m.values})
                     return
                 else:
                     raise
-            logger.warning('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
+            logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
             data = m.values
-            data.pop('message_id')
             await self.app['es'].post(
                 update_uri,
                 script={
@@ -88,9 +100,13 @@ class GeneralWebhookView(View):
                     'inline': 'ctx._source.events.add(params.event)',
                     'params': {
                         'event': {
-                            'ts': data.pop('ts'),
-                            'status': data.pop('event'),
-                            'extra': data,
+                            'ts': data['ts'],
+                            'status': data['event'],
+                            'user_agent': data.get('user_agent'),
+                            'location': data.get('location'),
+                            'msg': {
+                                f: data['msg'].get(f) for f in MSG_FIELDS
+                            },
                         }
                     }
                 }
@@ -133,7 +149,6 @@ class MandrillWebhookView(GeneralWebhookView):
 
 class UserMessageView(UserView):
     async def call(self, request):
-        query = request.GET.get('q')
         es_query = {
             'query': {
                 'bool': {
@@ -143,7 +158,13 @@ class UserMessageView(UserView):
                 }
             }
         }
-        if query:
+        message_id = request.GET.get('message_id')
+        query = request.GET.get('q')
+        if message_id:
+            es_query['query']['bool']['filter'].append(
+                {'term': {'_id': message_id}},
+            )
+        elif query:
             es_query['query']['bool']['should'] = [
                 {'simple_query_string': {
                     'query': query,

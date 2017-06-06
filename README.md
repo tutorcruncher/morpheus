@@ -32,7 +32,7 @@ Set up your environment
 
 then
 
-    docker-compose up -d --build
+    docker build morpheus -t morpheus && docker-compose up -d
     
 `--build` makes sure to build any changes to the morpheus image, `-d` is detach
 

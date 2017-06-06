@@ -29,13 +29,6 @@ services:
     image: docker.elastic.co/elasticsearch/elasticsearch:5.4.1
     environment:
     - cluster.name=docker-cluster
-    - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
-#    - bootstrap.memory_lock=true
-#    ulimits:
-#      memlock:
-#        soft: -1
-#        hard: -1
-#    mem_limit: 1g
     restart: always
     volumes:
     - es_data:/usr/share/elasticsearch/data
@@ -51,12 +44,13 @@ services:
     - logs
 
   pdf:
-    image: samuelcolvin/pydf
+    image: samuelcolvin/pydf:v0.35
+    restart: always
     depends_on:
     - logs
 
   web:
-    build: morpheus
+    image: morpheus
     environment:
       APP_AUTH_KEY: ${APP_AUTH_KEY}
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
@@ -68,13 +62,14 @@ services:
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
       APP_SERVER_NAME: ${SERVER_NAME}
+#      APP_LOG_LEVEL: DEBUG
     restart: always
     depends_on:
     - elastic
     - redis
 
   worker:
-    build: morpheus
+    image: morpheus
     entrypoint:
     - ./run.py
     - worker
@@ -89,6 +84,7 @@ services:
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
       APP_SERVER_NAME: ${SERVER_NAME}
+#      APP_LOG_LEVEL: DEBUG
       CHECK: worker
     restart: always
     depends_on:

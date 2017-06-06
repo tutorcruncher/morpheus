@@ -165,14 +165,17 @@ class Sender(Actor):
         send_ts = datetime.utcnow()
         async with self.session.post(self.mandrill_send_url, json=data) as r:
             if r.status == 200:
-                main_logger.debug('mandrill send to %s:%s, good response', j.group_id, j.address)
+                data = await r.json()
+                main_logger.debug('mandrill send to %s:%s, good response, data: %s', j.group_id, j.address, data)
             else:
                 text = await r.text()
                 main_logger.error('mandrill error %s:%s, response: %s\n%s', j.group_id, j.address, r.status, text)
-            data = await r.json()
+                return
             assert len(data) == 1, data
             data = data[0]
             assert data['email'] == j.address, data
+            if data['status'] not in ('sent', 'queued'):
+                main_logger.warning('message not sent %s:%s response: %s', j.group_id, j.address, data)
             await self._store_msg(data['_id'], send_ts, j, email_info)
 
     async def _send_test(self, j: Job):
