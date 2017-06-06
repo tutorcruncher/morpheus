@@ -1,15 +1,17 @@
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import msgpack
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, HTTPNotFound, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, Response
 
 from .es import ElasticSearchError
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendModel
 from .utils import ServiceView, UserView, View
 
 THIS_DIR = Path(__file__).parent.resolve()
+logger = logging.getLogger('morpheus.web')
 
 
 async def index(request):
@@ -71,7 +73,12 @@ class GeneralWebhookView(View):
                 await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
             except ElasticSearchError as e:
                 if e.status == 404:
-                    raise HTTPNotFound(text='document not found')
+                    # we still return 200 here to avoid mandrill repeated trying to send the event
+                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
+                    return
+                else:
+                    raise
+            logger.warning('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
             data = m.values
             data.pop('message_id')
             await self.app['es'].post(
@@ -120,10 +127,7 @@ class MandrillWebhookView(GeneralWebhookView):
             raise HTTPBadRequest(text=f'invalid json data: {e}')
 
         coros = [self.update_message_status(m) for m in MandrillWebhook(events=events).events]
-        results = await asyncio.gather(*coros, return_exceptions=True)
-        for r in results:
-            if isinstance(r, Exception):
-                raise r
+        await asyncio.gather(*coros)
         return Response(text='message status updated\n')
 
 

@@ -7,5 +7,4 @@ ipython==6.1.0
 misaka==2.1.0
 msgpack-python==0.4.8
 pydantic==0.0.8
-python-pdf==0.33
 raven==6.0.0

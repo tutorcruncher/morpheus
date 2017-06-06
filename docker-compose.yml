@@ -50,6 +50,11 @@ services:
     depends_on:
     - logs
 
+  pdf:
+    image: samuelcolvin/pydf
+    depends_on:
+    - logs
+
   web:
     build: morpheus
     environment:

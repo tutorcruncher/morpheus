@@ -12,7 +12,6 @@ import msgpack
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent
 from misaka import HtmlRenderer, Markdown
-from pydf import AsyncPydf
 
 from .es import ElasticSearch
 from .models import MessageStatus, SendMethod
@@ -58,7 +57,6 @@ class Sender(Actor):
         self.redis_settings = self.settings.redis_settings
         super().__init__(**kwargs)
         self.session = None
-        self.apydf = AsyncPydf(loop=self.loop)
         self.mandrill_send_url = self.settings.mandrill_url + '/messages/send.json'
 
     async def startup(self):
@@ -234,13 +232,19 @@ class Sender(Actor):
         )
 
     async def _generate_base64_pdf(self, html):
-        pdf_content = await self.apydf.generate_pdf(
-            html,
-            page_size='A4',
-            zoom='1.25',
-            margin_left='8mm',
-            margin_right='8mm',
+        if not self.settings.pdf_generation_url:
+            return 'no-pdf-generated'
+        headers = dict(
+            pdf_page_size='A4',
+            pdf_zoom='1.25',
+            pdf_margin_left='8mm',
+            pdf_margin_right='8mm',
         )
+        async with self.session.get(self.settings.pdf_generation_url, data=html, headers=headers) as r:
+            if r.status != 200:
+                data = await r.text()
+                raise RuntimeError(f'error generating pdf {r.status}, data: {data}')
+            pdf_content = await r.read()
         return base64.b64encode(pdf_content).decode()
 
     async def _store_msg(self, uid, send_ts, j: Job, email_info: EmailInfo):
