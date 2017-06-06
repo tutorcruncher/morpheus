@@ -115,6 +115,7 @@ class Sender(Actor):
             max_concurrent_tasks=10,
             shutdown_delay=60,
         )
+        jobs = 0
         async with drain:
             async for raw_queue, raw_data in drain.iter(recipients_key):
                 if not raw_queue:
@@ -125,6 +126,8 @@ class Sender(Actor):
                 data.update(base_kwargs)
                 drain.add(coro, Job(**data))
                 # TODO stop if worker is not running
+                jobs += 1
+        return jobs
 
     async def _send_mandrill(self, j: Job):
         email_info = self._get_email_info(j)

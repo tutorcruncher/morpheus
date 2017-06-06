@@ -44,19 +44,18 @@ def cli(ctx):
     """
     Run morpheus
     """
-    settings = Settings(sender_cls='app.worker.Sender')
-    setup_logging(settings)
-    ctx.obj['settings'] = settings
+    pass
 
 
 @cli.command()
-@click.pass_context
-def web(ctx):
+def web():
     """
     Serve the application
     If the database doesn't already exist it will be created.
     """
-    settings = ctx.obj['settings']
+    settings = Settings(sender_cls='app.worker.Sender')
+    setup_logging(settings)
+
     logger.info('settings: %s', settings)
     logger.info('waiting for elasticsearch and redis to come up...')
     # give es a chance to come up fully, this just prevents lots of es errors, create_indices is itself lenient
@@ -73,14 +72,16 @@ def web(ctx):
 
 
 @cli.command()
-@click.pass_context
-def worker(ctx):
+def worker():
     """
     Run the worker
     """
+    settings = Settings(sender_cls='app.worker.Sender')
+    setup_logging(settings)
+
     logger.info('waiting for elasticsearch and redis to come up...')
     sleep(4)
-    _check_services_ready(ctx.obj['settings'])
+    _check_services_ready(settings)
     # redis/the network occasionally hangs and gets itself in a mess if we try to connect too early,
     # even once it's "up", hence 2 second wait
     sleep(2)
@@ -96,9 +97,10 @@ def _elasticsearch_setup(settings, force=False):
 
 @cli.command()
 @click.option('--force', is_flag=True)
-@click.pass_context
-def elasticsearch_setup(ctx, force):
-    _elasticsearch_setup(ctx.obj['settings'], force)
+def elasticsearch_setup(force):
+    settings = Settings(sender_cls='app.worker.Sender')
+    setup_logging(settings)
+    _elasticsearch_setup(settings, force)
 
 
 EXEC_LINES = [
@@ -110,7 +112,6 @@ EXEC_LINES = [
     '',
     'loop = asyncio.get_event_loop()',
     'await_ = loop.run_until_complete',
-    'settings = Settings()',
 ]
 EXEC_LINES += (
     ['print("\\n    Python {v.major}.{v.minor}.{v.micro}\\n".format(v=sys.version_info))'] +
