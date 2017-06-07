@@ -70,6 +70,9 @@ class MandrillSingleWebhook(WebModel):
     ts: datetime = ...
     event: MessageStatus = ...
     message_id: str = ...
+    user_agent: str = None
+    location: dict = None
+    msg: dict = {}
 
     class Config:
         allow_extra = True

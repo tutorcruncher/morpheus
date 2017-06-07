@@ -48,15 +48,13 @@ class SendView(ServiceView):
             if v > 1:
                 raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
             recipients_key = f'recipients:{m.uid}'
-            data = m.values
-            recipients = data.pop('recipients')
-            from_ = data.pop('from_address')
+            data = m.values(exclude={'recipients', 'from_address'})
             data.update(
-                from_email=from_.email,
-                from_name=from_.name,
+                from_email=m.from_address.email,
+                from_name=m.from_address.name,
             )
             pipe = redis.pipeline()
-            pipe.lpush(recipients_key, *[msgpack.packb(r, use_bin_type=True) for r in recipients])
+            pipe.lpush(recipients_key, *[msgpack.packb(r.values(), use_bin_type=True) for r in m.recipients])
             pipe.expire(group_key, 86400)
             pipe.expire(recipients_key, 86400)
             await pipe.execute()
@@ -87,13 +85,11 @@ class GeneralWebhookView(View):
                 if e.status == 404:
                     # we still return 200 here to avoid mandrill repeatedly trying to send the event
                     logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.event,
-                                   extra={'data': m.values})
+                                   extra={'data': m.values()})
                     return
                 else:
                     raise
             logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
-            data = m.values
-            msg = data.get('msg', {})
             await self.app['es'].post(
                 update_uri,
                 script={
@@ -101,12 +97,12 @@ class GeneralWebhookView(View):
                     'inline': 'ctx._source.events.add(params.event)',
                     'params': {
                         'event': {
-                            'ts': data['ts'],
-                            'status': data['event'],
+                            'ts': m.ts,
+                            'status': m.event,
                             'extra': {
-                                'user_agent': data.get('user_agent'),
-                                'location': data.get('location'),
-                                **{f: msg.get(f) for f in MSG_FIELDS},
+                                'user_agent': m.user_agent,
+                                'location': m.location,
+                                **{f: m.msg.get(f) for f in MSG_FIELDS},
                             },
                         }
                     }

@@ -54,9 +54,9 @@ def web():
     If the database doesn't already exist it will be created.
     """
     settings = Settings(sender_cls='app.worker.Sender')
+    print(settings.to_string(True), flush=True)
     setup_logging(settings)
 
-    logger.info('settings: %s', settings)
     logger.info('waiting for elasticsearch and redis to come up...')
     # give es a chance to come up fully, this just prevents lots of es errors, create_indices is itself lenient
     sleep(4)

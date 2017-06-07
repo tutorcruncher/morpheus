@@ -38,7 +38,7 @@ def create_app(loop, settings: Settings=None):
 
     index_html = (THIS_DIR / 'extra/index.html').read_text()
     for key in ('commit', 'release_date'):
-        index_html = re.sub(r'\{\{ ?%s ?\}\}' % key, escape(settings.values[key] or ''), index_html)
+        index_html = re.sub(r'\{\{ ?%s ?\}\}' % key, escape(settings.values()[key] or ''), index_html)
 
     app.update(
         index_html=index_html,

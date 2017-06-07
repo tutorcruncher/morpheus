@@ -3,6 +3,8 @@ services:
   logs:
     ports:
     - 8001:80
+    networks:
+    - public
 
   nginx:
     build: nginx/dev
@@ -11,3 +13,6 @@ services:
     - 8000:80
     depends_on:
     - web
+    networks:
+    - public
+    - private

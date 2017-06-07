@@ -3,6 +3,15 @@ version: '2.1'
 volumes:
   es_data: {}
   redis_data: {}
+  pdf_data: {}
+  test_data: {}
+
+networks:
+  public:
+    driver: bridge
+  private:
+    driver: bridge
+    internal: true
 
 services:
   logs:
@@ -22,6 +31,8 @@ services:
     - 61208-61209:61208-61209
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+    - private
     depends_on:
     - logs
 
@@ -32,6 +43,8 @@ services:
     restart: always
     volumes:
     - es_data:/usr/share/elasticsearch/data
+    networks:
+    - private
     depends_on:
     - logs
 
@@ -40,30 +53,38 @@ services:
     volumes:
     - redis_data:/data
     restart: always
+    networks:
+    - private
     depends_on:
     - logs
 
   pdf:
-    image: samuelcolvin/pydf:v0.35
+    image: samuelcolvin/pydf:latest
     restart: always
+    volumes:
+    - pdf_data:/tmp/pydf_cache
+    networks:
+    - public  # to download assets
+    - private
     depends_on:
     - logs
 
   web:
     image: morpheus
     environment:
-      APP_AUTH_KEY: ${APP_AUTH_KEY}
-      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
-      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
-      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY}
+      APP_AUTH_KEY: ${APP_AUTH_KEY:-testing}
+      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY:-invalid}
+      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY:-i am not secure but 32 bits long}
       APP_REDIS_HOST: redis
       APP_ELASTIC_HOST: elastic
-      APP_COMMIT: ${COMMIT}
-      APP_RELEASE_DATE: ${RELEASE_DATE}
-      APP_RAVEN_DSN: ${RAVEN_DSN}
-      APP_SERVER_NAME: ${SERVER_NAME}
+      APP_COMMIT: ${COMMIT:--}
+      APP_RELEASE_DATE: ${RELEASE_DATE:--}
+      APP_RAVEN_DSN: ${RAVEN_DSN:--}
+      APP_SERVER_NAME: ${SERVER_NAME:-localhost}
 #      APP_LOG_LEVEL: DEBUG
     restart: always
+    networks:
+    - private
     depends_on:
     - elastic
     - redis
@@ -74,19 +95,23 @@ services:
     - ./run.py
     - worker
     environment:
-      APP_AUTH_KEY: ${APP_AUTH_KEY}
-      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
-      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
-      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY}
+      APP_AUTH_KEY: ${APP_AUTH_KEY:-testing}
+      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY:-invalid}
+      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY:-i am not secure but 32 bits long}
       APP_REDIS_HOST: redis
       APP_ELASTIC_HOST: elastic
-      APP_COMMIT: ${COMMIT}
-      APP_RELEASE_DATE: ${RELEASE_DATE}
-      APP_RAVEN_DSN: ${RAVEN_DSN}
-      APP_SERVER_NAME: ${SERVER_NAME}
+      APP_COMMIT: ${COMMIT:--}
+      APP_RELEASE_DATE: ${RELEASE_DATE:--}
+      APP_RAVEN_DSN: ${RAVEN_DSN:--}
+      APP_SERVER_NAME: ${SERVER_NAME:-localhost}
 #      APP_LOG_LEVEL: DEBUG
       CHECK: worker
+    volumes:
+    - test_data:/tmp/morpheus
     restart: always
+    networks:
+    - public  # to communicate with external services
+    - private
     depends_on:
     - elastic
     - redis

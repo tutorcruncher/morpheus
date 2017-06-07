@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     sender_cls: PyObject = 'morpheus.app.worker.Sender'
     mandrill_key: str = ...
     mandrill_url = 'https://mandrillapp.com/api/1.0'
-    raven_dsn: str = None
+    raven_dsn: str = ''
     log_level = 'INFO'
     commit: str = '-'
     release_date: str = '-'
