@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 import json
 
 
@@ -106,7 +109,16 @@ async def test_mandrill_webhook(cli):
     assert len(data['_source']['events']) == 0
     messages = [{'ts': int(1e10), 'event': 'open', '_id': 'test-webhook', 'foobar': ['hello', 'world']}]
     data = {'mandrill_events': json.dumps(messages)}
-    r = await cli.post('/webhook/mandrill/', data=data)
+
+    sig = base64.b64encode(
+        hmac.new(
+            b'testing',
+            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 10000000000, '
+                 b'"event": "open", "_id": "test-webhook", "foobar": ["hello", "world"]}]'),
+            digestmod=hashlib.sha1
+        ).digest()
+    )
+    r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
     assert r.status == 200, await r.text()
     r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
     assert r.status == 200

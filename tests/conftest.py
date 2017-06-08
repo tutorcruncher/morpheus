@@ -57,6 +57,7 @@ def settings(tmpdir, mock_external):
         mandrill_key='good-mandrill-testing-key',
         log_level='ERROR',
         mandrill_url=mock_external.app['server_name'] + '/mandrill',
+        host_name=None,
     )
 
 
@@ -66,6 +67,7 @@ def cli(loop, test_client, settings, setup_elastic_search):
         app['sender']._concurrency_enabled = False
         await app['sender'].startup()
         redis_pool = await app['sender'].get_redis_pool()
+        app['webhook_auth_key'] = b'testing'
         async with redis_pool.get() as redis:
             await redis.flushdb()
 

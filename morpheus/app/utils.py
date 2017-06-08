@@ -9,8 +9,8 @@ from typing import Optional, Type  # noqa
 
 import msgpack
 from aiohttp import ClientSession
-from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, Request, Response  # noqa
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
+from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, Request, Response  # noqa
 from arq.utils import to_unix_ms
 from cryptography.fernet import InvalidToken
 from pydantic import BaseModel, ValidationError
@@ -196,4 +196,13 @@ class ApiSession:
             return r
 
     def _modify_request(self, method, url, data):
+        return method, url, data
+
+
+class Mandrill(ApiSession):
+    def __init__(self, settings, loop):
+        super().__init__(settings.mandrill_url, settings, loop)
+
+    def _modify_request(self, method, url, data):
+        data['key'] = self.settings.mandrill_key
         return method, url, data

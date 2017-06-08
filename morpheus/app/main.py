@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import re
@@ -12,10 +13,55 @@ from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware
 from .models import SendMethod
 from .settings import Settings
+from .utils import Mandrill
 from .views import (THIS_DIR, MandrillWebhookView, SendView, TestWebhookView, UserAggregationView, UserMessageView,
                     UserTaggedMessageView, favicon, index, robots_txt, styles_css)
 
 logger = logging.getLogger('morpheus.main')
+
+
+async def get_mandrill_webhook_key(app):
+    try:
+        settings, mandrill_webhook_url = app['settings'], app['mandrill_webhook_url']
+        if not (settings.mandrill_key and settings.host_name):
+            return
+
+        mandrill = Mandrill(settings=settings, loop=app.loop)
+        webhook_auth_key = None
+
+        r = await mandrill.get('webhooks/list.json')
+        for hook in await r.json():
+            if hook['url'] == mandrill_webhook_url:
+                webhook_auth_key = hook['auth_key']
+                print(hook, flush=True)
+                logger.info('using existing mandrill webhook "%s", key %s', hook['description'], webhook_auth_key)
+                break
+
+        if not webhook_auth_key:
+            logger.info('creating mandrill webhook entry via API')
+            data = {
+                'url': mandrill_webhook_url,
+                'description': 'morpheus (auto created)',
+                # infuriatingly this list appears to differ from those the api returns or actually submits in hooks
+                'events': (
+                   'send', 'hard_bounce', 'soft_bounce', 'open', 'click', 'spam', 'unsub', 'reject',
+                   'blacklist', 'whitelist',
+                   # 'deferral' can't request this.
+                ),
+            }
+            logger.info('about to create webhook entry via API, wait for morpheus API to be up...')
+            await asyncio.sleep(5)
+            r = await mandrill.post('webhooks/add.json', **data)
+            if r.status != 200:
+                raise RuntimeError('invalid mandrill webhook list response {}:\n{}'.format(r.status, await r.text()))
+            data = await r.json()
+            webhook_auth_key = data['auth_key']
+            logger.info('created new mandrill webhook "%s", key %s', data['description'], webhook_auth_key)
+        mandrill.close()
+        app['webhook_auth_key'] = webhook_auth_key.encode()
+    except Exception as e:
+        logger.exception('error in get_mandrill_webhook_key, %s: %s', e.__class__.__name__, e)
+        raise e
 
 
 async def app_startup(app):
@@ -24,6 +70,7 @@ async def app_startup(app):
         async with redis_pool.get() as redis:
             info = await redis.info()
             logger.info('redis version: %s', info['server']['redis_version'])
+    app.loop.create_task(get_mandrill_webhook_key(app))
 
 
 async def app_cleanup(app):
@@ -46,6 +93,8 @@ def create_app(loop, settings: Settings=None):
         sender=settings.sender_cls(settings=settings, loop=loop),
         es=ElasticSearch(settings=settings, loop=loop),
         fernet=Fernet(base64.urlsafe_b64encode(settings.user_fernet_key)),
+        mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
+        webhook_auth_key=None,
     )
 
     app.on_startup.append(app_startup)

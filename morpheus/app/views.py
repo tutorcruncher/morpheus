@@ -1,13 +1,16 @@
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 from pathlib import Path
 
 import msgpack
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPMovedPermanently, Response
 
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendModel
-from .utils import ServiceView, UserView, View, ApiError
+from .utils import ApiError, ServiceView, UserView, View
 
 THIS_DIR = Path(__file__).parent.resolve()
 logger = logging.getLogger('morpheus.web')
@@ -129,12 +132,24 @@ class MandrillWebhookView(GeneralWebhookView):
 
     async def call(self, request):
         try:
-            events = (await request.post())['mandrill_events']
+            event_data = (await request.post())['mandrill_events']
         except KeyError:
             raise HTTPBadRequest(text='"mandrill_events" not found in post data')
 
+        signing_data = self.app['mandrill_webhook_url'] + 'mandrill_events' + event_data
+        print(signing_data, flush=True)
+        sig_generated = base64.b64encode(
+            hmac.new(
+                self.app['webhook_auth_key'],
+                msg=signing_data.encode(),
+                digestmod=hashlib.sha1
+            ).digest()
+        )
+        sig_given = request.headers.get('X-Mandrill-Signature', '<missing>').encode()
+        if not hmac.compare_digest(sig_generated, sig_given):
+            raise HTTPForbidden(text='invalid signature')
         try:
-            events = json.loads(events)
+            events = json.loads(event_data)
         except ValueError as e:
             raise HTTPBadRequest(text=f'invalid json data: {e}')
 
