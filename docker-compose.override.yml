@@ -7,8 +7,10 @@ services:
     - public
 
   nginx:
-    build: nginx/dev
+    image: nginx:1.13-alpine
     restart: always
+    volumes:
+    - ./nginx/dev.nginx.conf:/etc/nginx/nginx.conf
     ports:
     - 8000:80
     depends_on:
