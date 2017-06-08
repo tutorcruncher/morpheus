@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -16,6 +17,7 @@ from misaka import HtmlRenderer, Markdown
 from .es import ElasticSearch
 from .models import MessageStatus, SendMethod
 from .settings import Settings
+from .utils import ApiSession
 
 test_logger = logging.getLogger('morpheus.worker.test')
 main_logger = logging.getLogger('morpheus.worker')
@@ -51,22 +53,34 @@ Job = namedtuple(
 EmailInfo = namedtuple('EmailInfo', ['full_name', 'subject', 'html_body', 'text_body', 'signing_domain'])
 
 
+class Mandrill(ApiSession):
+    def __init__(self, settings, loop):
+        super().__init__(settings.mandrill_url, settings, loop)
+
+    def _modify_request(self, method, url, data):
+        data['key'] = self.settings.mandrill_key
+        return method, url, data
+
+
 class Sender(Actor):
     def __init__(self, settings: Settings=None, **kwargs):
         self.settings = settings or Settings()
         self.redis_settings = self.settings.redis_settings
         super().__init__(**kwargs)
-        self.session = None
-        self.mandrill_send_url = self.settings.mandrill_url + '/messages/send.json'
+        self.session = self.es = self.mandrill = None
+        self.mandrill_webhook_auth_key = None
+        self.mandrill_webhook_url = f'https://{self.settings.host_name}/webhook/mandrill/'
 
     async def startup(self):
         main_logger.info('Sender initialising session and elasticsearch...')
         self.session = ClientSession(loop=self.loop)
         self.es = ElasticSearch(settings=self.settings, loop=self.loop)
+        self.mandrill = Mandrill(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):
-        self.es.close()
         self.session.close()
+        self.es.close()
+        self.mandrill.close()
 
     @concurrent
     async def send(self,
@@ -127,10 +141,52 @@ class Sender(Actor):
                 jobs += 1
         return jobs
 
+    async def _check_morpheus_up(self):
+        for i in range(10):
+            async with self.session.head(self.mandrill_webhook_url) as r:
+                if r.status == 200:
+                    return
+            main_logger.info('morpheus api not yet available %d...', i)
+            await asyncio.sleep(1)
+        raise RuntimeError("morpheus API does not appear to be responding, can't create webhook")
+
+    @concurrent
+    async def setup_mandrill_webhook(self):
+        if not self.settings.mandrill_key:
+            return 0
+        r = await self.mandrill.get('webhooks/list.json')
+        if r.status != 200:
+            raise RuntimeError('invalid mandrill webhook list response {}:\n{}'.format(r.status, await r.text()))
+        for hook in await r.json():
+            if hook['url'] == self.mandrill_webhook_url:
+                self.mandrill_webhook_auth_key = hook['auth_key']
+                main_logger.info('using existing mandrill webhook "%s", key %s', hook['description'],
+                                 self.mandrill_webhook_auth_key)
+                return 200
+
+        main_logger.info('about to create webhook entry via API, checking morpheus API is up...')
+        await self._check_morpheus_up()
+        data = {
+            'url': self.mandrill_webhook_url,
+            'description': 'morpheus - auto created',
+            # infuriatingly this list appears to differ from those the api returns or actually submits in hooks
+            'events': (
+               'send', 'hard_bounce', 'soft_bounce', 'open', 'click', 'spam', 'unsub', 'reject',
+               'blacklist', 'whitelist'
+            ),
+        }
+        r = await self.mandrill.post('webhooks/add.json', **data)
+        if r.status != 200:
+            raise RuntimeError('invalid mandrill webhook list response {}:\n{}'.format(r.status, await r.text()))
+        data = await r.json()
+        self.mandrill_webhook_auth_key = data['auth_key']
+        main_logger.info('created new mandrill webhook "%s", key %s', data['description'],
+                         self.mandrill_webhook_auth_key)
+        return 201
+
     async def _send_mandrill(self, j: Job):
         email_info = self._get_email_info(j)
         data = {
-            'key': self.settings.mandrill_key,
             'async': True,
             'message': dict(
                 html=email_info.html_body,
@@ -163,20 +219,14 @@ class Sender(Actor):
                 'Reply-To': j.reply_to,
             }
         send_ts = datetime.utcnow()
-        async with self.session.post(self.mandrill_send_url, json=data) as r:
-            if r.status == 200:
-                data = await r.json()
-                main_logger.debug('mandrill send to %s:%s, good response, data: %s', j.group_id, j.address, data)
-            else:
-                text = await r.text()
-                main_logger.error('mandrill error %s:%s, response: %s\n%s', j.group_id, j.address, r.status, text)
-                return
-            assert len(data) == 1, data
-            data = data[0]
-            assert data['email'] == j.address, data
-            if data['status'] not in ('sent', 'queued'):
-                main_logger.warning('message not sent %s:%s response: %s', j.group_id, j.address, data)
-            await self._store_msg(data['_id'], send_ts, j, email_info)
+        r = await self.mandrill.post('messages/send.json', **data)
+        data = await r.json()
+        assert len(data) == 1, data
+        data = data[0]
+        assert data['email'] == j.address, data
+        if data['status'] not in ('sent', 'queued'):
+            main_logger.warning('message not sent %s:%s response: %s', j.group_id, j.address, data)
+        await self._store_msg(data['_id'], send_ts, j, email_info)
 
     async def _send_test(self, j: Job):
         email_info = self._get_email_info(j)
@@ -283,3 +333,9 @@ class Worker(BaseWorker):
         d = await super().shadow_kwargs()
         d['settings'] = self.settings
         return d
+
+    async def shadow_factory(self):
+        shadows = await super().shadow_factory()
+        sender = shadows[0]
+        await sender.setup_mandrill_webhook()
+        return shadows

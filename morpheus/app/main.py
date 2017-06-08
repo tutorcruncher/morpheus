@@ -58,6 +58,7 @@ def create_app(loop, settings: Settings=None):
 
     app.router.add_post('/send/', SendView.view(), name='send')
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
+    app.router.add_head('/webhook/mandrill/', index, name='webhook-mandrill-head')
     app.router.add_post('/webhook/mandrill/', MandrillWebhookView.view(), name='webhook-mandrill')
 
     user_prefix = '/user/{method:%s}/' % '|'.join(m.value for m in SendMethod)

@@ -25,9 +25,9 @@ def setup_logging(settings: Settings):
             'sentry': {
                 'level': 'WARNING',
                 'class': 'raven.handlers.logging.SentryHandler',
-                'dsn': settings.raven_dsn.strip(' -') or None,
+                'dsn': settings.raven_dsn,
                 'release': settings.commit,
-                'name': settings.server_name,
+                'name': settings.host_name,
             },
         },
         'loggers': {

@@ -48,7 +48,8 @@ def cli(ctx):
 
 
 @cli.command()
-def web():
+@click.option('--wait/--no-wait', default=True)
+def web(wait):
     """
     Serve the application
     If the database doesn't already exist it will be created.
@@ -59,7 +60,8 @@ def web():
 
     logger.info('waiting for elasticsearch and redis to come up...')
     # give es a chance to come up fully, this just prevents lots of es errors, create_indices is itself lenient
-    sleep(4)
+
+    wait and sleep(4)
     _check_services_ready(settings)
 
     _elasticsearch_setup(settings)
@@ -72,7 +74,8 @@ def web():
 
 
 @cli.command()
-def worker():
+@click.option('--wait/--no-wait', default=True)
+def worker(wait):
     """
     Run the worker
     """
@@ -80,11 +83,11 @@ def worker():
     setup_logging(settings)
 
     logger.info('waiting for elasticsearch and redis to come up...')
-    sleep(4)
+    wait and sleep(4)
     _check_services_ready(settings)
     # redis/the network occasionally hangs and gets itself in a mess if we try to connect too early,
     # even once it's "up", hence 2 second wait
-    sleep(2)
+    wait and sleep(2)
     RunWorkerProcess('app/worker.py', 'Worker')
 
 

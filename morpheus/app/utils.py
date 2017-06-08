@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
@@ -6,9 +8,16 @@ from random import random
 from typing import Optional, Type  # noqa
 
 import msgpack
-from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, Request  # noqa
+from aiohttp import ClientSession
+from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, Request, Response  # noqa
+from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
+from arq.utils import to_unix_ms
 from cryptography.fernet import InvalidToken
 from pydantic import BaseModel, ValidationError
+
+from .settings import Settings
+
+api_logger = logging.getLogger('morpheus.external')
 
 
 class ContentType(str, Enum):
@@ -117,3 +126,74 @@ class UserView(View):
         self.session = Session(**data)
         if self.session.expires < datetime.utcnow().replace(tzinfo=timezone.utc):
             raise HTTPForbidden(text='token expired')
+
+
+class ApiError(RuntimeError):
+    def __init__(self, method, url, request_data, response, response_data):
+        self.method = method
+        self.url = url
+        self.response = response
+        self.status = response.status
+        self.request_data = request_data
+        try:
+            self.response_data = json.dumps(json.loads(response_data), indent=2)
+        except ValueError:
+            self.response_data = response_data
+
+    def __str__(self):
+        return (
+            f'{self.method} {self.url}, bad response {self.status}\n'
+            f'Request data: {json.dumps(self.request_data, indent=2, cls=CustomJSONEncoder)}\n'
+            f'-----------------------------\n'
+            f'Response data: {self.response_data}'
+        )
+
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return to_unix_ms(obj)[0]
+        elif isinstance(obj, set):
+            return sorted(obj)
+        return super().default(obj)
+
+
+class ApiSession:
+    def __init__(self, root_url, settings: Settings, loop=None):
+        self.settings = settings
+        self.loop = loop or asyncio.get_event_loop()
+        self.session = ClientSession(
+            loop=self.loop,
+            json_serialize=self.encode_json,
+        )
+        self.root = root_url.rstrip('/') + '/'
+
+    @classmethod
+    def encode_json(cls, data):
+        return json.dumps(data, cls=CustomJSONEncoder)
+
+    def close(self):
+        self.session.close()
+
+    async def get(self, uri, **kwargs):
+        return await self._request(METH_GET, uri, **kwargs)
+
+    async def delete(self, uri, **kwargs):
+        return await self._request(METH_DELETE, uri, **kwargs)
+
+    async def post(self, uri, **kwargs):
+        return await self._request(METH_POST, uri, **kwargs)
+
+    async def put(self, uri, **kwargs):
+        return await self._request(METH_PUT, uri, **kwargs)
+
+    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
+        method, url, data = self._modify_request(method, self.root + uri.lstrip('/'), data)
+        async with self.session.request(method, url, json=data) as r:
+            if allowed_statuses != '*' and r.status not in allowed_statuses:
+                raise ApiError(method, url, data, r, await r.text())
+            api_logger.debug('%s /%s -> %s', method, uri, r.status)
+            return r
+
+    def _modify_request(self, method, url, data):
+        return method, url, data

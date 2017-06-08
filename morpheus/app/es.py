@@ -1,76 +1,15 @@
 import asyncio
-import json
 import logging
-from datetime import datetime
-
-from aiohttp import BasicAuth, ClientSession
-from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
-from aiohttp.web_response import Response
-from arq.utils import to_unix_ms
 
 from .settings import Settings
+from .utils import ApiSession
 
 main_logger = logging.getLogger('morpheus.elastic')
 
 
-class ElasticSearchError(RuntimeError):
-    def __init__(self, method, uri, response, data):
-        self.method = method
-        self.uri = uri
-        self.response = response
-        self.status = response.status
-        try:
-            self.data = json.dumps(json.loads(data), indent=2)
-        except ValueError:
-            self.data = data
-
-    def __str__(self):
-        return f'{self.method} {self.uri}, bad response {self.status}, response:\n{self.data}'
-
-
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return to_unix_ms(obj)[0]
-        return super().default(obj)
-
-
-class ElasticSearch:
+class ElasticSearch(ApiSession):
     def __init__(self, settings: Settings, loop=None):
-        self.settings = settings
-        self.loop = loop or asyncio.get_event_loop()
-        self.session = ClientSession(
-            loop=self.loop,
-            auth=BasicAuth(settings.elastic_username, settings.elastic_password),
-            json_serialize=self.encode_json,
-        )
-        self.root = self.settings.elastic_url.rstrip('/') + '/'
-
-    @classmethod
-    def encode_json(cls, data):
-        return json.dumps(data, cls=CustomJSONEncoder)
-
-    def close(self):
-        self.session.close()
-
-    async def get(self, uri, **kwargs):
-        return await self._request(METH_GET, uri, **kwargs)
-
-    async def delete(self, uri, **kwargs):
-        return await self._request(METH_DELETE, uri, **kwargs)
-
-    async def post(self, uri, **kwargs):
-        return await self._request(METH_POST, uri, **kwargs)
-
-    async def put(self, uri, **kwargs):
-        return await self._request(METH_PUT, uri, **kwargs)
-
-    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
-        async with self.session.request(method, self.root + uri, json=data) as r:
-            if allowed_statuses != '*' and r.status not in allowed_statuses:
-                raise ElasticSearchError(method, uri, r, await r.text())
-            main_logger.debug('%s /%s -> %s', method, uri, r.status)
-            return r
+        super().__init__(settings.elastic_url, settings, loop)
 
     async def create_indices(self, delete_existing=False):
         """

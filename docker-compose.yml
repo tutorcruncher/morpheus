@@ -40,6 +40,11 @@ services:
     image: docker.elastic.co/elasticsearch/elasticsearch:5.4.1
     environment:
     - cluster.name=docker-cluster
+    - xpack.security.enabled=false
+    - xpack.watcher.enabled=false
+    - xpack.monitoring.enabled=false
+    - xpack.graph.enabled=false
+    - xpack.ml.enabled=false
     restart: always
     volumes:
     - es_data:/usr/share/elasticsearch/data
@@ -72,18 +77,19 @@ services:
   web:
     image: morpheus
     environment:
-      APP_AUTH_KEY: ${APP_AUTH_KEY:-testing}
-      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY:-invalid}
-      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY:-i am not secure but 32 bits long}
+      APP_AUTH_KEY: ${APP_AUTH_KEY}
+      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
+      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY}
       APP_REDIS_HOST: redis
       APP_ELASTIC_HOST: elastic
-      APP_COMMIT: ${COMMIT:--}
-      APP_RELEASE_DATE: ${RELEASE_DATE:--}
-      APP_RAVEN_DSN: ${RAVEN_DSN:--}
-      APP_SERVER_NAME: ${SERVER_NAME:-localhost}
+      APP_COMMIT: ${COMMIT}
+      APP_RELEASE_DATE: ${RELEASE_DATE}
+      APP_RAVEN_DSN: ${RAVEN_DSN}
+      APP_HOST_NAME: ${APP_HOST_NAME}
 #      APP_LOG_LEVEL: DEBUG
     restart: always
     networks:
+    - public  # send sentry errors
     - private
     depends_on:
     - elastic
@@ -95,15 +101,15 @@ services:
     - ./run.py
     - worker
     environment:
-      APP_AUTH_KEY: ${APP_AUTH_KEY:-testing}
-      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY:-invalid}
-      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY:-i am not secure but 32 bits long}
+      APP_AUTH_KEY: ${APP_AUTH_KEY}
+      APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
+      APP_USER_FERNET_KEY: ${APP_USER_FERNET_KEY}
       APP_REDIS_HOST: redis
       APP_ELASTIC_HOST: elastic
-      APP_COMMIT: ${COMMIT:--}
-      APP_RELEASE_DATE: ${RELEASE_DATE:--}
-      APP_RAVEN_DSN: ${RAVEN_DSN:--}
-      APP_SERVER_NAME: ${SERVER_NAME:-localhost}
+      APP_COMMIT: ${COMMIT}
+      APP_RELEASE_DATE: ${RELEASE_DATE}
+      APP_RAVEN_DSN: ${RAVEN_DSN}
+      APP_HOST_NAME: ${APP_HOST_NAME}
 #      APP_LOG_LEVEL: DEBUG
       CHECK: worker
     volumes:

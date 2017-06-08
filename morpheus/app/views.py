@@ -6,9 +6,8 @@ from pathlib import Path
 import msgpack
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPMovedPermanently, Response
 
-from .es import ElasticSearchError
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendModel
-from .utils import ServiceView, UserView, View
+from .utils import ServiceView, UserView, View, ApiError
 
 THIS_DIR = Path(__file__).parent.resolve()
 logger = logging.getLogger('morpheus.web')
@@ -81,7 +80,7 @@ class GeneralWebhookView(View):
             update_uri = f'messages/{self.es_type}/{m.message_id}/_update'
             try:
                 await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
-            except ElasticSearchError as e:
+            except ApiError as e:
                 if e.status == 404:
                     # we still return 200 here to avoid mandrill repeatedly trying to send the event
                     logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.event,
