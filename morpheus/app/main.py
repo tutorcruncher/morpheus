@@ -33,7 +33,6 @@ async def get_mandrill_webhook_key(app):
         for hook in await r.json():
             if hook['url'] == mandrill_webhook_url:
                 webhook_auth_key = hook['auth_key']
-                print(hook, flush=True)
                 logger.info('using existing mandrill webhook "%s", key %s', hook['description'], webhook_auth_key)
                 break
 
@@ -112,6 +111,6 @@ def create_app(loop, settings: Settings=None):
 
     user_prefix = '/user/{method:%s}/' % '|'.join(m.value for m in SendMethod)
     app.router.add_get(user_prefix, UserMessageView.view(), name='user-messages')
-    app.router.add_get(user_prefix + '/tag/', UserTaggedMessageView.view(), name='user-tagged-messages')
-    app.router.add_get(user_prefix + '/aggregation/', UserAggregationView.view(), name='user-aggregation')
+    app.router.add_get(user_prefix + 'tag/', UserTaggedMessageView.view(), name='user-tagged-messages')
+    app.router.add_get(user_prefix + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
     return app

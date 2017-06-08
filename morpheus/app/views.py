@@ -136,12 +136,10 @@ class MandrillWebhookView(GeneralWebhookView):
         except KeyError:
             raise HTTPBadRequest(text='"mandrill_events" not found in post data')
 
-        signing_data = self.app['mandrill_webhook_url'] + 'mandrill_events' + event_data
-        print(signing_data, flush=True)
         sig_generated = base64.b64encode(
             hmac.new(
                 self.app['webhook_auth_key'],
-                msg=signing_data.encode(),
+                msg=(self.app['mandrill_webhook_url'] + 'mandrill_events' + event_data).encode(),
                 digestmod=hashlib.sha1
             ).digest()
         )
@@ -159,6 +157,9 @@ class MandrillWebhookView(GeneralWebhookView):
 
 
 class UserMessageView(UserView):
+    """
+    List or search of messages for an authenticated user
+    """
     async def call(self, request):
         es_query = {
             'query': {
@@ -187,61 +188,58 @@ class UserMessageView(UserView):
             es_query['sort'] = {
                 'update_ts': {'order': 'desc'}
             }
-        r = await self.app['es'].post(
+        r = await self.app['es'].get(
             'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), **es_query
         )
         return Response(body=await r.text(), content_type='application/json')
 
 
-AGGREGATION_FILTER = {
-    'aggs': {
-        '_': {
-            'filter': {
-                'term': {
-                    'company': 'foobar'
-                }
-                # TODO allow more filtering here, filter to last X days.
-            },
+class UserAggregationView(UserView):
+    """
+    Aggregated sends and opens over time for an authenticated user
+    """
+    def filter(self, interval='day'):
+        return {
             'aggs': {
                 '_': {
-                    'date_histogram': {
-                        'field': 'send_ts',
-                        'interval': 'day'
+                    'filter': {
+                        'term': {
+                            'company': self.session.company
+                        }
+                        # TODO allow more filtering here, filter to last X days.
                     },
                     'aggs': {
-                        'all': {
-                            'filter': {
-                                'match_all': {}
-                            }
-                        },
+                        '_': {
+                            'date_histogram': {
+                                'field': 'send_ts',
+                                'interval': interval
+                            },
+                            'aggs': {
+                                status: {
+                                    'filter': {
+                                        'term': {
+                                            'status': status
+                                        }
+                                    }
+                                } for status in MessageStatus
+                            },
+                        }
                     }
                 }
             }
         }
-    }
-}
-for status in MessageStatus:
-    AGGREGATION_FILTER['aggs']['_']['aggs']['_'][status] = {
-        'filter': {
-            'term': {
-                'status': status
-            }
-        }
-    }
 
-
-class UserAggregationView(UserView):
     async def call(self, request):
-        r = await self.app['es'].post(
+        r = await self.app['es'].get(
             'messages/{[method]}/_search?size=0&filter_path=aggregations'.format(request.match_info),
-            **AGGREGATION_FILTER
+            **self.filter()
         )
         return Response(body=await r.text(), content_type='application/json')
 
 
 class UserTaggedMessageView(UserView):
     async def call(self, request):
-        r = await self.app['es'].post(
+        r = await self.app['es'].get(
             'messages/{[method]}/_search?filter_path=hits'.format(request.match_info),
             query={
                 'bool': {

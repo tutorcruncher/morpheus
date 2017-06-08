@@ -129,23 +129,23 @@ class UserView(View):
 
 
 class ApiError(RuntimeError):
-    def __init__(self, method, url, request_data, response, response_data):
+    def __init__(self, method, url, request_data, response, response_text):
         self.method = method
         self.url = url
         self.response = response
         self.status = response.status
         self.request_data = request_data
         try:
-            self.response_data = json.dumps(json.loads(response_data), indent=2)
+            self.response_text = json.dumps(json.loads(response_text), indent=2)
         except ValueError:
-            self.response_data = response_data
+            self.response_text = response_text
 
     def __str__(self):
         return (
             f'{self.method} {self.url}, bad response {self.status}\n'
             f'Request data: {json.dumps(self.request_data, indent=2, cls=CustomJSONEncoder)}\n'
             f'-----------------------------\n'
-            f'Response data: {self.response_data}'
+            f'Response data: {self.response_text}'
         )
 
 
@@ -190,8 +190,12 @@ class ApiSession:
     async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
         method, url, data = self._modify_request(method, self.root + uri.lstrip('/'), data)
         async with self.session.request(method, url, json=data) as r:
-            if allowed_statuses != '*' and r.status not in allowed_statuses:
-                raise ApiError(method, url, data, r, await r.text())
+            # always read entire response before closing the connection
+            response_text = await r.text()
+
+        if allowed_statuses != '*' and r.status not in allowed_statuses:
+            raise ApiError(method, url, data, r, response_text)
+        else:
             api_logger.debug('%s /%s -> %s', method, uri, r.status)
             return r
 

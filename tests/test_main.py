@@ -2,6 +2,11 @@ import base64
 import hashlib
 import hmac
 import json
+from datetime import datetime
+
+import msgpack
+from arq.utils import to_unix_ms
+from cryptography.fernet import Fernet
 
 
 async def test_index(cli):
@@ -81,12 +86,11 @@ async def test_webhook(cli, message_id):
     assert data['_source']['update_ts'] > first_update_ts
 
 
-async def test_mandrill_send(cli, message_data):
+async def test_mandrill_send(cli, send_message):
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
     assert r.status == 404, await r.text()
-    message_data['method'] = 'email-mandrill'
-    r = await cli.post('/send/', json=message_data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    await send_message(method='email-mandrill')
+
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
     assert r.status == 200, await r.text()
     data = await r.json()
@@ -126,3 +130,41 @@ async def test_mandrill_webhook(cli):
     assert len(data['_source']['events']) == 1
     assert data['_source']['update_ts'] == 1e13
     assert data['_source']['status'] == 'open'
+
+
+def user_auth(settings, company='foobar'):
+    session_data = {
+        'company': company,
+        'user_id': 123,
+        'expires': to_unix_ms(datetime(2032, 1, 1))[0]
+    }
+    f = Fernet(base64.urlsafe_b64encode(settings.user_fernet_key))
+    return f.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()
+
+
+async def test_user_list_messages(cli, settings, send_message):
+    msg_id = await send_message(company_code='whoever')
+    await cli.server.app['es'].post('messages/_refresh')
+    r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='whoever')})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    print(json.dumps(data, indent=2))
+    assert len(data['hits']['hits']) == 1
+    hit = data['hits']['hits'][0]
+    assert hit['_id'] == msg_id
+    assert hit['_source']['company'] == 'whoever'
+    assert hit['_source']['status'] == 'send'
+
+
+async def test_user_aggregate(cli, settings, send_message):
+    await send_message(company_code='whichever')
+    await cli.server.app['es'].post('messages/_refresh')
+    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, 'whichever')})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    print(json.dumps(data, indent=2))
+    buckets = data['aggregations']['_']['_']['buckets']
+    assert len(buckets) == 1
+    assert buckets[0]['doc_count'] == 1
+    assert buckets[0]['send']['doc_count'] == 1
+    assert buckets[0]['open']['doc_count'] == 0
