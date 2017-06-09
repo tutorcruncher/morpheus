@@ -13,6 +13,7 @@ import msgpack
 import requests
 from arq.utils import from_unix_ms, to_unix_ms
 from cryptography.fernet import Fernet
+from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.terminal256 import Terminal256Formatter
 from pygments.lexers.data import JsonLexer
@@ -42,6 +43,12 @@ def get_data(r):
 formatter = Terminal256Formatter(style='vim')
 
 
+def replace_data(m):
+    dt = parse_datetime(m.group())
+    # WARNING: this means the ouput is not valid json, but is more readable
+    return f'{m.group()} ({dt:%a %Y-%m-%d %H:%M})'
+
+
 def print_data(data, fmt='json'):
     if fmt == 'html':
         lexer = HtmlLexer()
@@ -49,6 +56,7 @@ def print_data(data, fmt='json'):
         lexer = JsonLexer()
     if not isinstance(data, str):
         data = json.dumps(data, indent=2)
+        data = re.sub('14\d{8,11}', replace_data, data)
     print(highlight(data, lexer, formatter))
 
 
@@ -83,7 +91,7 @@ yellow = partial(style, fg='yellow')
 dim = partial(style, fg='white', dim=True)
 
 
-def print_messages(data, print_heading=True, show_count=1000, p_from=0):
+def print_messages(data, print_heading=True, limit=1000, p_from=0):
     if print_heading:
         heading = yellow(
             f'{"ID":6} {"message id":32} {"company":15} {"to":25} {"status":12} {"sent at":20} {"update at":20} '
@@ -93,7 +101,7 @@ def print_messages(data, print_heading=True, show_count=1000, p_from=0):
     messages = data['hits']['hits']
     for message in messages:
         p_from += 1
-        if p_from > show_count:
+        if p_from > limit:
             return None
         source = message['_source']
         sent_ts = from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M')
@@ -179,8 +187,8 @@ def status(username, password, user_fernet_key, company, send_method):
 @click.option('--user-fernet-key', envvar='APP_USER_FERNET_KEY')
 @click.option('--company', default='__all__')
 @click.option('--send-method', default='email-mandrill')
-@click.option('--count', 'show_count', default=50, type=int)
-def list(user_fernet_key, company, send_method, show_count):
+@click.option('--limit', 'limit', default=50, type=int)
+def list(user_fernet_key, company, send_method, limit):
     p_from = 0
     for i in range(100):
         r = requests.get(
@@ -192,7 +200,7 @@ def list(user_fernet_key, company, send_method, show_count):
         # print_data(data)
         if not data['hits']['hits']:
             return
-        p_from = print_messages(data, i == 0, show_count, p_from)
+        p_from = print_messages(data, i == 0, limit, p_from)
         if not p_from:
             return
 

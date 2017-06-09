@@ -27,6 +27,7 @@ services:
     pid: host
     environment:
       GLANCES_OPT: '-w'
+    hostname: morpheus
     ports:
     - 61208-61209:61208-61209
     volumes:
@@ -76,6 +77,7 @@ services:
 
   web:
     image: morpheus
+    hostname: morpheus-web
     environment:
       APP_AUTH_KEY: ${APP_AUTH_KEY}
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
@@ -97,6 +99,7 @@ services:
 
   worker:
     image: morpheus
+    hostname: morpheus-worker
     entrypoint:
     - ./run.py
     - worker
