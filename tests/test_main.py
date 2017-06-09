@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import uuid
 from datetime import datetime
 
 import msgpack
@@ -143,17 +144,33 @@ def user_auth(settings, company='foobar'):
 
 
 async def test_user_list_messages(cli, settings, send_message):
-    msg_id = await send_message(company_code='whoever')
+    await cli.server.app['es'].create_indices(True)
+
+    expected_msg_ids = []
+    for i in range(4):
+        uid = str(uuid.uuid4())
+        await send_message(uid=uid, company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
+        expected_msg_ids.append(f'{uid}-{i}tcom')
+
+    await send_message(uid=str(uuid.uuid4()), company_code='different1')
+    await send_message(uid=str(uuid.uuid4()), company_code='different2')
     await cli.server.app['es'].post('messages/_refresh')
     r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='whoever')})
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
-    assert len(data['hits']['hits']) == 1
+    assert data['hits']['total'] == 4
+    msg_ids = [h['_id'] for h in data['hits']['hits']]
+    print(msg_ids)
+    assert msg_ids == list(reversed(expected_msg_ids))
+    assert len(data['hits']['hits']) == 4
     hit = data['hits']['hits'][0]
-    assert hit['_id'] == msg_id
     assert hit['_source']['company'] == 'whoever'
     assert hit['_source']['status'] == 'send'
+    r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='__all__')})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 6
 
 
 async def test_user_aggregate(cli, settings, send_message):

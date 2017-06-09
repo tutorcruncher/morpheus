@@ -91,12 +91,12 @@ def send_message(cli, **extra):
             'from_address': 'Sender Name <sender@example.com>',
             'method': 'email-test',
             'subject_template': 'test message',
-            'recipients': [{'address': f'foobar@testing.com'}]
+            'recipients': [{'address': 'foobar@testing.com'}]
         }
         data.update(**extra)
         r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
-        return 'x' * 20 + '-foobartestingcom'
+        return data['uid'] + '-foobartestingcom'
     return _send_message
 
 

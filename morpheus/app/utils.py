@@ -95,6 +95,15 @@ class View:
     async def decode_json(self):
         return await self.request.json()
 
+    def get_arg_int(self, name, default=None):
+        v = self.request.GET.get(name)
+        if v is None:
+            return default
+        try:
+            return int(v)
+        except ValueError:
+            raise HTTPBadRequest(text=f'invalid get argument "{name}": {v!r}')
+
 
 class ServiceView(View):
     """

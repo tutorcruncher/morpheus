@@ -165,10 +165,14 @@ class UserMessageView(UserView):
             'query': {
                 'bool': {
                     'filter': [
+                        {'match_all': {}}
+                        if self.session.company == '__all__' else
                         {'term': {'company': self.session.company}},
                     ]
                 }
-            }
+            },
+            'from': self.get_arg_int('from', 0),
+            'size': self.get_arg_int('size', 50),
         }
         message_id = request.GET.get('message_id')
         query = request.GET.get('q')
@@ -185,9 +189,10 @@ class UserMessageView(UserView):
                 }}
             ]
         else:
-            es_query['sort'] = {
-                'update_ts': {'order': 'desc'}
-            }
+            es_query['sort'] = [
+                {'send_ts': 'desc'},
+            ]
+
         r = await self.app['es'].get(
             'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), **es_query
         )
@@ -202,12 +207,12 @@ class UserAggregationView(UserView):
         return {
             'aggs': {
                 '_': {
-                    'filter': {
-                        'term': {
-                            'company': self.session.company
-                        }
-                        # TODO allow more filtering here, filter to last X days.
-                    },
+                    'filter':
+                        {'match_all': {}}
+                        if self.session.company == '__all__' else
+                        {'term': {'company': self.session.company}}
+                    ,
+                    # TODO allow more filtering here, filter to last X days.
                     'aggs': {
                         '_': {
                             'date_histogram': {
@@ -244,6 +249,8 @@ class UserTaggedMessageView(UserView):
             query={
                 'bool': {
                     'filter': [
+                        {'match_all': {}}
+                        if self.session.company == '__all__' else
                         {'term': {'company': self.session.company}},
                     ] + [
                         {'term': {'tags': t}} for t in request.GET.get('q')
