@@ -7,7 +7,7 @@ services:
     - '${LOGSPOUT_ENDPOINT}'
 
   nginx:
-    build: nginx/prod
+    image: morpheus-nginx
     restart: always
     ports:
     - 443:443

@@ -8,7 +8,8 @@ dist/
 /test*.*
 .coverage
 htmlcov/
-nginx/prod/keys
+nginx/keys
 activate.prod.sh
 activate.client.sh
-nginx/prod/htpasswd
+nginx/htpasswd
+nginx/_build.nginx.conf

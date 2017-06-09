@@ -171,7 +171,7 @@ class Sender(Actor):
         data = data[0]
         assert data['email'] == j.address, data
         if data['status'] not in ('sent', 'queued'):
-            main_logger.warning('message not sent %s:%s response: %s', j.group_id, j.address, data)
+            main_logger.warning('message not sent %s %s response: %s', j.group_id, j.address, data)
         await self._store_msg(data['_id'], send_ts, j, email_info)
 
     async def _send_test(self, j: Job):

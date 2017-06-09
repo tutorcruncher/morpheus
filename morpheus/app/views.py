@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 import msgpack
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPMovedPermanently, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, Response
 
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendModel
 from .utils import ApiError, ServiceView, UserView, View
@@ -19,13 +19,8 @@ logger = logging.getLogger('morpheus.web')
 async def index(request):
     return Response(text=request.app['index_html'], content_type='text/html')
 
-STYLES = (THIS_DIR / 'extra/styles.css').read_text()
-
-
-async def styles_css(request):
-    return Response(text=STYLES, content_type='text/css')
-
-
+STYLES = (THIS_DIR / 'extra/styles.css').read_bytes()
+FAVICON = (THIS_DIR / 'extra/favicon.ico').read_bytes()
 ROBOTS = """\
 User-agent: *
 Allow: /$
@@ -33,12 +28,16 @@ Disallow: /
 """
 
 
+async def styles_css(request):
+    return Response(body=STYLES, content_type='text/css')
+
+
 async def robots_txt(request):
     return Response(text=ROBOTS, content_type='text/plain')
 
 
 async def favicon(request):
-    raise HTTPMovedPermanently('https://secure.tutorcruncher.com/favicon.ico')
+    return Response(body=FAVICON, content_type='image/vnd.microsoft.icon')
 
 
 class SendView(ServiceView):
@@ -172,7 +171,7 @@ class UserMessageView(UserView):
                 }
             },
             'from': self.get_arg_int('from', 0),
-            'size': self.get_arg_int('size', 50),
+            'size': self.get_arg_int('size', 10),
         }
         message_id = request.GET.get('message_id')
         query = request.GET.get('q')
@@ -188,6 +187,7 @@ class UserMessageView(UserView):
                     'lenient': True,
                 }}
             ]
+            es_query['min_score'] = 2
         else:
             es_query['sort'] = [
                 {'send_ts': 'desc'},
@@ -207,11 +207,14 @@ class UserAggregationView(UserView):
         return {
             'aggs': {
                 '_': {
-                    'filter':
-                        {'match_all': {}}
-                        if self.session.company == '__all__' else
-                        {'term': {'company': self.session.company}}
-                    ,
+                    'filter': {
+                        'bool': {
+                            'filter': [
+                                {'match_all': {}} if self.session.company == '__all__' else
+                                {'term': {'company': self.session.company}},
+                            ]
+                        }
+                    },
                     # TODO allow more filtering here, filter to last X days.
                     'aggs': {
                         '_': {

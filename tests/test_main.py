@@ -30,8 +30,8 @@ async def test_robots(cli):
 
 async def test_favicon(cli):
     r = await cli.get('/favicon.ico', allow_redirects=False)
-    assert r.status == 301
-    assert r.headers['Location'] == 'https://secure.tutorcruncher.com/favicon.ico'
+    assert r.status == 200
+    assert r.headers['Content-Type'] == 'image/vnd.microsoft.icon'
 
 
 async def test_send_message(cli, tmpdir):
@@ -143,7 +143,7 @@ def user_auth(settings, company='foobar'):
     return f.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()
 
 
-async def test_user_list_messages(cli, settings, send_message):
+async def test_user_list(cli, settings, send_message):
     await cli.server.app['es'].create_indices(True)
 
     expected_msg_ids = []
@@ -167,21 +167,60 @@ async def test_user_list_messages(cli, settings, send_message):
     hit = data['hits']['hits'][0]
     assert hit['_source']['company'] == 'whoever'
     assert hit['_source']['status'] == 'send'
+
     r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='__all__')})
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 6
 
 
-async def test_user_aggregate(cli, settings, send_message):
-    await send_message(company_code='whichever')
+async def test_user_search(cli, settings, send_message):
+    msgs = {}
+    subjects = 'apple', 'banana', 'cherry', 'durian'
+    for i in range(4):
+        uid = str(uuid.uuid4())
+        subject = subjects[i]
+        await send_message(uid=uid, company_code='whoever',
+                           recipients=[{'address': f'{i}@t.com'}], subject_template=subject)
+        msgs[subject] = f'{uid}-{i}tcom'
+
+    await send_message(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
     await cli.server.app['es'].post('messages/_refresh')
-    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, 'whichever')})
+    r = await cli.get('/user/email-test/?q=cherry',
+                      headers={'Authorization': user_auth(settings, company='whoever')})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    print(json.dumps(data, indent=2))
+    assert data['hits']['total'] == 1
+    hit = data['hits']['hits'][0]
+    assert hit['_id'] == msgs['cherry']
+    assert hit['_source']['subject'] == 'cherry'
+    r = await cli.get('/user/email-test/?q=eggplant',
+                      headers={'Authorization': user_auth(settings, company='whoever')})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    print(json.dumps(data, indent=2))
+    assert data['hits']['total'] == 0
+
+
+async def test_user_aggregate(cli, settings, send_message):
+    await cli.server.app['es'].create_indices(True)
+
+    for i in range(4):
+        await send_message(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
+
+    await send_message(uid=str(uuid.uuid4()), company_code='different')
+    await cli.server.app['es'].post('messages/_refresh')
+    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, 'whoever')})
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
     buckets = data['aggregations']['_']['_']['buckets']
     assert len(buckets) == 1
-    assert buckets[0]['doc_count'] == 1
-    assert buckets[0]['send']['doc_count'] == 1
+    assert buckets[0]['doc_count'] == 4
+    assert buckets[0]['send']['doc_count'] == 4
     assert buckets[0]['open']['doc_count'] == 0
+    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, '__all__')})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['aggregations']['_']['_']['buckets'][0]['doc_count'] == 5

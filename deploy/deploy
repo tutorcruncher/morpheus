@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -e
 THIS_DIR=$(dirname "$0")
+
 docker build morpheus -t morpheus
+
+sed "s/{{HOST_NAME}}/${APP_HOST_NAME}/g" nginx/nginx.conf > ${THIS_DIR}/../nginx/_build.nginx.conf
+docker build nginx -t morpheus-nginx
+
 eval "${THIS_DIR}/compose up -d --build $@"

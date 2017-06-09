@@ -93,6 +93,7 @@ def send_message(cli, **extra):
             'subject_template': 'test message',
             'recipients': [{'address': 'foobar@testing.com'}]
         }
+        assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
         r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
