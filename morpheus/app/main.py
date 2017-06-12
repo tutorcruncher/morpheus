@@ -1,8 +1,6 @@
 import asyncio
 import base64
 import logging
-import re
-from html import escape
 
 import async_timeout
 from aiohttp.web import Application
@@ -13,9 +11,9 @@ from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware
 from .models import SendMethod
 from .settings import Settings
-from .utils import Mandrill
-from .views import (THIS_DIR, MandrillWebhookView, SendView, TestWebhookView, UserAggregationView, UserMessageView,
-                    UserTaggedMessageView, favicon, index, robots_txt, styles_css)
+from .utils import Mandrill, MorpheusUserApi
+from .views import (THIS_DIR, AdminAggregatedView, AdminListView, MandrillWebhookView, SendView, TestWebhookView,
+                    UserAggregationView, UserMessageView, UserTaggedMessageView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -64,17 +62,20 @@ async def get_mandrill_webhook_key(app):
 
 
 async def app_startup(app):
-    with async_timeout.timeout(5, loop=app.loop):
+    # weird effect with aiohttp-devtools
+    loop = app.loop or asyncio.get_event_loop()
+    with async_timeout.timeout(5, loop=loop):
         redis_pool = await app['sender'].get_redis_pool()
         async with redis_pool.get() as redis:
             info = await redis.info()
             logger.info('redis version: %s', info['server']['redis_version'])
-    app.loop.create_task(get_mandrill_webhook_key(app))
+    loop.create_task(get_mandrill_webhook_key(app))
 
 
 async def app_cleanup(app):
     await app['sender'].close()
     app['es'].close()
+    app['morpheus_api'].close()
 
 
 def create_app(loop, settings: Settings=None):
@@ -82,27 +83,20 @@ def create_app(loop, settings: Settings=None):
     setup_logging(settings)
     app = Application(client_max_size=1024**2*100, middlewares=(ErrorLoggingMiddleware(),))
 
-    index_html = (THIS_DIR / 'extra/index.html').read_text()
-    for key in ('commit', 'release_date'):
-        index_html = re.sub(r'\{\{ ?%s ?\}\}' % key, escape(settings.values()[key] or ''), index_html)
-
     app.update(
-        index_html=index_html,
         settings=settings,
         sender=settings.sender_cls(settings=settings, loop=loop),
         es=ElasticSearch(settings=settings, loop=loop),
         fernet=Fernet(base64.urlsafe_b64encode(settings.user_fernet_key)),
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
         webhook_auth_key=None,
+        morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
     )
 
     app.on_startup.append(app_startup)
     app.on_cleanup.append(app_cleanup)
 
     app.router.add_get('/', index, name='index')
-    app.router.add_get('/robots.txt', robots_txt, name='robots.txt')
-    app.router.add_get('/styles.css', styles_css, name='styles.css')
-    app.router.add_get('/favicon.ico', favicon, name='favicon')
 
     app.router.add_post('/send/', SendView.view(), name='send')
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
@@ -113,4 +107,7 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get(user_prefix, UserMessageView.view(), name='user-messages')
     app.router.add_get(user_prefix + 'tag/', UserTaggedMessageView.view(), name='user-tagged-messages')
     app.router.add_get(user_prefix + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
+    app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
+    app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
+    app.router.add_static('/', str(THIS_DIR / 'static'))
     return app

@@ -1,22 +1,27 @@
 import asyncio
+import base64
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
+from pathlib import Path
 from random import random
 from typing import Optional, Type  # noqa
 
+import chevron
 import msgpack
 from aiohttp import ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
-from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, Request, Response  # noqa
+from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
 from arq.utils import to_unix_ms
-from cryptography.fernet import InvalidToken
+from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, ValidationError
 
 from .settings import Settings
 
+THIS_DIR = Path(__file__).parent.resolve()
 api_logger = logging.getLogger('morpheus.external')
 
 
@@ -35,7 +40,7 @@ class WebModel(BaseModel):
 
 class Session(WebModel):
     company: str = ...
-    user_id: int = ...
+    user_id: int = None
     expires: datetime = ...
 
 
@@ -44,6 +49,7 @@ class View:
         from .worker import Sender  # noqa
         self.request: Request = request
         self.app: Application = request.app
+        self.settings: Settings = self.app['settings']
         self.session: Optional[Session] = None
         self.sender: Sender = request.app['sender']
 
@@ -110,7 +116,7 @@ class ServiceView(View):
     Views used by services. Services are in charge and can be trusted to do "whatever they like".
     """
     async def authenticate(self, request):
-        if request.app['settings'].auth_key != request.headers.get('Authorization', ''):
+        if self.settings.auth_key != request.headers.get('Authorization', ''):
             # avoid the need for constant time compare on auth key
             await asyncio.sleep(random())
             raise HTTPForbidden(text='Invalid "Authorization" header')
@@ -135,6 +141,36 @@ class UserView(View):
         self.session = Session(**data)
         if self.session.expires < datetime.utcnow().replace(tzinfo=timezone.utc):
             raise HTTPForbidden(text='token expired')
+
+
+class AdminView(View):
+    """
+    Views used by admin, applies basic auth.
+    """
+    template = 'extra/admin.html'
+
+    async def authenticate(self, request):
+        token = re.sub('^Basic *', '', request.headers.get('Authorization', ''))
+        try:
+            _, password = base64.b64decode(token).decode().split(':', 1)
+        except (ValueError, UnicodeDecodeError) as e:
+            password = ''
+
+        if password != self.settings.admin_basic_auth_password:
+            await asyncio.sleep(random())
+            raise HTTPUnauthorized(text='Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
+
+    async def get_context(self, morpheus_api):
+        raise NotImplementedError()
+
+    async def call(self, request):
+        morpheus_api = self.app['morpheus_api']
+        try:
+            ctx = await self.get_context(morpheus_api)
+        except ApiError as e:
+            raise HTTPBadRequest(text=str(e))
+        template = (THIS_DIR / self.template).read_text()
+        return Response(text=chevron.render(template, data=ctx), content_type='text/html')
 
 
 class ApiError(RuntimeError):
@@ -197,8 +233,9 @@ class ApiSession:
         return await self._request(METH_PUT, uri, **kwargs)
 
     async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
-        method, url, data = self._modify_request(method, self.root + uri.lstrip('/'), data)
-        async with self.session.request(method, url, json=data) as r:
+        method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)
+        headers = data.pop('headers_', {})
+        async with self.session.request(method, url, json=data, headers=headers) as r:
             # always read entire response before closing the connection
             response_text = await r.text()
 
@@ -218,4 +255,21 @@ class Mandrill(ApiSession):
 
     def _modify_request(self, method, url, data):
         data['key'] = self.settings.mandrill_key
+        return method, url, data
+
+
+class MorpheusUserApi(ApiSession):
+    def __init__(self, settings, loop):
+        self.fernet = Fernet(base64.urlsafe_b64encode(settings.user_fernet_key))
+        super().__init__(settings.local_api_url, settings, loop)
+
+    def _modify_request(self, method, url, data):
+        session_data = {
+            'company': '__all__',
+            'user_id': 123,
+            'expires': to_unix_ms(datetime(2032, 1, 1))[0]
+        }
+        data['headers_'] = {
+            'Authorization': self.fernet.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()
+        }
         return method, url, data

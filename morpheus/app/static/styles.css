@@ -4,10 +4,14 @@ html {
 
 body {
   margin: 10px auto;
-  width: 60ch;
   font-family: monospace;
   background-color: #2d2d2d;
   color: white;
+  width: 1400px;
+}
+
+body.index {
+  width: 60ch;
 }
 
 section {
@@ -36,4 +40,31 @@ pre {
 a {
   color: #9090e0 !important;
   text-decoration: none !important;
+}
+
+.form-group {
+  margin-bottom: 10px;
+}
+
+.form-group label {
+  display: inline-block;
+  width: 120px;
+}
+
+.form-group input {
+  width: 300px;
+}
+
+table, th, td {
+  border: 1px solid #ccc;
+  border-collapse: collapse;
+  padding: 5px 10px;
+}
+
+.short {
+  display: inline-block;
+  width: 8ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

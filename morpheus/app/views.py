@@ -4,40 +4,25 @@ import hashlib
 import hmac
 import json
 import logging
-from pathlib import Path
+from datetime import datetime
+from html import escape
 
+import chevron
 import msgpack
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, Response
+from arq.utils import from_unix_ms
 
-from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendModel
-from .utils import ApiError, ServiceView, UserView, View
+from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SendModel
+from .utils import THIS_DIR, AdminView, ApiError, ServiceView, UserView, View
 
-THIS_DIR = Path(__file__).parent.resolve()
 logger = logging.getLogger('morpheus.web')
 
 
 async def index(request):
-    return Response(text=request.app['index_html'], content_type='text/html')
-
-STYLES = (THIS_DIR / 'extra/styles.css').read_bytes()
-FAVICON = (THIS_DIR / 'extra/favicon.ico').read_bytes()
-ROBOTS = """\
-User-agent: *
-Allow: /$
-Disallow: /
-"""
-
-
-async def styles_css(request):
-    return Response(body=STYLES, content_type='text/css')
-
-
-async def robots_txt(request):
-    return Response(text=ROBOTS, content_type='text/plain')
-
-
-async def favicon(request):
-    return Response(body=FAVICON, content_type='image/vnd.microsoft.icon')
+    template = (THIS_DIR / 'extra/index.html').read_text()
+    settings = request.app['settings']
+    ctx = {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
+    return Response(text=chevron.render(template, data=ctx), content_type='text/html')
 
 
 class SendView(ServiceView):
@@ -263,3 +248,58 @@ class UserTaggedMessageView(UserView):
             sort={'update_ts': {'order': 'desc'}}
         )
         return Response(body=await r.text(), content_type='application/json')
+
+
+class AdminAggregatedView(AdminView):
+    async def get_context(self, morpheus_api):
+        method = self.request.query.get('method', SendMethod.email_mandrill)
+        url = self.app.router['user-aggregation'].url_for(method=method)
+
+        r = await morpheus_api.get(url)
+        data = await r.json()
+        data = data['aggregations']['_']
+        headings = ['date'] + sorted(k for k, v in data['_']['buckets'][0].items() if isinstance(v, dict))
+        table_body = []
+        for period in reversed(data['_']['buckets']):
+            row = [datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
+            for h in headings[1:]:
+                row.append(period[h].get('doc_count') or '0')
+            table_body.append(row)
+
+        return dict(
+            total=data['doc_count'],
+            table_headings=headings,
+            table_body=table_body,
+            table_title=f'Aggregated {method} data'
+        )
+
+
+class AdminListView(AdminView):
+    async def get_context(self, morpheus_api):
+        method = self.request.query.get('method', SendMethod.email_mandrill)
+        url = self.app.router['user-messages'].url_for(method=method)
+
+        r = await morpheus_api.get(url)
+        data = await r.json()
+        print(json.dumps(data, indent=2))
+
+        headings = ['Score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
+        table_body = []
+        for i, message in enumerate(data['hits']['hits']):
+            score, source = message['_score'], message['_source']
+            table_body.append([
+                str(i) if score is None else f'{score:6.3f}',
+                f'<a href="/admin/get/{message["_id"]}" class="short">{message["_id"]}</a>',
+                source['company'],
+                source['to_email'],
+                source['status'],
+                from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
+                from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
+                source['subject'],
+            ])
+        return dict(
+            total=data['hits']['total'],
+            table_headings=headings,
+            table_body=table_body,
+            table_title=f'List {method} messages'
+        )

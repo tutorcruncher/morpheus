@@ -136,7 +136,6 @@ async def test_mandrill_webhook(cli):
 def user_auth(settings, company='foobar'):
     session_data = {
         'company': company,
-        'user_id': 123,
         'expires': to_unix_ms(datetime(2032, 1, 1))[0]
     }
     f = Fernet(base64.urlsafe_b64encode(settings.user_fernet_key))
