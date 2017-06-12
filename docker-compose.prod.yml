@@ -5,6 +5,10 @@ services:
     entrypoint:
     - '/bin/logspout'
     - '${LOGSPOUT_ENDPOINT}'
+    ports:
+    - 8001:80
+    networks:
+    - public
 
   nginx:
     image: morpheus-nginx

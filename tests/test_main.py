@@ -31,7 +31,7 @@ async def test_robots(cli):
 async def test_favicon(cli):
     r = await cli.get('/favicon.ico', allow_redirects=False)
     assert r.status == 200
-    assert r.headers['Content-Type'] == 'image/vnd.microsoft.icon'
+    assert 'image' in r.headers['Content-Type']  # value can vary
 
 
 async def test_send_message(cli, tmpdir):

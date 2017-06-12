@@ -11,12 +11,11 @@ from html import escape
 import chevron
 import msgpack
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, Response
+from arq.utils import from_unix_ms
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
-
-from arq.utils import from_unix_ms
 
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SendModel
 from .utils import THIS_DIR, AdminView, ApiError, ServiceView, UserView, View
