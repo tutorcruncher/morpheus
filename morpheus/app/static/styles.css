@@ -3,7 +3,7 @@ html {
 }
 
 body {
-  margin: 10px auto;
+  margin: 10px auto 100px;
   font-family: monospace;
   background-color: #2d2d2d;
   color: white;
@@ -55,6 +55,11 @@ a {
   width: 300px;
 }
 
+table {
+  width: 100%;
+  margin: 10px 0;
+}
+
 table, th, td {
   border: 1px solid #667;
   border-collapse: collapse;
@@ -63,10 +68,15 @@ table, th, td {
 
 .short {
   display: inline-block;
-  width: 8ch;
+  width: 12ch;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.pull-right {
+  margin: 0 0 0 auto;
+  text-align: right;
 }
 
 /* taken from https://github.com/richleland/pygments-css/blob/master/vim.css and modified */

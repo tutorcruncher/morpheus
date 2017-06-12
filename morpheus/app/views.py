@@ -18,7 +18,7 @@ from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SendModel
-from .utils import THIS_DIR, AdminView, ApiError, ServiceView, UserView, View
+from .utils import THIS_DIR, ApiError, BasicAuthView, ServiceView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
 
@@ -256,6 +256,24 @@ class UserTaggedMessageView(UserView):
         return Response(body=await r.text(), content_type='application/json')
 
 
+class AdminView(BasicAuthView):
+    template = 'extra/admin.html'
+
+    async def get_context(self, morpheus_api):
+        raise NotImplementedError()
+
+    async def call(self, request):
+        morpheus_api = self.app['morpheus_api']
+        method = self.request.query.get('method', SendMethod.email_mandrill)
+        ctx = dict(methods=[{'value': m.value, 'selected': m == method} for m in SendMethod])
+        try:
+            ctx.update(await self.get_context(morpheus_api))
+        except ApiError as e:
+            raise HTTPBadRequest(text=str(e))
+        template = (THIS_DIR / self.template).read_text()
+        return Response(text=chevron.render(template, data=ctx), content_type='text/html')
+
+
 class AdminAggregatedView(AdminView):
     async def get_context(self, morpheus_api):
         method = self.request.query.get('method', SendMethod.email_mandrill)
@@ -264,28 +282,35 @@ class AdminAggregatedView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
         data = data['aggregations']['_']
-        headings = ['date'] + sorted(k for k, v in data['_']['buckets'][0].items() if isinstance(v, dict))
+        # ignore "click" and "unsub"
+        headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
+        was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
         for period in reversed(data['_']['buckets']):
             row = [datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
-            for h in headings[1:]:
-                row.append(period[h].get('doc_count') or '0')
+            row += [period[h]['doc_count'] or '0' for h in headings[1:-1]]
+            was_sent = sum(period[h]['doc_count'] or 0 for h in was_sent_statuses)
+            opened = period["open"]["doc_count"]
+            row.append(f'{opened / was_sent * 100:0.2f}%')
             table_body.append(row)
-
         return dict(
             total=data['doc_count'],
             table_headings=headings,
             table_body=table_body,
-            sub_heading=f'Aggregated {method} data'
+            sub_heading=f'Aggregated {method} data',
         )
 
 
 class AdminListView(AdminView):
     async def get_context(self, morpheus_api):
         method = self.request.query.get('method', SendMethod.email_mandrill)
-        query = dict(size=100)
-        search = self.request.query.get('search')
-        search and query.update(q=search)
+        offset = int(self.request.query.get('offset', '0'))
+        search = self.request.query.get('search', '')
+        query = {
+            'size': 100,
+            'from': offset,
+            'q': search,
+        }
         url = self.app.router['user-messages'].url_for(method=method).with_query(query)
 
         r = await morpheus_api.get(url)
@@ -296,7 +321,7 @@ class AdminListView(AdminView):
         for i, message in enumerate(data['hits']['hits']):
             score, source = message['_score'], message['_source']
             table_body.append([
-                str(i) if score is None else f'{score:6.3f}',
+                str(i + 1 + offset) if score is None else f'{score:6.3f}',
                 f'<a href="/admin/get/{message["_id"]}/" class="short">{message["_id"]}</a>',
                 source['company'],
                 source['to_email'],
@@ -305,12 +330,28 @@ class AdminListView(AdminView):
                 from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
                 source['subject'],
             ])
+
+        if len(data['hits']['hits']) == 100:
+            next_offset = offset + 100
+            query = {
+                'method': method,
+                'search': search or '',
+                'offset': next_offset,
+            }
+            next_page = (
+                f'<a href="{self.app.router["admin-list"].url_for().with_query(query)}" class="pull-right">'
+                f'Next: {next_offset} - {next_offset + 100}'
+                f'</a>'
+            )
+        else:
+            next_page = None
         return dict(
             total=data['hits']['total'],
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'List {method} messages',
             search=search,
+            next_page=next_page,
         )
 
 
@@ -332,5 +373,5 @@ class AdminGetView(AdminView):
         data = re.sub('14\d{8,11}', self.replace_data, data)
         return dict(
             sub_heading=f'Message {message_id}',
-            extra=highlight(data, JsonLexer(), HtmlFormatter(style='vim'))
+            extra=highlight(data, JsonLexer(), HtmlFormatter()),
         )

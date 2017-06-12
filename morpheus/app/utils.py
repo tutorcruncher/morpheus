@@ -10,7 +10,6 @@ from pathlib import Path
 from random import random
 from typing import Optional, Type  # noqa
 
-import chevron
 import msgpack
 from aiohttp import ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
@@ -40,7 +39,6 @@ class WebModel(BaseModel):
 
 class Session(WebModel):
     company: str = ...
-    user_id: int = None
     expires: datetime = ...
 
 
@@ -143,34 +141,20 @@ class UserView(View):
             raise HTTPForbidden(text='token expired')
 
 
-class AdminView(View):
+class BasicAuthView(View):
     """
     Views used by admin, applies basic auth.
     """
-    template = 'extra/admin.html'
-
     async def authenticate(self, request):
         token = re.sub('^Basic *', '', request.headers.get('Authorization', ''))
         try:
             _, password = base64.b64decode(token).decode().split(':', 1)
-        except (ValueError, UnicodeDecodeError) as e:
+        except (ValueError, UnicodeDecodeError):
             password = ''
 
         if password != self.settings.admin_basic_auth_password:
             await asyncio.sleep(random())
             raise HTTPUnauthorized(text='Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
-
-    async def get_context(self, morpheus_api):
-        raise NotImplementedError()
-
-    async def call(self, request):
-        morpheus_api = self.app['morpheus_api']
-        try:
-            ctx = await self.get_context(morpheus_api)
-        except ApiError as e:
-            raise HTTPBadRequest(text=str(e))
-        template = (THIS_DIR / self.template).read_text()
-        return Response(text=chevron.render(template, data=ctx), content_type='text/html')
 
 
 class ApiError(RuntimeError):
@@ -266,7 +250,6 @@ class MorpheusUserApi(ApiSession):
     def _modify_request(self, method, url, data):
         session_data = {
             'company': '__all__',
-            'user_id': 123,
             'expires': to_unix_ms(datetime(2032, 1, 1))[0]
         }
         data['headers_'] = {

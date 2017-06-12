@@ -73,7 +73,6 @@ def user_auth_headers(user_fernet_key, company):
     f = Fernet(key)
     session_data = {
         'company': company,
-        'user_id': 123,
         'expires': to_unix_ms(datetime(2020, 1, 1))[0]
     }
     auth_key = f.encrypt(msgpack.packb(session_data, encoding='utf8'))

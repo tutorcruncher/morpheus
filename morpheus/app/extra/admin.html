@@ -10,16 +10,27 @@
 <body class="admin">
   <h1>Morpheus Admin</h1>
   <ul>
+    <li><a href="/">home</a></li>
     <li><a target="_blank" href="/nginx-stats">nginx stats</a></li>
     <li><a target="_blank" href="/glances">glances</a></li>
     <li><a href="/admin/">admin - aggregated</a></li>
     <li><a href="/admin/list/">admin - list</a></li>
   </ul>
-  <form action="/admin/list/" method="get">
+  <form action="." method="get">
+    <div class="form-group">
+      <label for="method">Send Method:</label>
+      <select name="method" id="method">
+        {{#methods}}
+        <option value="{{ value }}"{{#selected}} selected="selected"{{/selected}}>{{ value }}</option>
+        {{/methods}}
+      </select>
+    </div>
+
     <div class="form-group">
       <label for="search">Search:</label>
       <input type="text" name="search" id="search" value="{{ search }}">
     </div>
+
     <div class="form-group">
       <label for="tag">Tag:</label>
       <input type="text" name="tag" id="tag">
@@ -47,14 +58,15 @@
         {{#table_body}}
           <tr>
             {{#.}}
-            <td>
-              {{{ . }}}
-            </td>
+            <td>{{{ . }}}</td>
             {{/.}}
           </tr>
         {{/table_body}}
       </tbody>
     </table>
+    <div class="pull-right">
+      {{{ next_page }}}
+    </div>
   {{/extra}}
   <div>
     {{{ extra }}}
