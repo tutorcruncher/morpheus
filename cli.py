@@ -45,7 +45,7 @@ formatter = Terminal256Formatter(style='vim')
 
 def replace_data(m):
     dt = parse_datetime(m.group())
-    # WARNING: this means the ouput is not valid json, but is more readable
+    # WARNING: this means the output is not valid json, but is more readable
     return f'{m.group()} ({dt:%a %Y-%m-%d %H:%M})'
 
 

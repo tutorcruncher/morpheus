@@ -4,12 +4,18 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from datetime import datetime
 from html import escape
 
 import chevron
 import msgpack
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, Response
+from pydantic.datetime_parse import parse_datetime
+from pygments import highlight
+from pygments.formatters.html import HtmlFormatter
+from pygments.lexers.data import JsonLexer
+
 from arq.utils import from_unix_ms
 
 from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SendModel
@@ -231,6 +237,7 @@ class UserAggregationView(UserView):
 
 
 class UserTaggedMessageView(UserView):
+    # TODO this should get  built in to UserMessageView
     async def call(self, request):
         r = await self.app['es'].get(
             'messages/{[method]}/_search?filter_path=hits'.format(request.match_info),
@@ -270,18 +277,20 @@ class AdminAggregatedView(AdminView):
             total=data['doc_count'],
             table_headings=headings,
             table_body=table_body,
-            table_title=f'Aggregated {method} data'
+            sub_heading=f'Aggregated {method} data'
         )
 
 
 class AdminListView(AdminView):
     async def get_context(self, morpheus_api):
         method = self.request.query.get('method', SendMethod.email_mandrill)
-        url = self.app.router['user-messages'].url_for(method=method)
+        query = dict(size=100)
+        search = self.request.query.get('search')
+        search and query.update(q=search)
+        url = self.app.router['user-messages'].url_for(method=method).with_query(query)
 
         r = await morpheus_api.get(url)
         data = await r.json()
-        print(json.dumps(data, indent=2))
 
         headings = ['Score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
@@ -289,7 +298,7 @@ class AdminListView(AdminView):
             score, source = message['_score'], message['_source']
             table_body.append([
                 str(i) if score is None else f'{score:6.3f}',
-                f'<a href="/admin/get/{message["_id"]}" class="short">{message["_id"]}</a>',
+                f'<a href="/admin/get/{message["_id"]}/" class="short">{message["_id"]}</a>',
                 source['company'],
                 source['to_email'],
                 source['status'],
@@ -301,5 +310,28 @@ class AdminListView(AdminView):
             total=data['hits']['total'],
             table_headings=headings,
             table_body=table_body,
-            table_title=f'List {method} messages'
+            sub_heading=f'List {method} messages',
+            search=search,
+        )
+
+
+class AdminGetView(AdminView):
+    @staticmethod
+    def replace_data(m):
+        dt = parse_datetime(m.group())
+        # WARNING: this means the output is not valid json, but is more readable
+        return f'{m.group()} ({dt:%a %Y-%m-%d %H:%M})'
+
+    async def get_context(self, morpheus_api):
+        method = self.request.query.get('method', SendMethod.email_mandrill)
+        message_id = self.request.match_info['id']
+        url = self.app.router['user-messages'].url_for(method=method).with_query({'message_id': message_id})
+
+        r = await morpheus_api.get(url)
+        data = await r.json()
+        data = json.dumps(data, indent=2)
+        data = re.sub('14\d{8,11}', self.replace_data, data)
+        return dict(
+            sub_heading=f'Message {message_id}',
+            extra=highlight(data, JsonLexer(), HtmlFormatter(style='vim'))
         )

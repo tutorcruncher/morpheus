@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0"/>
   <title>Morpheus</title>
-  <!--<link rel="stylesheet" href="/styles.css">-->
-  <link rel="stylesheet" href="http://localhost:8001/static/styles.css">
+  <link rel="stylesheet" href="/styles.css">
+  <!--<link rel="stylesheet" href="http://localhost:8001/static/styles.css">-->
 </head>
 <body class="admin">
   <h1>Morpheus Admin</h1>
@@ -15,39 +15,49 @@
     <li><a href="/admin/">admin - aggregated</a></li>
     <li><a href="/admin/list/">admin - list</a></li>
   </ul>
-  <form action="." method="get">
+  <form action="/admin/list/" method="get">
     <div class="form-group">
       <label for="search">Search:</label>
-      <input type="text" name="search" id="search">
+      <input type="text" name="search" id="search" value="{{ search }}">
     </div>
     <div class="form-group">
       <label for="tag">Tag:</label>
       <input type="text" name="tag" id="tag">
     </div>
     <button type="submit">Submit</button>
+    <a id="clear" href="."><button type="button">Clear</button></a>
+    <script>
+      var el = document.getElementById('clear')
+      el.href = window.location.href.split('?')[0]
+    </script>
   </form>
 
-  <h2>{{ table_title }}</h2>
-  <h3>Total: {{ total }}</h3>
-  <table class="table">
-    <thead>
-      <tr>
-        {{#table_headings}}
-          <th>{{ . }}</th>
-        {{/table_headings}}
-      </tr>
-    </thead>
-    <tbody>
-      {{#table_body}}
+  <h2>{{ sub_heading }}</h2>
+  {{^extra}}
+    <h3>Total: {{ total }}</h3>
+    <table class="table">
+      <thead>
         <tr>
-          {{#.}}
-          <td>
-            {{{ . }}}
-          </td>
-          {{/.}}
+          {{#table_headings}}
+            <th>{{ . }}</th>
+          {{/table_headings}}
         </tr>
-      {{/table_body}}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {{#table_body}}
+          <tr>
+            {{#.}}
+            <td>
+              {{{ . }}}
+            </td>
+            {{/.}}
+          </tr>
+        {{/table_body}}
+      </tbody>
+    </table>
+  {{/extra}}
+  <div>
+    {{{ extra }}}
+  </div>
 </body>
 </html>

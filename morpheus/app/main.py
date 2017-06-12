@@ -12,8 +12,8 @@ from .middleware import ErrorLoggingMiddleware
 from .models import SendMethod
 from .settings import Settings
 from .utils import Mandrill, MorpheusUserApi
-from .views import (THIS_DIR, AdminAggregatedView, AdminListView, MandrillWebhookView, SendView, TestWebhookView,
-                    UserAggregationView, UserMessageView, UserTaggedMessageView, index)
+from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, MandrillWebhookView, SendView,
+                    TestWebhookView, UserAggregationView, UserMessageView, UserTaggedMessageView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -109,5 +109,6 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get(user_prefix + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
+    app.router.add_get('/admin/get/{id}/', AdminGetView.view(), name='admin-get')
     app.router.add_static('/', str(THIS_DIR / 'static'))
     return app
