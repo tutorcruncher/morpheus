@@ -1,5 +1,6 @@
 import asyncio
 import re
+import uuid
 
 import pytest
 from aiohttp.web import Application, json_response
@@ -83,25 +84,19 @@ def cli(loop, test_client, settings, setup_elastic_search):
 @pytest.fixture
 def send_message(cli, **extra):
     async def _send_message(**extra):
-        data = {
-            'uid': 'x' * 20,
-            'markdown_template': 'this is a test',
-            'main_template': '<body>\n{{{ message }}}\n</body>',
-            'company_code': 'foobar',
-            'from_address': 'Sender Name <sender@example.com>',
-            'method': 'email-test',
-            'subject_template': 'test message',
-            'tags': [],
-            'recipients': [{'address': 'foobar@testing.com'}]
-        }
-        assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
+        data = dict(
+            uid=str(uuid.uuid4()),
+            markdown_template='this is a test',
+            main_template='<body>\n{{{ message }}}\n</body>',
+            company_code='foobar',
+            from_address='Sender Name <sender@example.com>',
+            method='email-test',
+            subject_template='test message',
+            recipients=[{'address': 'foobar@testing.com'}]
+        )
+        # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
         r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
         return data['uid'] + '-foobartestingcom'
     return _send_message
-
-
-@pytest.fixture
-def message_id(loop, send_message):
-    return loop.run_until_complete(send_message())

@@ -60,7 +60,8 @@ async def test_send_message(cli, tmpdir):
     assert '"to_email": "foobar@example.com",\n' in msg_file
 
 
-async def test_webhook(cli, message_id):
+async def test_webhook(cli, send_message):
+    message_id = await send_message(uid='x' * 20)
     r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
     data = await r.json()
     assert data['_source']['status'] == 'send'
@@ -183,22 +184,14 @@ async def test_send_message_headers(cli, tmpdir):
     assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
 
 
-async def test_send_unsub_context(cli, tmpdir):
+async def test_send_unsub_context(cli, send_message, tmpdir):
     uid = str(uuid.uuid4())
-    data = {
-        'uid': uid,
-        'markdown_template': 'test email {{ unsubscribe_link }}.\n',
-        'company_code': 'foobar',
-        'from_address': 'Samuel <s@muelcolvin.com>',
-        'method': 'email-test',
-        'subject_template': 'test email',
-        'context': {
-            'unsubscribe_link': 'http://example.com/unsub'
-        },
-        'recipients': [
-            {
-                'address': f'1@example.com',
-            },
+    await send_message(
+        uid=uid,
+        markdown_template='test email {{ unsubscribe_link }}.\n',
+        context={'unsubscribe_link': 'http://example.com/unsub'},
+        recipients=[
+            {'address': f'1@example.com'},
             {
                 'address': f'2@example.com',
                 'context': {
@@ -209,9 +202,7 @@ async def test_send_unsub_context(cli, tmpdir):
                 },
             }
         ]
-    }
-    r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    )
     assert len(tmpdir.listdir()) == 2
     msg_file = tmpdir.join(f'{uid}-1examplecom.txt').read()
     # print(msg_file)
@@ -224,3 +215,17 @@ async def test_send_unsub_context(cli, tmpdir):
     assert '"to_email": "2@example.com",\n' in msg_file
     assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
     assert '<p>test email http://example.com/context.</p>\n' in msg_file
+
+
+async def test_markdown_context(cli, send_message, tmpdir):
+    message_id = await send_message(
+        markdown_template='test email {{ unsubscribe_link }}.\n',
+        main_template='testing {{{ foobar }}}',
+        context={
+            'foobar__md': '[hello](www.example.com/hello)'
+        },
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert 'content: testing <p><a href="www.example.com/hello">hello</a></p>\n' in msg_file

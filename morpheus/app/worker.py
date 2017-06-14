@@ -219,7 +219,11 @@ class Sender(Actor):
         subject = chevron.render(j.subject_template, data=j.context)
         j.context['subject'] = subject
         raw_message = chevron.render(j.markdown_template, data=j.context, partials_dict=j.mustache_partials)
-        html_message = markdown(raw_message)
+        message_html = markdown(raw_message)
+        j.context.update(
+            message=message_html,
+            **{k[:-4]: markdown(v) for k, v in j.context.items() if k.endswith('__md')}
+        )
         unsubscribe_link = j.context.get('unsubscribe_link')
         if unsubscribe_link:
             j.headers.setdefault('List-Unsubscribe', f'<{unsubscribe_link}>')
@@ -229,7 +233,7 @@ class Sender(Actor):
             subject=subject,
             html_body=chevron.render(
                 j.main_template,
-                data=dict(message=html_message, **j.context),
+                data=j.context,
                 partials_dict=j.mustache_partials,
             ),
             text_body=raw_message,
