@@ -305,7 +305,7 @@ class AdminListView(AdminView):
             score, source = message['_score'], message['_source']
             table_body.append([
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
-                f'<a href="/admin/get/{message["_id"]}/" class="short">{message["_id"]}</a>',
+                f'<a href="/admin/get/{method}/{message["_id"]}/" class="short">{message["_id"]}</a>',
                 source['company'],
                 source['to_email'],
                 source['status'],
@@ -346,7 +346,7 @@ class AdminGetView(AdminView):
         return f'{m.group()} ({dt:%a %Y-%m-%d %H:%M})'
 
     async def get_context(self, morpheus_api):
-        method = self.request.query.get('method', SendMethod.email_mandrill)
+        method = self.request.match_info['method']
         message_id = self.request.match_info['id']
         url = self.app.router['user-messages'].url_for(method=method).with_query({'message_id': message_id})
 

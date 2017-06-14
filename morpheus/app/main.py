@@ -108,6 +108,6 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get(user_prefix + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
-    app.router.add_get('/admin/get/{id}/', AdminGetView.view(), name='admin-get')
+    app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')
     app.router.add_static('/', str(THIS_DIR / 'static'))
     return app
