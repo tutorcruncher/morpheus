@@ -271,7 +271,10 @@ class AdminAggregatedView(AdminView):
             row += [period[h]['doc_count'] or '0' for h in headings[1:-1]]
             was_sent = sum(period[h]['doc_count'] or 0 for h in was_sent_statuses)
             opened = period["open"]["doc_count"]
-            row.append(f'{opened / was_sent * 100:0.2f}%')
+            if was_sent > 0:
+                row.append(f'{opened / was_sent * 100:0.2f}%')
+            else:
+                row.append(f'{0:0.2f}%')
             table_body.append(row)
         return dict(
             total=data['doc_count'],

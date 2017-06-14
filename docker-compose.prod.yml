@@ -6,9 +6,19 @@ services:
     - '/bin/logspout'
     - '${LOGSPOUT_ENDPOINT}'
     ports:
-    - 8001:80
+    - 5001:80
     networks:
     - public
+
+  elastic:
+    environment:
+    - bootstrap.memory_lock=true
+    - "ES_JAVA_OPTS=-Xms7g -Xmx7g"
+    ulimits:
+      nproc: 3000
+      nofile: 65536
+      memlock: -1
+    mem_limit: 8g
 
   nginx:
     image: morpheus-nginx
