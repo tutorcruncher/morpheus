@@ -153,7 +153,7 @@ async def test_user_list(cli, settings, send_message):
 
     await send_message(uid=str(uuid.uuid4()), company_code='different1')
     await send_message(uid=str(uuid.uuid4()), company_code='different2')
-    await cli.server.app['es'].post('messages/_refresh')
+    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='whoever')})
     assert r.status == 200, await r.text()
     data = await r.json()
@@ -175,24 +175,26 @@ async def test_user_list(cli, settings, send_message):
 
 async def test_user_search(cli, settings, send_message):
     msgs = {}
-    subjects = 'apple', 'banana', 'cherry', 'durian'
-    for i in range(4):
+    for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):
         uid = str(uuid.uuid4())
-        subject = subjects[i]
         await send_message(uid=uid, company_code='whoever',
                            recipients=[{'address': f'{i}@t.com'}], subject_template=subject)
         msgs[subject] = f'{uid}-{i}tcom'
 
     await send_message(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
-    await cli.server.app['es'].post('messages/_refresh')
+    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get('/user/email-test/?q=cherry',
                       headers={'Authorization': user_auth(settings, company='whoever')})
     assert r.status == 200, await r.text()
     data = await r.json()
-    print(json.dumps(data, indent=2))
+    if not data['hits']['total']:
+        print('no results from cherry search, db...')
+        r = await cli.server.app['es'].get('messages/email-test')
+        print(json.dumps(await r.json(), indent=2))
     assert data['hits']['total'] == 1
     hit = data['hits']['hits'][0]
     assert hit['_id'] == msgs['cherry']
+    assert hit['_index'] == 'messages'
     assert hit['_source']['subject'] == 'cherry'
     r = await cli.get('/user/email-test/?q=eggplant',
                       headers={'Authorization': user_auth(settings, company='whoever')})
@@ -209,7 +211,7 @@ async def test_user_aggregate(cli, settings, send_message):
         await send_message(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
 
     await send_message(uid=str(uuid.uuid4()), company_code='different')
-    await cli.server.app['es'].post('messages/_refresh')
+    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, 'whoever')})
     assert r.status == 200, await r.text()
     data = await r.json()
@@ -223,3 +225,58 @@ async def test_user_aggregate(cli, settings, send_message):
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['aggregations']['_']['_']['buckets'][0]['doc_count'] == 5
+
+
+async def test_user_tags(cli, settings, send_message):
+    uid1 = str(uuid.uuid4())
+    await send_message(
+        uid=uid1,
+        company_code='tagtest',
+        tags=['trigger:broadcast', 'broadcast:123'],
+        recipients=[
+            {'address': '1@t.com', 'tags': ['user:1', 'shoesize:10']},
+            {'address': '2@t.com', 'tags': ['user:2', 'shoesize:8']},
+        ]
+    )
+    uid2 = str(uuid.uuid4())
+    await send_message(
+        uid=uid2,
+        company_code='tagtest',
+        tags=['trigger:other'],
+        recipients=[
+            {'address': '3@t.com', 'tags': ['user:3', 'shoesize:10']},
+            {'address': '4@t.com', 'tags': ['user:4', 'shoesize:8']},
+        ]
+    )
+
+    await send_message(uid=str(uuid.uuid4()), company_code='different1')
+    await send_message(uid=str(uuid.uuid4()), company_code='different2')
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.get(
+        cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')]),
+        headers={'Authorization': user_auth(settings, company='tagtest')}
+    )
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 2, json.dumps(data, indent=2)
+    assert {h['_id'] for h in data['hits']['hits']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
+
+    r = await cli.get(
+        cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'user:2')]),
+        headers={'Authorization': user_auth(settings, company='tagtest')}
+    )
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 1, json.dumps(data, indent=2)
+    assert data['hits']['hits'][0]['_id'] == f'{uid1}-2tcom'
+
+    query = [('tags', 'trigger:other'), ('tags', 'shoesize:8')]
+    r = await cli.get(
+        cli.server.app.router['user-messages'].url_for(method='email-test').with_query(query),
+        headers={'Authorization': user_auth(settings, company='tagtest')}
+    )
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 1, json.dumps(data, indent=2)
+    assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'

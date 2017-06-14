@@ -91,6 +91,7 @@ def send_message(cli, **extra):
             'from_address': 'Sender Name <sender@example.com>',
             'method': 'email-test',
             'subject_template': 'test message',
+            'tags': [],
             'recipients': [{'address': 'foobar@testing.com'}]
         }
         assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'

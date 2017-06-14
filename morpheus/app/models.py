@@ -43,9 +43,8 @@ class RecipientModel(BaseModel):
     # TODO prepend to_ to first_name, last_name, address
     first_name: str = None
     last_name: str = None
-    user_id: int = None
     address: str = ...
-    search_tags: List[str] = []
+    tags: List[str] = []
     context: dict = {}
     pdf_attachments: List[AttachmentModel] = []
 
@@ -61,7 +60,7 @@ class SendModel(WebModel):
     reply_to: str = None
     method: SendMethod = ...
     subaccount: str = None
-    analytics_tags: List[str] = []
+    tags: List[str] = []
     context: dict = {}
     recipients: List[RecipientModel] = ...
 

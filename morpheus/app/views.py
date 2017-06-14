@@ -163,8 +163,9 @@ class UserMessageView(UserView):
             'from': self.get_arg_int('from', 0),
             'size': self.get_arg_int('size', 10),
         }
-        message_id = request.GET.get('message_id')
-        query = request.GET.get('q')
+        message_id = request.query.get('message_id')
+        tags = request.query.getall('tags', None)
+        query = request.query.get('q')
         if message_id:
             es_query['query']['bool']['filter'].append(
                 {'term': {'_id': message_id}},
@@ -178,6 +179,8 @@ class UserMessageView(UserView):
                 }}
             ]
             es_query['min_score'] = 2
+        elif tags:
+            es_query['query']['bool']['filter'] += [{'term': {'tags': t}} for t in tags]
         else:
             es_query['sort'] = [
                 {'send_ts': 'desc'},
@@ -231,27 +234,6 @@ class UserAggregationView(UserView):
         r = await self.app['es'].get(
             'messages/{[method]}/_search?size=0&filter_path=aggregations'.format(request.match_info),
             **self.filter()
-        )
-        return Response(body=await r.text(), content_type='application/json')
-
-
-class UserTaggedMessageView(UserView):
-    # TODO this should get  built in to UserMessageView
-    async def call(self, request):
-        r = await self.app['es'].get(
-            'messages/{[method]}/_search?filter_path=hits'.format(request.match_info),
-            query={
-                'bool': {
-                    'filter': [
-                        {'match_all': {}}
-                        if self.session.company == '__all__' else
-                        {'term': {'company': self.session.company}},
-                    ] + [
-                        {'term': {'tags': t}} for t in request.GET.get('q')
-                    ]
-                }
-            },
-            sort={'update_ts': {'order': 'desc'}}
         )
         return Response(body=await r.text(), content_type='application/json')
 

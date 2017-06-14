@@ -31,9 +31,8 @@ Job = namedtuple(
         'send_method',
         'first_name',
         'last_name',
-        'user_id',
         'address',
-        'search_tags',
+        'tags',
         'pdf_attachments',
         'main_template',
         'markdown_template',
@@ -44,7 +43,6 @@ Job = namedtuple(
         'from_name',
         'reply_to',
         'subaccount',
-        'analytics_tags',
         'context',
     ]
 )
@@ -85,7 +83,7 @@ class Sender(Actor):
                    reply_to,
                    method,
                    subaccount,
-                   analytics_tags,
+                   tags,
                    context):
         if method == SendMethod.email_mandrill:
             coro = self._send_mandrill
@@ -93,7 +91,7 @@ class Sender(Actor):
             coro = self._send_test
         else:
             raise NotImplementedError()
-        analytics_tags = [uid] + analytics_tags
+        tags.append(uid)
         main_logger.info('sending group %s via %s', uid, method)
         base_kwargs = dict(
             group_id=uid,
@@ -107,7 +105,6 @@ class Sender(Actor):
             from_name=from_name,
             reply_to=reply_to,
             subaccount=subaccount,
-            analytics_tags=analytics_tags,
         )
 
         drain = Drain(
@@ -122,9 +119,13 @@ class Sender(Actor):
                 if not raw_queue:
                     break
 
-                data = msgpack.unpackb(raw_data, encoding='utf8')
-                data['context'] = dict(**context, **data.pop('context'))
-                data.update(base_kwargs)
+                msg_data = msgpack.unpackb(raw_data, encoding='utf8')
+                data = dict(
+                    context=dict(**context, **msg_data.pop('context')),
+                    tags=list(set(tags + msg_data.pop('tags'))),
+                    **base_kwargs,
+                    **msg_data,
+                )
                 drain.add(coro, Job(**data))
                 # TODO stop if worker is not running
                 jobs += 1
@@ -151,7 +152,7 @@ class Sender(Actor):
                 view_content_link=False,
                 signing_domain=email_info.signing_domain,
                 subaccount=j.subaccount,
-                tags=j.analytics_tags,
+                tags=j.tags,
                 inline_css=True,
                 attachments=[dict(
                     type='application/pdf',
@@ -184,7 +185,7 @@ class Sender(Actor):
             to_email=j.address,
             to_name=email_info.full_name,
             signing_domain=email_info.signing_domain,
-            tags=j.analytics_tags,
+            tags=j.tags,
             attachments=[dict(
                 type='application/pdf',
                 name=a['name'],
@@ -259,7 +260,7 @@ class Sender(Actor):
             to_email=j.address,
             from_email=j.from_email,
             from_name=j.from_name,
-            tags=j.search_tags + j.analytics_tags,
+            tags=j.tags,
             subject=email_info.subject,
             body=email_info.html_body,
             attachments=[a['name'] for a in j.pdf_attachments],
