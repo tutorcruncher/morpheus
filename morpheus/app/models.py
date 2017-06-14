@@ -46,6 +46,7 @@ class RecipientModel(BaseModel):
     address: str = ...
     tags: List[str] = []
     context: dict = {}
+    headers: dict = {}
     pdf_attachments: List[AttachmentModel] = []
 
 
@@ -57,11 +58,11 @@ class SendModel(WebModel):
     subject_template: str = ...
     company_code: str = ...
     from_address: NameEmail = ...
-    reply_to: str = None
     method: SendMethod = ...
     subaccount: str = None
     tags: List[str] = []
     context: dict = {}
+    headers: dict = {}
     recipients: List[RecipientModel] = ...
 
 

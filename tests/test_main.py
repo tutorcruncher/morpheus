@@ -3,11 +3,6 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import datetime
-
-import msgpack
-from arq.utils import to_unix_ms
-from cryptography.fernet import Fernet
 
 
 async def test_index(cli):
@@ -133,150 +128,99 @@ async def test_mandrill_webhook(cli):
     assert data['_source']['status'] == 'open'
 
 
-def user_auth(settings, company='foobar'):
-    session_data = {
-        'company': company,
-        'expires': to_unix_ms(datetime(2032, 1, 1))[0]
+async def test_send_message_headers(cli, tmpdir):
+    uid = str(uuid.uuid4())
+    data = {
+        'uid': uid,
+        'markdown_template': 'test email {{ a }} {{ b}} {{ c }}.\n',
+        'company_code': 'foobar',
+        'from_address': 'Samuel <s@muelcolvin.com>',
+        'method': 'email-test',
+        'subject_template': 'test email {{ a }}',
+        'context': {
+            'a': 'Apple',
+            'b': f'Banana',
+        },
+        'headers': {
+            'Reply-To': 'another@whoever.com',
+            'List-Unsubscribe': '<http://example.com/unsub>'
+        },
+        'recipients': [
+            {
+                'first_name': 'foo',
+                'last_name': f'bar',
+                'address': f'foobar@example.com',
+                'context': {
+                    'c': 'Carrot',
+                },
+            },
+            {
+                'address': f'2@example.com',
+                'context': {
+                    'b': 'Banker',
+                },
+                'headers': {
+                    'List-Unsubscribe': '<http://example.com/different>'
+                },
+            }
+        ]
     }
-    f = Fernet(base64.urlsafe_b64encode(settings.user_fernet_key))
-    return f.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()
+    r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert len(tmpdir.listdir()) == 2
+    msg_file = tmpdir.join(f'{uid}-foobarexamplecom.txt').read()
+    # print(msg_file)
+    assert '<p>test email Apple Banana Carrot.</p>\n' in msg_file
+    assert '"to_email": "foobar@example.com",\n' in msg_file
+    assert '"Reply-To": "another@whoever.com",\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.com/unsub>"\n' in msg_file
+
+    msg_file = tmpdir.join(f'{uid}-2examplecom.txt').read()
+    print(msg_file)
+    assert '<p>test email Apple Banker .</p>\n' in msg_file
+    assert '"to_email": "2@example.com",\n' in msg_file
+    assert '"Reply-To": "another@whoever.com",\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
 
 
-async def test_user_list(cli, settings, send_message):
-    await cli.server.app['es'].create_indices(True)
-
-    expected_msg_ids = []
-    for i in range(4):
-        uid = str(uuid.uuid4())
-        await send_message(uid=uid, company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
-        expected_msg_ids.append(f'{uid}-{i}tcom')
-
-    await send_message(uid=str(uuid.uuid4()), company_code='different1')
-    await send_message(uid=str(uuid.uuid4()), company_code='different2')
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='whoever')})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 4
-    msg_ids = [h['_id'] for h in data['hits']['hits']]
-    print(msg_ids)
-    assert msg_ids == list(reversed(expected_msg_ids))
-    assert len(data['hits']['hits']) == 4
-    hit = data['hits']['hits'][0]
-    assert hit['_source']['company'] == 'whoever'
-    assert hit['_source']['status'] == 'send'
-
-    r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='__all__')})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 6
-
-
-async def test_user_search(cli, settings, send_message):
-    msgs = {}
-    for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):
-        uid = str(uuid.uuid4())
-        await send_message(uid=uid, company_code='whoever',
-                           recipients=[{'address': f'{i}@t.com'}], subject_template=subject)
-        msgs[subject] = f'{uid}-{i}tcom'
-
-    await send_message(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get('/user/email-test/?q=cherry',
-                      headers={'Authorization': user_auth(settings, company='whoever')})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    if not data['hits']['total']:
-        print('no results from cherry search, db...')
-        r = await cli.server.app['es'].get('messages/email-test')
-        print(json.dumps(await r.json(), indent=2))
-    assert data['hits']['total'] == 1
-    hit = data['hits']['hits'][0]
-    assert hit['_id'] == msgs['cherry']
-    assert hit['_index'] == 'messages'
-    assert hit['_source']['subject'] == 'cherry'
-    r = await cli.get('/user/email-test/?q=eggplant',
-                      headers={'Authorization': user_auth(settings, company='whoever')})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 0
-
-
-async def test_user_aggregate(cli, settings, send_message):
-    await cli.server.app['es'].create_indices(True)
-
-    for i in range(4):
-        await send_message(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
-
-    await send_message(uid=str(uuid.uuid4()), company_code='different')
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, 'whoever')})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    print(json.dumps(data, indent=2))
-    buckets = data['aggregations']['_']['_']['buckets']
-    assert len(buckets) == 1
-    assert buckets[0]['doc_count'] == 4
-    assert buckets[0]['send']['doc_count'] == 4
-    assert buckets[0]['open']['doc_count'] == 0
-    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, '__all__')})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['aggregations']['_']['_']['buckets'][0]['doc_count'] == 5
-
-
-async def test_user_tags(cli, settings, send_message):
-    uid1 = str(uuid.uuid4())
-    await send_message(
-        uid=uid1,
-        company_code='tagtest',
-        tags=['trigger:broadcast', 'broadcast:123'],
-        recipients=[
-            {'address': '1@t.com', 'tags': ['user:1', 'shoesize:10']},
-            {'address': '2@t.com', 'tags': ['user:2', 'shoesize:8']},
+async def test_send_unsub_context(cli, tmpdir):
+    uid = str(uuid.uuid4())
+    data = {
+        'uid': uid,
+        'markdown_template': 'test email {{ unsubscribe_link }}.\n',
+        'company_code': 'foobar',
+        'from_address': 'Samuel <s@muelcolvin.com>',
+        'method': 'email-test',
+        'subject_template': 'test email',
+        'context': {
+            'unsubscribe_link': 'http://example.com/unsub'
+        },
+        'recipients': [
+            {
+                'address': f'1@example.com',
+            },
+            {
+                'address': f'2@example.com',
+                'context': {
+                    'unsubscribe_link': 'http://example.com/context'
+                },
+                'headers': {
+                    'List-Unsubscribe': '<http://example.com/different>'
+                },
+            }
         ]
-    )
-    uid2 = str(uuid.uuid4())
-    await send_message(
-        uid=uid2,
-        company_code='tagtest',
-        tags=['trigger:other'],
-        recipients=[
-            {'address': '3@t.com', 'tags': ['user:3', 'shoesize:10']},
-            {'address': '4@t.com', 'tags': ['user:4', 'shoesize:8']},
-        ]
-    )
+    }
+    r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert len(tmpdir.listdir()) == 2
+    msg_file = tmpdir.join(f'{uid}-1examplecom.txt').read()
+    # print(msg_file)
+    assert '"to_email": "1@example.com",\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.com/unsub>"\n' in msg_file
+    assert '<p>test email http://example.com/unsub.</p>\n' in msg_file
 
-    await send_message(uid=str(uuid.uuid4()), company_code='different1')
-    await send_message(uid=str(uuid.uuid4()), company_code='different2')
-    await cli.server.app['es'].get('messages/_refresh')
-
-    r = await cli.get(
-        cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')]),
-        headers={'Authorization': user_auth(settings, company='tagtest')}
-    )
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 2, json.dumps(data, indent=2)
-    assert {h['_id'] for h in data['hits']['hits']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
-
-    r = await cli.get(
-        cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'user:2')]),
-        headers={'Authorization': user_auth(settings, company='tagtest')}
-    )
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 1, json.dumps(data, indent=2)
-    assert data['hits']['hits'][0]['_id'] == f'{uid1}-2tcom'
-
-    query = [('tags', 'trigger:other'), ('tags', 'shoesize:8')]
-    r = await cli.get(
-        cli.server.app.router['user-messages'].url_for(method='email-test').with_query(query),
-        headers={'Authorization': user_auth(settings, company='tagtest')}
-    )
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 1, json.dumps(data, indent=2)
-    assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
+    msg_file = tmpdir.join(f'{uid}-2examplecom.txt').read()
+    print(msg_file)
+    assert '"to_email": "2@example.com",\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
+    assert '<p>test email http://example.com/context.</p>\n' in msg_file

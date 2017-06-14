@@ -2,9 +2,9 @@ import base64
 import json
 import logging
 import re
-from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, NamedTuple
 
 import chevron
 import misaka
@@ -24,30 +24,34 @@ main_logger = logging.getLogger('morpheus.worker')
 
 markdown = Markdown(HtmlRenderer(flags=[misaka.HTML_HARD_WRAP]), extensions=[misaka.EXT_NO_INTRA_EMPHASIS])
 
-Job = namedtuple(
-    'Job',
-    [
-        'group_id',
-        'send_method',
-        'first_name',
-        'last_name',
-        'address',
-        'tags',
-        'pdf_attachments',
-        'main_template',
-        'markdown_template',
-        'mustache_partials',
-        'subject_template',
-        'company_code',
-        'from_email',
-        'from_name',
-        'reply_to',
-        'subaccount',
-        'context',
-    ]
-)
 
-EmailInfo = namedtuple('EmailInfo', ['full_name', 'subject', 'html_body', 'text_body', 'signing_domain'])
+class Job(NamedTuple):
+    group_id: str
+    send_method: str
+    first_name: str
+    last_name: str
+    address: str
+    tags: List[str]
+    pdf_attachments: List[dict]
+    main_template: str
+    markdown_template: str
+    mustache_partials: Dict[str, dict]
+    subject_template: str
+    company_code: str
+    from_email: str
+    from_name: str
+    subaccount: str
+    context: dict
+    headers: dict
+
+
+class EmailInfo(NamedTuple):
+    full_name: str
+    subject: str
+    html_body: str
+    text_body: str
+    signing_domain: str
+    headers: dict
 
 
 class Sender(Actor):
@@ -80,11 +84,11 @@ class Sender(Actor):
                    company_code,
                    from_email,
                    from_name,
-                   reply_to,
                    method,
                    subaccount,
                    tags,
-                   context):
+                   context,
+                   headers):
         if method == SendMethod.email_mandrill:
             coro = self._send_mandrill
         elif method == SendMethod.email_test:
@@ -103,7 +107,6 @@ class Sender(Actor):
             company_code=company_code,
             from_email=from_email,
             from_name=from_name,
-            reply_to=reply_to,
             subaccount=subaccount,
         )
 
@@ -121,7 +124,8 @@ class Sender(Actor):
 
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
                 data = dict(
-                    context=dict(**context, **msg_data.pop('context')),
+                    context=dict(context, **msg_data.pop('context')),
+                    headers=dict(headers, **msg_data.pop('headers')),
                     tags=list(set(tags + msg_data.pop('tags'))),
                     **base_kwargs,
                     **msg_data,
@@ -147,6 +151,7 @@ class Sender(Actor):
                         type='to'
                     )
                 ],
+                headers=email_info.headers,
                 track_opens=True,
                 auto_text=True,
                 view_content_link=False,
@@ -161,10 +166,6 @@ class Sender(Actor):
                 ) for a in j.pdf_attachments]
             ),
         }
-        if j.reply_to:
-            data['message']['headers'] = {
-                'Reply-To': j.reply_to,
-            }
         send_ts = datetime.utcnow()
         r = await self.mandrill.post('messages/send.json', **data)
         data = await r.json()
@@ -181,7 +182,7 @@ class Sender(Actor):
             from_email=j.from_email,
             from_name=j.from_name,
             group_id=j.group_id,
-            reply_to=j.reply_to,
+            headers=email_info.headers,
             to_email=j.address,
             to_name=email_info.full_name,
             signing_domain=email_info.signing_domain,
@@ -219,6 +220,10 @@ class Sender(Actor):
         j.context['subject'] = subject
         raw_message = chevron.render(j.markdown_template, data=j.context, partials_dict=j.mustache_partials)
         html_message = markdown(raw_message)
+        unsubscribe_link = j.context.get('unsubscribe_link')
+        if unsubscribe_link:
+            j.headers.setdefault('List-Unsubscribe', f'<{unsubscribe_link}>')
+
         return EmailInfo(
             full_name=full_name,
             subject=subject,
@@ -229,6 +234,7 @@ class Sender(Actor):
             ),
             text_body=raw_message,
             signing_domain=j.from_email[j.from_email.index('@') + 1:],
+            headers=j.headers,
         )
 
     async def _generate_base64_pdf(self, html):

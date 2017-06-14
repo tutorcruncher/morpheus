@@ -167,9 +167,7 @@ class UserMessageView(UserView):
         tags = request.query.getall('tags', None)
         query = request.query.get('q')
         if message_id:
-            es_query['query']['bool']['filter'].append(
-                {'term': {'_id': message_id}},
-            )
+            es_query['query']['bool']['filter'].append({'term': {'_id': message_id}})
         elif query:
             es_query['query']['bool']['should'] = [
                 {'simple_query_string': {
