@@ -35,6 +35,7 @@ class Job(NamedTuple):
     pdf_attachments: List[dict]
     main_template: str
     mustache_partials: Dict[str, dict]
+    macros: Dict[str, dict]
     subject_template: str
     company_code: str
     from_email: str
@@ -77,6 +78,7 @@ class Sender(Actor):
                    uid,
                    main_template,
                    mustache_partials,
+                   macros,
                    subject_template,
                    company_code,
                    from_email,
@@ -99,6 +101,7 @@ class Sender(Actor):
             send_method=method,
             main_template=main_template,
             mustache_partials=mustache_partials,
+            macros=macros,
             subject_template=subject_template,
             company_code=company_code,
             from_email=from_email,
@@ -197,7 +200,8 @@ class Sender(Actor):
             f'ts: {send_ts}\n'
             f'subject: {email_info.subject}\n'
             f'data: {json.dumps(data, indent=2)}\n'
-            f'content: {email_info.html_body}\n'
+            f'content:\n'
+            f'{email_info.html_body}\n'
         )
         Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
         save_path = self.settings.test_output / f'{msg_id}.txt'
@@ -206,13 +210,39 @@ class Sender(Actor):
         await self._store_msg(msg_id, send_ts, j, email_info)
 
     @classmethod
-    def _update_context(cls, context, partials):
+    def _update_context(cls, context, partials, macros):
         for k, v in context.items():
             if k.endswith('__md'):
                 yield k[:-4], markdown(v)
             elif k.endswith('__render'):
-                v = chevron.render(v, data=context, partials_dict=partials)
+                v = chevron.render(
+                    cls._apply_macros(v, macros),
+                    data=context,
+                    partials_dict=partials
+                )
                 yield k[:-8], markdown(v)
+
+    @staticmethod
+    def _apply_macros(s, macros):
+        if macros:
+            for key, body in macros.items():
+                m = re.search('^(\S+)\((.*)\) *$', key)
+                if not m:
+                    main_logger.warning('invalid macro "%s", skipping it', key)
+                    continue
+                name, arg_defs = m.groups()
+                arg_defs = [a.strip(' ') for a in arg_defs.split(',') if a.strip(' ')]
+
+                def replace_macro(m):
+                    arg_values = [a.strip(' ') for a in m.groups()[0].split(',') if a.strip(' ')]
+                    if len(arg_defs) != len(arg_values):
+                        main_logger.warning('invalid macro call "%s", not replacing', m.group())
+                        return m.group()
+                    else:
+                        return chevron.render(body, data=dict(zip(arg_defs, arg_values)))
+
+                s = re.sub(r'\{\{ *%s\((.*?)\) *\}\}' % name, replace_macro, s)
+        return s
 
     def _get_email_info(self, j: Job) -> EmailInfo:
         full_name = f'{j.first_name} {j.last_name}'.strip(' ')
@@ -224,7 +254,7 @@ class Sender(Actor):
         subject = chevron.render(j.subject_template, data=j.context)
         j.context.update(
             subject=subject,
-            **dict(self._update_context(j.context, j.mustache_partials))
+            **dict(self._update_context(j.context, j.mustache_partials, j.macros))
         )
         unsubscribe_link = j.context.get('unsubscribe_link')
         if unsubscribe_link:
@@ -234,7 +264,7 @@ class Sender(Actor):
             full_name=full_name,
             subject=subject,
             html_body=chevron.render(
-                j.main_template,
+                self._apply_macros(j.main_template, j.macros),
                 data=j.context,
                 partials_dict=j.mustache_partials,
             ),

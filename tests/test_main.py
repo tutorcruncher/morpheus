@@ -230,12 +230,12 @@ async def test_markdown_context(send_message, tmpdir):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
-    assert 'content: testing <p><a href="www.example.com/hello">hello</a></p>\n' in msg_file
+    assert 'content:\ntesting <p><a href="www.example.com/hello">hello</a></p>\n' in msg_file
 
 
 async def test_partials(send_message, tmpdir):
     message_id = await send_message(
-        main_template=('\nmessage: |{{{ message }}}|\n'
+        main_template=('message: |{{{ message }}}|\n'
                        'foo: {{ foo }}\n'
                        'partial: {{> test_p }}'),
         context={
@@ -251,9 +251,62 @@ async def test_partials(send_message, tmpdir):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
     assert """
-content: \n\
+content:
 message: |<p>FOO foo (FOO) bar <strong>BAR</strong></p>
 |
 foo: FOO
 partial: foo (FOO) bar **BAR**
+""" in msg_file
+
+
+async def test_macros(send_message, tmpdir):
+    message_id = await send_message(
+        main_template='macro result: {{ foobar(hello, {{ foo }}) }}',
+        context={
+            'foo': 'FOO',
+            'bar': 'BAR',
+        },
+        macros={
+            'foobar(a, b)': '___{{ a }} {{b}}___'
+        }
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert 'content:\nmacro result: ___hello FOO___\n' in msg_file
+
+
+async def test_macros_more(send_message, tmpdir, debug):
+    message_id = await send_message(
+        main_template=(
+            'foo:{{ foo() }}\n'
+            'foo wrong:{{ foo(1, 2) }}\n'
+            'bar:{{ bar() }}\n'
+            'spam1:{{ spam(x, y ) }}\n'
+            'spam2:{{ spam(with bracket ) , {{ bar}} ) }}\n'
+            'spam3:{{ spam({{ foo }}, {{ bar}} ) }}\n'
+            'spam wrong: {{ spam(1, {{ bar}}, x) }}\n'
+        ),
+        context={
+            'foo': 'FOO',
+            'bar': 'BAR',
+        },
+        macros={
+            'foo()': '___is foo___',
+            'bar': '___is bar___',
+            'spam(apple, pear)': '___spam {{apple}} {{pear}}___',
+        }
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert """
+content:
+foo:___is foo___
+foo wrong:
+bar:
+spam1:___spam x y___
+spam2:___spam with bracket ) BAR___
+spam3:___spam FOO BAR___
+spam wrong: , x) }}
 """ in msg_file
