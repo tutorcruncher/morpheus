@@ -63,6 +63,7 @@ class SendModel(WebModel):
     tags: List[str] = []
     context: dict = {}
     headers: dict = {}
+    important = False
     recipients: List[RecipientModel] = ...
 
 

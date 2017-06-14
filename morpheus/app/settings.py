@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     elastic_port = 9200
     user_fernet_key = b'i am not secure but 32 bits long'
     admin_basic_auth_password = 'testing'
-    test_output: Path = '/tmp/morpheus/tests'
+    test_output: Path = None
     pdf_generation_url: NoneStr = 'http://pdf/generate.pdf'
     local_api_url: str = 'http://localhost:8000'
 

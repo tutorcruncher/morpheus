@@ -276,7 +276,7 @@ async def test_macros(send_message, tmpdir):
     assert 'content:\nmacro result: ___hello FOO___\n' in msg_file
 
 
-async def test_macros_more(send_message, tmpdir, debug):
+async def test_macros_more(send_message, tmpdir):
     message_id = await send_message(
         main_template=(
             'foo:{{ foo() }}\n'

@@ -41,6 +41,7 @@ class Job(NamedTuple):
     from_email: str
     from_name: str
     subaccount: str
+    important: bool
     context: dict
     headers: dict
 
@@ -85,6 +86,7 @@ class Sender(Actor):
                    from_name,
                    method,
                    subaccount,
+                   important,
                    tags,
                    context,
                    headers):
@@ -107,6 +109,7 @@ class Sender(Actor):
             from_email=from_email,
             from_name=from_name,
             subaccount=subaccount,
+            important=important,
         )
 
         drain = Drain(
@@ -158,6 +161,7 @@ class Sender(Actor):
                 subaccount=j.subaccount,
                 tags=j.tags,
                 inline_css=True,
+                important=j.important,
                 attachments=[dict(
                     type='application/pdf',
                     name=a['name'],
@@ -186,6 +190,7 @@ class Sender(Actor):
             to_name=email_info.full_name,
             signing_domain=email_info.signing_domain,
             tags=j.tags,
+            important=j.important,
             attachments=[dict(
                 type='application/pdf',
                 name=a['name'],
@@ -203,10 +208,11 @@ class Sender(Actor):
             f'content:\n'
             f'{email_info.html_body}\n'
         )
-        Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
-        save_path = self.settings.test_output / f'{msg_id}.txt'
-        test_logger.info('sending message: %s (saved to %s)', output, save_path)
-        save_path.write_text(output)
+        if self.settings.test_output:
+            Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
+            save_path = self.settings.test_output / f'{msg_id}.txt'
+            test_logger.info('sending message: %s (saved to %s)', output, save_path)
+            save_path.write_text(output)
         await self._store_msg(msg_id, send_ts, j, email_info)
 
     @classmethod
