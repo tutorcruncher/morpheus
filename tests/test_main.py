@@ -32,12 +32,12 @@ async def test_favicon(cli):
 async def test_send_message(cli, tmpdir):
     data = {
         'uid': 'x' * 20,
-        'markdown_template': '# hello\n\nThis is a **{{ b }}**.\n',
         'company_code': 'foobar',
         'from_address': 'Samuel <s@muelcolvin.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
         'context': {
+            'message__render': '# hello\n\nThis is a **{{ b }}**.\n',
             'a': 'Apple',
             'b': f'Banana',
         },
@@ -133,12 +133,12 @@ async def test_send_message_headers(cli, tmpdir):
     uid = str(uuid.uuid4())
     data = {
         'uid': uid,
-        'markdown_template': 'test email {{ a }} {{ b}} {{ c }}.\n',
         'company_code': 'foobar',
         'from_address': 'Samuel <s@muelcolvin.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
         'context': {
+            'message__render': 'test email {{ a }} {{ b}} {{ c }}.\n',
             'a': 'Apple',
             'b': f'Banana',
         },
@@ -184,12 +184,14 @@ async def test_send_message_headers(cli, tmpdir):
     assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
 
 
-async def test_send_unsub_context(cli, send_message, tmpdir):
+async def test_send_unsub_context(send_message, tmpdir):
     uid = str(uuid.uuid4())
     await send_message(
         uid=uid,
-        markdown_template='test email {{ unsubscribe_link }}.\n',
-        context={'unsubscribe_link': 'http://example.com/unsub'},
+        context={
+            'message__render': 'test email {{ unsubscribe_link }}.\n',
+            'unsubscribe_link': 'http://example.com/unsub'
+        },
         recipients=[
             {'address': f'1@example.com'},
             {
@@ -217,11 +219,11 @@ async def test_send_unsub_context(cli, send_message, tmpdir):
     assert '<p>test email http://example.com/context.</p>\n' in msg_file
 
 
-async def test_markdown_context(cli, send_message, tmpdir):
+async def test_markdown_context(send_message, tmpdir):
     message_id = await send_message(
-        markdown_template='test email {{ unsubscribe_link }}.\n',
         main_template='testing {{{ foobar }}}',
         context={
+            'message__render': 'test email {{ unsubscribe_link }}.\n',
             'foobar__md': '[hello](www.example.com/hello)'
         },
     )
@@ -229,3 +231,29 @@ async def test_markdown_context(cli, send_message, tmpdir):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
     assert 'content: testing <p><a href="www.example.com/hello">hello</a></p>\n' in msg_file
+
+
+async def test_partials(send_message, tmpdir):
+    message_id = await send_message(
+        main_template=('\nmessage: |{{{ message }}}|\n'
+                       'foo: {{ foo }}\n'
+                       'partial: {{> test_p }}'),
+        context={
+            'message__render': '{{foo}} {{> test_p }}',
+            'foo': 'FOO',
+            'bar': 'BAR',
+        },
+        mustache_partials={
+            'test_p': 'foo ({{ foo }}) bar **{{ bar }}**',
+        }
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert """
+content: \n\
+message: |<p>FOO foo (FOO) bar <strong>BAR</strong></p>
+|
+foo: FOO
+partial: foo (FOO) bar **BAR**
+""" in msg_file

@@ -280,12 +280,12 @@ This is a **test** at {{ time }}.
 
     data = {
         'uid': uid,
-        'markdown_template': body,
         'company_code': company,
         'from_address': efrom,
         'method': send_method,
         'subject_template': subject,
         'context': {
+            'message__render': body,
             'time': datetime.now().strftime('%a %Y-%m-%d %H:%M')
         },
         'recipients': [

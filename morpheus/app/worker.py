@@ -34,7 +34,6 @@ class Job(NamedTuple):
     tags: List[str]
     pdf_attachments: List[dict]
     main_template: str
-    markdown_template: str
     mustache_partials: Dict[str, dict]
     subject_template: str
     company_code: str
@@ -49,7 +48,6 @@ class EmailInfo(NamedTuple):
     full_name: str
     subject: str
     html_body: str
-    text_body: str
     signing_domain: str
     headers: dict
 
@@ -78,7 +76,6 @@ class Sender(Actor):
                    recipients_key, *,
                    uid,
                    main_template,
-                   markdown_template,
                    mustache_partials,
                    subject_template,
                    company_code,
@@ -101,7 +98,6 @@ class Sender(Actor):
             group_id=uid,
             send_method=method,
             main_template=main_template,
-            markdown_template=markdown_template,
             mustache_partials=mustache_partials,
             subject_template=subject_template,
             company_code=company_code,
@@ -209,6 +205,15 @@ class Sender(Actor):
         save_path.write_text(output)
         await self._store_msg(msg_id, send_ts, j, email_info)
 
+    @classmethod
+    def _update_context(cls, context, partials):
+        for k, v in context.items():
+            if k.endswith('__md'):
+                yield k[:-4], markdown(v)
+            elif k.endswith('__render'):
+                v = chevron.render(v, data=context, partials_dict=partials)
+                yield k[:-8], markdown(v)
+
     def _get_email_info(self, j: Job) -> EmailInfo:
         full_name = f'{j.first_name} {j.last_name}'.strip(' ')
         j.context.update(
@@ -217,12 +222,9 @@ class Sender(Actor):
             full_name=full_name,
         )
         subject = chevron.render(j.subject_template, data=j.context)
-        j.context['subject'] = subject
-        raw_message = chevron.render(j.markdown_template, data=j.context, partials_dict=j.mustache_partials)
-        message_html = markdown(raw_message)
         j.context.update(
-            message=message_html,
-            **{k[:-4]: markdown(v) for k, v in j.context.items() if k.endswith('__md')}
+            subject=subject,
+            **dict(self._update_context(j.context, j.mustache_partials))
         )
         unsubscribe_link = j.context.get('unsubscribe_link')
         if unsubscribe_link:
@@ -236,7 +238,6 @@ class Sender(Actor):
                 data=j.context,
                 partials_dict=j.mustache_partials,
             ),
-            text_body=raw_message,
             signing_domain=j.from_email[j.from_email.index('@') + 1:],
             headers=j.headers,
         )

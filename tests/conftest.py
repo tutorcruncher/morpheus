@@ -86,12 +86,14 @@ def send_message(cli, **extra):
     async def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),
-            markdown_template='this is a test',
             main_template='<body>\n{{{ message }}}\n</body>',
             company_code='foobar',
             from_address='Sender Name <sender@example.com>',
             method='email-test',
             subject_template='test message',
+            context={
+                'message': 'this is a test'
+            },
             recipients=[{'address': 'foobar@testing.com'}]
         )
         # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
