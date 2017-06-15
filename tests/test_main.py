@@ -276,7 +276,7 @@ async def test_macros(send_message, tmpdir):
     assert 'content:\nmacro result: ___hello FOO___\n' in msg_file
 
 
-async def test_macros_more(send_message, tmpdir, debug):
+async def test_macros_more(send_message, tmpdir):
     message_id = await send_message(
         main_template=(
             'foo:foo()\n'
@@ -286,7 +286,7 @@ async def test_macros_more(send_message, tmpdir, debug):
             'spam2:spam(with bracket )  | {{ bar}} )\n'
             'spam3:spam({{ foo }} | {{ bar}} )\n'
             'spam wrong:spam(1 | {{ bar}} | x)\n'
-            'button: centered_button(Reset password now | {{ password_reset_link }})\n'
+            'button:centered_button(Reset password now | {{ password_reset_link }})\n'
         ),
         context={
             'foo': 'FOO',
@@ -315,8 +315,42 @@ spam1:___spam x y___
 spam2:spam(with bracket )  | BAR )
 spam3:___spam FOO BAR___
 spam wrong:spam(1 | BAR | x)
-button: 
+button:
       <div class="button">
         <a href="/testagency/password/reset/t-4mx-2968ca2f34bc512e70e6/"><span>Reset password now</span></a>
       </div>
+""" in msg_file
+
+
+async def test_macro_in_message(send_message, tmpdir):
+    message_id = await send_message(
+        context={
+            'pay_link': '/pay/now/123/',
+            'first_name': 'John',
+            'message__render': (
+                '# hello {{ first_name }}\n'
+                'centered_button(Pay now | {{ pay_link }})\n'
+            )
+        },
+        macros={
+            'centered_button(text | link)': (
+                '<div class="button">\n'
+                '  <a href="{{ link }}"><span>{{ text }}</span></a>\n'
+                '</div>\n'
+            )
+        }
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert """
+content:
+<body>
+<h1>hello</h1>
+
+<div class="button">
+  <a href="/pay/now/123/"><span>Pay now</span></a>
+</div>
+
+</body>
 """ in msg_file

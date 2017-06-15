@@ -117,7 +117,7 @@ class ServiceView(View):
     Views used by services. Services are in charge and can be trusted to do "whatever they like".
     """
     async def authenticate(self, request):
-        if self.settings.auth_key != request.headers.get('Authorization', ''):
+        if not secrets.compare_digest(self.settings.auth_key, request.headers.get('Authorization', '')):
             # avoid the need for constant time compare on auth key
             await asyncio.sleep(random())
             raise HTTPForbidden(text='Invalid "Authorization" header')
@@ -156,7 +156,7 @@ class BasicAuthView(View):
         except (ValueError, UnicodeDecodeError):
             password = ''
 
-        if password != self.settings.admin_basic_auth_password:
+        if not secrets.compare_digest(password, self.settings.admin_basic_auth_password):
             await asyncio.sleep(random())
             raise HTTPUnauthorized(text='Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
 
