@@ -146,7 +146,7 @@ class BasicAuthView(View):
     Views used by admin, applies basic auth.
     """
     async def authenticate(self, request):
-        token = re.sub('^Basic *', '', request.headers.get('Authorization', ''))
+        token = re.sub('^Basic *', '', request.headers.get('Authorization', '')) or 'x'
         try:
             _, password = base64.b64decode(token).decode().split(':', 1)
         except (ValueError, UnicodeDecodeError):
@@ -247,12 +247,25 @@ class MorpheusUserApi(ApiSession):
         self.fernet = Fernet(base64.urlsafe_b64encode(settings.user_fernet_key))
         super().__init__(settings.local_api_url, settings, loop)
 
+    # def _modify_request(self, method, url, data):
+    #     session_data = {
+    #         'company': '__all__',
+    #         'expires': to_unix_ms(datetime(2032, 1, 1))[0]
+    #     }
+    #     data['headers_'] = {
+    #         'Authorization': self.fernet.encrypt(msgpack.packb(session_data, encoding='utf8'))
+    #     }
+    #     return method, url, data
+
     def _modify_request(self, method, url, data):
+        data['headers_'] = {
+            'Authorization': self.get_auth_token()
+        }
+        return method, url, data
+
+    def get_auth_token(self):
         session_data = {
             'company': '__all__',
             'expires': to_unix_ms(datetime(2032, 1, 1))[0]
         }
-        data['headers_'] = {
-            'Authorization': self.fernet.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()
-        }
-        return method, url, data
+        return self.fernet.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()

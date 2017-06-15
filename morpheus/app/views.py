@@ -190,6 +190,30 @@ class UserMessageView(UserView):
         return Response(body=await r.text(), content_type='application/json')
 
 
+class UserMessagePreviewView(UserView):
+    """
+    preview a message
+    """
+    async def call(self, request):
+        es_query = {
+            'bool': {
+                'filter': [
+                    {'match_all': {}}
+                    if self.session.company == '__all__' else
+                    {'term': {'company': self.session.company}},
+                ] + [
+                    {'term': {'_id': request.match_info['id']}}
+                ]
+            }
+        }
+        r = await self.app['es'].get(
+            'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), query=es_query
+        )
+        data = await r.json()
+        body = data['hits']['hits'][0]['_source']['body']
+        return Response(body=body, content_type='text/html')
+
+
 class UserAggregationView(UserView):
     """
     Aggregated sends and opens over time for an authenticated user

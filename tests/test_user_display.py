@@ -155,3 +155,12 @@ async def test_user_tags(cli, settings, send_message):
     data = await r.json()
     assert data['hits']['total'] == 1, json.dumps(data, indent=2)
     assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
+
+
+async def test_message_preview(cli, settings, send_message):
+    msg_id = await send_message(company_code='preview')
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.get(f'/user/email-test/{msg_id}/preview/',
+                      headers={'Authorization': user_auth(settings, company='preview')})
+    assert r.status == 200, await r.text()
+    assert '<body>\nthis is a test\n</body>' == await r.text()
