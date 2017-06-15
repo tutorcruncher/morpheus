@@ -261,13 +261,13 @@ partial: foo (FOO) bar **BAR**
 
 async def test_macros(send_message, tmpdir):
     message_id = await send_message(
-        main_template='macro result: {{ foobar(hello, {{ foo }}) }}',
+        main_template='macro result: {{ foobar(hello | {{ foo }}) }}',
         context={
             'foo': 'FOO',
             'bar': 'BAR',
         },
         macros={
-            'foobar(a, b)': '___{{ a }} {{b}}___'
+            'foobar(a | b)': '___{{ a }} {{b}}___'
         }
     )
     assert len(tmpdir.listdir()) == 1
@@ -280,12 +280,12 @@ async def test_macros_more(send_message, tmpdir):
     message_id = await send_message(
         main_template=(
             'foo:{{ foo() }}\n'
-            'foo wrong:{{ foo(1, 2) }}\n'
+            'foo wrong:{{ foo(1 | 2) }}\n'
             'bar:{{ bar() }}\n'
-            'spam1:{{ spam(x, y ) }}\n'
-            'spam2:{{ spam(with bracket ) , {{ bar}} ) }}\n'
-            'spam3:{{ spam({{ foo }}, {{ bar}} ) }}\n'
-            'spam wrong: {{ spam(1, {{ bar}}, x) }}\n'
+            'spam1:{{ spam(x | y ) }}\n'
+            'spam2:{{ spam(with bracket )  | {{ bar}} ) }}\n'
+            'spam3:{{ spam({{ foo }} | {{ bar}} ) }}\n'
+            'spam wrong: {{ spam(1 | {{ bar}} | x) }}\n'
         ),
         context={
             'foo': 'FOO',
@@ -294,7 +294,7 @@ async def test_macros_more(send_message, tmpdir):
         macros={
             'foo()': '___is foo___',
             'bar': '___is bar___',
-            'spam(apple, pear)': '___spam {{apple}} {{pear}}___',
+            'spam(apple | pear)': '___spam {{apple}} {{pear}}___',
         }
     )
     assert len(tmpdir.listdir()) == 1
@@ -308,5 +308,5 @@ bar:
 spam1:___spam x y___
 spam2:___spam with bracket ) BAR___
 spam3:___spam FOO BAR___
-spam wrong: , x) }}
+spam wrong:  | x) }}
 """ in msg_file

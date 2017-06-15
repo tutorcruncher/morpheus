@@ -237,10 +237,10 @@ class Sender(Actor):
                     main_logger.warning('invalid macro "%s", skipping it', key)
                     continue
                 name, arg_defs = m.groups()
-                arg_defs = [a.strip(' ') for a in arg_defs.split(',') if a.strip(' ')]
+                arg_defs = [a.strip(' ') for a in arg_defs.split('|') if a.strip(' ')]
 
                 def replace_macro(m):
-                    arg_values = [a.strip(' ') for a in m.groups()[0].split(',') if a.strip(' ')]
+                    arg_values = [a.strip(' ') for a in m.groups()[0].split('|') if a.strip(' ')]
                     if len(arg_defs) != len(arg_values):
                         main_logger.warning('invalid macro call "%s", not replacing', m.group())
                         return m.group()
