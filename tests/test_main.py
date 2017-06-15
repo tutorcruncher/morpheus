@@ -346,7 +346,7 @@ async def test_macro_in_message(send_message, tmpdir):
     assert """
 content:
 <body>
-<h1>hello</h1>
+<h1>hello John</h1>
 
 <div class="button">
   <a href="/pay/now/123/"><span>Pay now</span></a>

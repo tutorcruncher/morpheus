@@ -14,6 +14,7 @@ isort:
 lint:
 	flake8 morpheus/ tests/
 	pytest morpheus -p no:sugar -q
+	python setup.py check -rms
 
 .PHONY: test
 test:

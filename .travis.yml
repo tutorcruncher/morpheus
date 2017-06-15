@@ -27,7 +27,19 @@ before_script:
 script:
 - make lint
 - make test
+- python setup.py build
 
 after_success:
 - ls -lha
 - bash <(curl -s https://codecov.io/bash)
+
+deploy:
+- provider: pypi
+  user: samuelcolvin
+  password:
+    secure: "cmrF8mXOryNCMrTOg/1pZ5a8eN+rQDjmwPeQuud6AMvPxBfIP0F3okUhiusfq7tth8mwEOuz1FUAlHXLHdZP22HgxV/w/p/5wqDlzeIsszihUyXKnFuh/Q48zCBL9fqqIkQEBZFys6CyzHlSJjfGTncxTCCGY5Io/235lamgjNxW75SM/qZgvxEAve5l/yO33wmnk17HZsJ8Wdv181hegV/MPeOpI3HH+K3xrLI+VgclYlGcXv88Bveoms7CoKNsklbqHuOb6GcCjXM5+KzYE0Gv8Hv9xFp13qcxhIKyzPOT8zIUkCRNbUJ9YWXueVCqOZYJST1XdBD1V2RiDjthkpsuOe8N5kdegwciDGAt8elPFQVCiS1g08jexikqPLsymJyEU8jTsJs9IZNrB/l6fJi5WZ1SaysgYFiXtEF4wv72RwI0CQmFeVSHEfVHuKWXsY0biAwXTKTQnTkQmD4u73Kt1zcyswCDQw760kylSIwuJTBii4dit4XyG2fxL5aUFBFsWNw8jCyZajCAclQNBjaVtaGWdKbT33O8iR/qws4HYAbaDU+kFAsKH7S0jmHhpiwjQ/Hdr+g6adTrkKuk/PXvORWM6oiUUbkuH0wMEK0nKo/fn2p7sd65BycyfcEDrP9y2qdAB8dUdk2pBngF2miYVFBuJMGp9GQwzN8LnH0="
+  distributions: sdist bdist_wheel
+  skip_upload_docs: true
+  on:
+    tags: true
+    python: 3.6

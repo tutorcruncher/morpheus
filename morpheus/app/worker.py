@@ -6,23 +6,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
-import chevron
-import misaka
 import msgpack
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent
-from misaka import HtmlRenderer, Markdown
 
 from .es import ElasticSearch
 from .models import MessageStatus, SendMethod
+from .render import EmailInfo, render_email
 from .settings import Settings
 from .utils import Mandrill
 
 test_logger = logging.getLogger('morpheus.worker.test')
 main_logger = logging.getLogger('morpheus.worker')
-
-
-markdown = Markdown(HtmlRenderer(flags=[misaka.HTML_HARD_WRAP]), extensions=[misaka.EXT_NO_INTRA_EMPHASIS])
 
 
 class Job(NamedTuple):
@@ -43,14 +38,6 @@ class Job(NamedTuple):
     subaccount: str
     important: bool
     context: dict
-    headers: dict
-
-
-class EmailInfo(NamedTuple):
-    full_name: str
-    subject: str
-    html_body: str
-    signing_domain: str
     headers: dict
 
 
@@ -138,7 +125,7 @@ class Sender(Actor):
         return jobs
 
     async def _send_mandrill(self, j: Job):
-        email_info = self._get_email_info(j)
+        email_info = render_email(j)
         data = {
             'async': True,
             'message': dict(
@@ -157,7 +144,7 @@ class Sender(Actor):
                 track_opens=True,
                 auto_text=True,
                 view_content_link=False,
-                signing_domain=email_info.signing_domain,
+                signing_domain=j.from_email[j.from_email.index('@') + 1:],
                 subaccount=j.subaccount,
                 tags=j.tags,
                 inline_css=True,
@@ -180,7 +167,7 @@ class Sender(Actor):
         await self._store_msg(data['_id'], send_ts, j, email_info)
 
     async def _send_test(self, j: Job):
-        email_info = self._get_email_info(j)
+        email_info = render_email(j)
         data = dict(
             from_email=j.from_email,
             from_name=j.from_name,
@@ -188,7 +175,6 @@ class Sender(Actor):
             headers=email_info.headers,
             to_email=j.address,
             to_name=email_info.full_name,
-            signing_domain=email_info.signing_domain,
             tags=j.tags,
             important=j.important,
             attachments=[dict(
@@ -214,69 +200,6 @@ class Sender(Actor):
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
         await self._store_msg(msg_id, send_ts, j, email_info)
-
-    @classmethod
-    def _update_context(cls, context, partials, macros):
-        for k, v in context.items():
-            if k.endswith('__md'):
-                yield k[:-4], markdown(v)
-            elif k.endswith('__render'):
-                v = chevron.render(
-                    cls._apply_macros(v, macros),
-                    data=context,
-                    partials_dict=partials
-                )
-                yield k[:-8], markdown(v)
-
-    @staticmethod
-    def _apply_macros(s, macros):
-        if macros:
-            for key, body in macros.items():
-                m = re.search('^(\S+)\((.*)\) *$', key)
-                if not m:
-                    main_logger.warning('invalid macro "%s", skipping it', key)
-                    continue
-                name, arg_defs = m.groups()
-                arg_defs = [a.strip(' ') for a in arg_defs.split('|') if a.strip(' ')]
-
-                def replace_macro(m):
-                    arg_values = [a.strip(' ') for a in m.groups()[0].split('|') if a.strip(' ')]
-                    if len(arg_defs) != len(arg_values):
-                        main_logger.warning('invalid macro call "%s", not replacing', m.group())
-                        return m.group()
-                    else:
-                        return chevron.render(body, data=dict(zip(arg_defs, arg_values)))
-
-                s = re.sub(r'%s\((.*?)\)' % name, replace_macro, s)
-        return s
-
-    def _get_email_info(self, j: Job) -> EmailInfo:
-        full_name = f'{j.first_name} {j.last_name}'.strip(' ')
-        j.context.update(
-            first_name=j.first_name,
-            last_name=j.last_name,
-            full_name=full_name,
-        )
-        subject = chevron.render(j.subject_template, data=j.context)
-        j.context.update(
-            subject=subject,
-            **dict(self._update_context(j.context, j.mustache_partials, j.macros))
-        )
-        unsubscribe_link = j.context.get('unsubscribe_link')
-        if unsubscribe_link:
-            j.headers.setdefault('List-Unsubscribe', f'<{unsubscribe_link}>')
-
-        return EmailInfo(
-            full_name=full_name,
-            subject=subject,
-            html_body=chevron.render(
-                self._apply_macros(j.main_template, j.macros),
-                data=j.context,
-                partials_dict=j.mustache_partials,
-            ),
-            signing_domain=j.from_email[j.from_email.index('@') + 1:],
-            headers=j.headers,
-        )
 
     async def _generate_base64_pdf(self, html):
         if not self.settings.pdf_generation_url:
