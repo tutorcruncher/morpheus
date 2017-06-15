@@ -1,5 +1,4 @@
 cffi==1.10.0
-cryptography==1.9
 misaka==2.1.0
 multidict==2.1.5
 uvloop==0.8.0

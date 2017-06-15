@@ -1,6 +1,6 @@
 FROM python:3.6-alpine
 
-RUN apk --update --no-cache add gcc g++ musl-dev zlib-dev libuv libffi-dev openssl-dev make \
+RUN apk --update --no-cache add gcc g++ musl-dev zlib-dev libuv libffi-dev make \
  && rm -rf /var/cache/apk/*
 
 # having a seperate file for packages which are slow to install speeds up some builts a lot

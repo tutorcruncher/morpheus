@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     test_output: Path = None
     pdf_generation_url: NoneStr = 'http://pdf/generate.pdf'
     local_api_url: str = 'http://localhost:8000'
-    public_local_api_url: str = 'http://localhost:8000'
+    public_local_api_url: str = 'http://localhost:5000'
 
     @property
     def redis_settings(self) -> RedisSettings:

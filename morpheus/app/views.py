@@ -10,7 +10,7 @@ from html import escape
 
 import chevron
 import msgpack
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
 from arq.utils import from_unix_ms
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
@@ -210,6 +210,8 @@ class UserMessagePreviewView(UserView):
             'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), query=es_query
         )
         data = await r.json()
+        if data['hits']['total'] != 1:
+            raise HTTPNotFound(text='message not found')
         body = data['hits']['hits'][0]['_source']['body']
         return Response(body=body, content_type='text/html')
 
