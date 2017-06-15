@@ -247,7 +247,7 @@ class Sender(Actor):
                     else:
                         return chevron.render(body, data=dict(zip(arg_defs, arg_values)))
 
-                s = re.sub(r'\{\{ *%s\((.*?)\) *\}\}' % name, replace_macro, s)
+                s = re.sub(r'%s\((.*?)\)' % name, replace_macro, s)
         return s
 
     def _get_email_info(self, j: Job) -> EmailInfo:
