@@ -1,21 +1,24 @@
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import re
+import secrets
 from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
 from pathlib import Path
 from random import random
 from typing import Optional, Type  # noqa
+from urllib.parse import urlencode
 
 import msgpack
 from aiohttp import ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
 from arq.utils import to_unix_ms
-from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, ValidationError
 
 from .settings import Settings
@@ -122,21 +125,22 @@ class ServiceView(View):
 
 class UserView(View):
     """
-    Views used by users via ajax, "Authorization" header is Fernet encrypted user data.
+    Views used by users via ajax
     """
     async def authenticate(self, request):
-        token = request.headers.get('Authorization', '')
-        try:
-            raw_data = self.app['fernet'].decrypt(token.encode())
-        except InvalidToken:
+        company = request.query.get('company', None)
+        expires = request.query.get('expires', None)
+        body = f'{company}:{expires}'.encode()
+        expected_sig = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
+        signature = request.query.get('signature', '-')
+        if not secrets.compare_digest(expected_sig, signature):
             await asyncio.sleep(random())
             raise HTTPForbidden(text='Invalid token')
 
-        try:
-            data = msgpack.unpackb(raw_data, encoding='utf8')
-        except ValueError:
-            raise HTTPBadRequest(text='bad auth data')
-        self.session = Session(**data)
+        self.session = Session(
+            company=company,
+            expires=expires,
+        )
         if self.session.expires < datetime.utcnow().replace(tzinfo=timezone.utc):
             raise HTTPForbidden(text='token expired')
 
@@ -244,28 +248,17 @@ class Mandrill(ApiSession):
 
 class MorpheusUserApi(ApiSession):
     def __init__(self, settings, loop):
-        self.fernet = Fernet(base64.urlsafe_b64encode(settings.user_fernet_key))
         super().__init__(settings.local_api_url, settings, loop)
 
-    # def _modify_request(self, method, url, data):
-    #     session_data = {
-    #         'company': '__all__',
-    #         'expires': to_unix_ms(datetime(2032, 1, 1))[0]
-    #     }
-    #     data['headers_'] = {
-    #         'Authorization': self.fernet.encrypt(msgpack.packb(session_data, encoding='utf8'))
-    #     }
-    #     return method, url, data
-
     def _modify_request(self, method, url, data):
-        data['headers_'] = {
-            'Authorization': self.get_auth_token()
-        }
-        return method, url, data
+        return method, self.modify_url(url), data
 
-    def get_auth_token(self):
-        session_data = {
-            'company': '__all__',
-            'expires': to_unix_ms(datetime(2032, 1, 1))[0]
-        }
-        return self.fernet.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()
+    def modify_url(self, url):
+        args = dict(
+            company='__all__',
+            expires=to_unix_ms(datetime(2032, 1, 1))[0]
+        )
+        body = '{company}:{expires}'.format(**args).encode()
+        args['signature'] = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
+        url = str(url)
+        return url + ('&' if '?' in url else '?') + urlencode(args)

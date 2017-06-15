@@ -22,11 +22,12 @@ class Settings(BaseSettings):
     release_date: str = '-'
     elastic_host = 'localhost'
     elastic_port = 9200
-    user_fernet_key = b'i am not secure but 32 bits long'
+    user_auth_key: bytes = b'insecure'
     admin_basic_auth_password = 'testing'
     test_output: Path = None
     pdf_generation_url: NoneStr = 'http://pdf/generate.pdf'
     local_api_url: str = 'http://localhost:8000'
+    public_local_api_url: str = 'http://localhost:8000'
 
     @property
     def redis_settings(self) -> RedisSettings:

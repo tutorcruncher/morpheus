@@ -1,10 +1,8 @@
 import asyncio
-import base64
 import logging
 
 import async_timeout
 from aiohttp.web import Application
-from cryptography.fernet import Fernet
 
 from .es import ElasticSearch
 from .logs import setup_logging
@@ -87,7 +85,6 @@ def create_app(loop, settings: Settings=None):
         settings=settings,
         sender=settings.sender_cls(settings=settings, loop=loop),
         es=ElasticSearch(settings=settings, loop=loop),
-        fernet=Fernet(base64.urlsafe_b64encode(settings.user_fernet_key)),
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
         webhook_auth_key=None,
         morpheus_api=MorpheusUserApi(settings=settings, loop=loop),

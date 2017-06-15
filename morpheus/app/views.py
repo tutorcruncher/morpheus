@@ -378,7 +378,11 @@ class AdminGetView(AdminView):
         data = await r.json()
         data = json.dumps(data, indent=2)
         data = re.sub('14\d{8,11}', self.replace_data, data)
+
+        preview_uri = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
         return dict(
             sub_heading=f'Message {message_id}',
-            extra=highlight(data, JsonLexer(), HtmlFormatter()),
+            extra=f"""
+                <iframe src="{self.settings.public_local_api_url}{preview_uri}"></iframe>
+                {highlight(data, JsonLexer(), HtmlFormatter())}""",
         )

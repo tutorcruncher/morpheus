@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.6
-import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -7,12 +8,11 @@ import uuid
 from datetime import datetime
 from functools import partial
 from time import time
+from urllib.parse import urlencode
 
 import click
-import msgpack
 import requests
 from arq.utils import from_unix_ms, to_unix_ms
-from cryptography.fernet import Fernet
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.terminal256 import Terminal256Formatter
@@ -22,7 +22,6 @@ from requests.auth import HTTPBasicAuth
 
 hostname = os.getenv('APP_HOST_NAME', 'morpheus.example.com')
 root_url = f'https://{hostname}'
-root_status_url = root_url.replace('morpheus.', 'morpheus-status.')
 
 
 def sizeof_fmt(num):
@@ -68,15 +67,15 @@ def print_response(r, *, include=None, exclude=set()):
     print_data(data)
 
 
-def user_auth_headers(user_fernet_key, company):
-    key = base64.urlsafe_b64encode(user_fernet_key.encode())
-    f = Fernet(key)
-    session_data = {
-        'company': company,
-        'expires': to_unix_ms(datetime(2020, 1, 1))[0]
-    }
-    auth_key = f.encrypt(msgpack.packb(session_data, encoding='utf8'))
-    return {'Authorization': auth_key}
+def modify_url(url, user_auth_key, company):
+    args = dict(
+        company=company,
+        expires=to_unix_ms(datetime(2032, 1, 1))[0]
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(user_auth_key.encode(), body, hashlib.sha256).hexdigest()
+    url = str(url)
+    return url + ('&' if '?' in url else '?') + urlencode(args)
 
 
 def style(s, pad=0, limit=1000, **kwargs):
@@ -134,22 +133,22 @@ def cli(ctx):
 @cli.command()
 @click.option('--username', envvar='BASIC_USERNAME')
 @click.option('--password', envvar='BASIC_PASSWORD')
-@click.option('--user-fernet-key', envvar='APP_USER_FERNET_KEY')
+@click.option('--user-auth-key', envvar='APP_USER_AUTH_KEY')
 @click.option('--company', default='__all__')
 @click.option('--send-method', default='email-mandrill')
-def status(username, password, user_fernet_key, company, send_method):
+def status(username, password, user_auth_key, company, send_method):
     r = requests.get(root_url)
     assert r.status_code == 200, (r.status_code, r.text)
     print(*re.search('^ *(COMMIT: .+)', r.text, re.M).groups())
     print(*re.search('^ *(RELEASE DATE: .+)', r.text, re.M).groups())
 
     auth = HTTPBasicAuth(username, password)
-    r = requests.get(f'{root_status_url}/api/2/all', auth=auth)
+    r = requests.get(f'{root_url}/glances/api/2/all', auth=auth)
     if r.status_code == 401:
         print(f'authentication with username={username}, password={password} failed')
         exit(1)
 
-    assert r.status_code == 200, (r.status_code, r.text)
+    assert r.status_code == 200, (f'{root_url}/glances/api/2/all', r.status_code, r.text)
     data = get_data(r)
     print('CPU:      {cpu[total]:0.2f}%'.format(**data))
     print('Memory:   {mem[percent]:0.2f}% {v}'.format(v=sizeof_fmt(data['mem']['used']), **data))
@@ -163,10 +162,7 @@ def status(username, password, user_fernet_key, company, send_method):
         print('  {device_name:10} {mnt_point:20} {fs_type:6} used: {v:6} {percent:0.2f}%'.format(
             v=sizeof_fmt(c['used']), **c))
 
-    r = requests.get(
-        f'{root_url}/user/{send_method}/aggregation/',
-        headers=user_auth_headers(user_fernet_key, company),
-    )
+    r = requests.get(modify_url(f'{root_url}/user/{send_method}/aggregation/', user_auth_key, company))
     assert r.status_code == 200, (r.status_code, r.text)
     data = get_data(r)
     # print_data(data)
@@ -181,58 +177,6 @@ def status(username, password, user_fernet_key, company, send_method):
         dt = datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d')
         print('{dt:%a %Y-%m-%d}   {opens}'.format(dt=dt, opens=opens))
 
-
-@cli.command()
-@click.option('--user-fernet-key', envvar='APP_USER_FERNET_KEY')
-@click.option('--company', default='__all__')
-@click.option('--send-method', default='email-mandrill')
-@click.option('--limit', 'limit', default=50, type=int)
-def list(user_fernet_key, company, send_method, limit):
-    p_from = 0
-    for i in range(100):
-        r = requests.get(
-            f'{root_url}/user/{send_method}/?from={p_from}&size=50',
-            headers=user_auth_headers(user_fernet_key, company),
-        )
-        assert r.status_code == 200, (r.status_code, r.text)
-        data = get_data(r)
-        # print_data(data)
-        if not data['hits']['hits']:
-            return
-        p_from = print_messages(data, i == 0, limit, p_from)
-        if not p_from:
-            return
-
-
-@cli.command()
-@click.argument('message_id')
-@click.option('--user-fernet-key', envvar='APP_USER_FERNET_KEY')
-@click.option('--company', default='__all__')
-@click.option('--send-method', default='email-mandrill')
-def get(message_id, user_fernet_key, company, send_method):
-    r = requests.get(
-        f'{root_url}/user/{send_method}/?message_id={message_id}',
-        headers=user_auth_headers(user_fernet_key, company),
-    )
-    assert r.status_code == 200, (r.status_code, r.text)
-    data = get_data(r)
-    print_data(data)
-
-
-@cli.command()
-@click.argument('search-query')
-@click.option('--user-fernet-key', envvar='APP_USER_FERNET_KEY')
-@click.option('--company', default='__all__')
-@click.option('--send-method', default='email-mandrill')
-def search(search_query, user_fernet_key, company, send_method):
-    r = requests.get(
-        f'{root_url}/user/{send_method}/?q={search_query}',
-        headers=user_auth_headers(user_fernet_key, company),
-    )
-    assert r.status_code == 200, (r.status_code, r.text)
-    data = get_data(r)
-    # print_data(data['hits']['hits'][:5])
-    print_messages(data)
 
 
 @cli.command()

@@ -1,20 +1,21 @@
-import base64
+import hashlib
+import hmac
 import json
 import uuid
 from datetime import datetime
+from urllib.parse import urlencode
 
-import msgpack
 from arq.utils import to_unix_ms
-from cryptography.fernet import Fernet
 
 
-def user_auth(settings, company='foobar'):
-    session_data = {
-        'company': company,
-        'expires': to_unix_ms(datetime(2032, 1, 1))[0]
-    }
-    f = Fernet(base64.urlsafe_b64encode(settings.user_fernet_key))
-    return f.encrypt(msgpack.packb(session_data, encoding='utf8')).decode()
+def modify_url(url, settings, company='foobar'):
+    args = dict(
+        company=company,
+        expires=to_unix_ms(datetime(2032, 1, 1))[0]
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
+    return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
 
 
 async def test_user_list(cli, settings, send_message):
@@ -29,7 +30,7 @@ async def test_user_list(cli, settings, send_message):
     await send_message(uid=str(uuid.uuid4()), company_code='different1')
     await send_message(uid=str(uuid.uuid4()), company_code='different2')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='whoever')})
+    r = await cli.get(modify_url('/user/email-test/', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
@@ -42,7 +43,7 @@ async def test_user_list(cli, settings, send_message):
     assert hit['_source']['company'] == 'whoever'
     assert hit['_source']['status'] == 'send'
 
-    r = await cli.get('/user/email-test/', headers={'Authorization': user_auth(settings, company='__all__')})
+    r = await cli.get(modify_url('/user/email-test/', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 6
@@ -58,8 +59,7 @@ async def test_user_search(cli, settings, send_message):
 
     await send_message(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get('/user/email-test/?q=cherry',
-                      headers={'Authorization': user_auth(settings, company='whoever')})
+    r = await cli.get(modify_url('/user/email-test/?q=cherry', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     if not data['hits']['total']:
@@ -71,8 +71,7 @@ async def test_user_search(cli, settings, send_message):
     assert hit['_id'] == msgs['cherry']
     assert hit['_index'] == 'messages'
     assert hit['_source']['subject'] == 'cherry'
-    r = await cli.get('/user/email-test/?q=eggplant',
-                      headers={'Authorization': user_auth(settings, company='whoever')})
+    r = await cli.get(modify_url('/user/email-test/?q=eggplant', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
@@ -87,7 +86,7 @@ async def test_user_aggregate(cli, settings, send_message):
 
     await send_message(uid=str(uuid.uuid4()), company_code='different')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, 'whoever')})
+    r = await cli.get(modify_url('/user/email-test/aggregation/', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
@@ -96,7 +95,7 @@ async def test_user_aggregate(cli, settings, send_message):
     assert buckets[0]['doc_count'] == 4
     assert buckets[0]['send']['doc_count'] == 4
     assert buckets[0]['open']['doc_count'] == 0
-    r = await cli.get('/user/email-test/aggregation/', headers={'Authorization': user_auth(settings, '__all__')})
+    r = await cli.get(modify_url('/user/email-test/aggregation/', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['aggregations']['_']['_']['buckets'][0]['doc_count'] == 5
@@ -128,39 +127,33 @@ async def test_user_tags(cli, settings, send_message):
     await send_message(uid=str(uuid.uuid4()), company_code='different2')
     await cli.server.app['es'].get('messages/_refresh')
 
-    r = await cli.get(
-        cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')]),
-        headers={'Authorization': user_auth(settings, company='tagtest')}
-    )
+    url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')])
+    r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 2, json.dumps(data, indent=2)
     assert {h['_id'] for h in data['hits']['hits']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
 
-    r = await cli.get(
-        cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'user:2')]),
-        headers={'Authorization': user_auth(settings, company='tagtest')}
-    )
+    url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'user:2')])
+    r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 1, json.dumps(data, indent=2)
     assert data['hits']['hits'][0]['_id'] == f'{uid1}-2tcom'
 
     query = [('tags', 'trigger:other'), ('tags', 'shoesize:8')]
-    r = await cli.get(
-        cli.server.app.router['user-messages'].url_for(method='email-test').with_query(query),
-        headers={'Authorization': user_auth(settings, company='tagtest')}
-    )
+    url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query(query)
+    r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 1, json.dumps(data, indent=2)
+    print(json.dumps(data, indent=2))
+    assert data['hits']['total'] == 1
     assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
 
 
 async def test_message_preview(cli, settings, send_message):
     msg_id = await send_message(company_code='preview')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(f'/user/email-test/{msg_id}/preview/',
-                      headers={'Authorization': user_auth(settings, company='preview')})
+    r = await cli.get(modify_url(f'/user/email-test/{msg_id}/preview/', settings, 'preview'))
     assert r.status == 200, await r.text()
     assert '<body>\nthis is a test\n</body>' == await r.text()
