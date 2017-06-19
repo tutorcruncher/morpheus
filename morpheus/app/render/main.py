@@ -69,7 +69,7 @@ def render_email(m: MessageDef) -> EmailInfo:
     m.context.setdefault('recipient_last_name', m.last_name)
     subject = chevron.render(m.subject_template, data=m.context)
     m.context.update(
-        subject=subject,
+        email_subject=subject,
         **dict(_update_context(m.context, m.mustache_partials, m.macros))
     )
     unsubscribe_link = m.context.get('unsubscribe_link')
