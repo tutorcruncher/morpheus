@@ -3,10 +3,9 @@ import re
 from typing import Dict, NamedTuple
 
 import chevron
-import misaka
 from misaka import HtmlRenderer, Markdown
 
-markdown = Markdown(HtmlRenderer(flags=[misaka.HTML_HARD_WRAP]), extensions=[misaka.EXT_NO_INTRA_EMPHASIS])
+markdown = Markdown(HtmlRenderer(flags=['hard-wrap']), extensions=['no-intra-emphasis'])
 logger = logging.getLogger('morpheus.render')
 
 

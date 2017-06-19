@@ -354,3 +354,10 @@ content:
 
 </body>
 """ in msg_file
+
+
+async def test_send_md_options(send_message, tmpdir):
+    message_id = await send_message(context={'message__render': 'we are_testing_emphasis **bold**\nnewline'})
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert '<p>we are_testing_emphasis <strong>bold</strong><br>\nnewline</p>' in msg_file
