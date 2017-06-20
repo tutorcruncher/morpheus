@@ -176,7 +176,7 @@ class UserMessageView(UserView):
                     'lenient': True,
                 }}
             ]
-            es_query['min_score'] = 2
+            es_query['min_score'] = 0.01
         elif tags:
             es_query['query']['bool']['filter'] += [{'term': {'tags': t}} for t in tags]
         else:

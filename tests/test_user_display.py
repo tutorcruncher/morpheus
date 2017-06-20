@@ -62,10 +62,6 @@ async def test_user_search(cli, settings, send_message):
     r = await cli.get(modify_url('/user/email-test/?q=cherry', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    if not data['hits']['total']:
-        print('no results from cherry search, db...')
-        r = await cli.server.app['es'].get('messages/email-test/_search')
-        print(json.dumps(await r.json(), indent=2))
     assert data['hits']['total'] == 1
     hit = data['hits']['hits'][0]
     assert hit['_id'] == msgs['cherry']
