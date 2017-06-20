@@ -33,7 +33,7 @@ def _update_context(context, partials, macros):
         if k.endswith('__md'):
             yield k[:-4], markdown(v)
         elif k.endswith('__sass'):
-            yield k[:-6], sass.compile(string=v, output_style='compressed', precision=10)
+            yield k[:-6], sass.compile(string=v, output_style='compressed', precision=10).strip('\n')
         elif k.endswith('__render'):
             v = chevron.render(
                 _apply_macros(v, macros),

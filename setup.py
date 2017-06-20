@@ -33,7 +33,8 @@ Everything else is excluded to avoid installing unnecessary packages.
     python_requires='>=3.6',
     zip_safe=True,
     install_requires=[
-        'misaka>=2.1.0',
         'chevron>=0.10.0',
+        'libsass>=0.13.2',
+        'misaka>=2.1.0',
     ],
 )

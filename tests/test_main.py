@@ -378,7 +378,8 @@ async def test_standard_sass(cli, tmpdir):
     message_id = data['uid'] + '-foobartestingcom'
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
-    assert '#body{-webkit-font-smoothing' in msg_file
+    print(msg_file)
+    assert '<style>#body{-webkit-font-smoothing' in msg_file
 
 
 async def test_custom_sass(send_message, tmpdir):

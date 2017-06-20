@@ -98,7 +98,7 @@ class Sender(Actor):
             subaccount=subaccount,
             important=important,
         )
-        if re.search('\{\{\{ *styles *\}\}\}', main_template) and 'styles__sass' not in context:
+        if 'styles__sass' not in context and re.search('\{\{\{ *styles *\}\}\}', main_template):
             context['styles__sass'] = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 
         drain = Drain(
