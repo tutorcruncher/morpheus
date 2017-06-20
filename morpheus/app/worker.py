@@ -11,7 +11,7 @@ from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent
 
 from .es import ElasticSearch
-from .models import MessageStatus, SendMethod
+from .models import THIS_DIR, MessageStatus, SendMethod
 from .render import EmailInfo, render_email
 from .settings import Settings
 from .utils import Mandrill
@@ -98,6 +98,8 @@ class Sender(Actor):
             subaccount=subaccount,
             important=important,
         )
+        if re.search('\{\{\{ *styles *\}\}\}', main_template) and 'styles__sass' not in context:
+            context['styles__sass'] = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 
         drain = Drain(
             redis_pool=await self.get_redis_pool(),

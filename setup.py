@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='morpheus-mail',
-    version='0.0.3',
+    version='0.0.4',
     description='Email rendering engine from morpheus',
     long_description="""
 Note: this only installs the rendering logic for morpheus for testing and email preview.

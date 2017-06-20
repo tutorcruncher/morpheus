@@ -361,3 +361,41 @@ async def test_send_md_options(send_message, tmpdir):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
     assert '<p>we are_testing_emphasis <strong>bold</strong><br>\nnewline</p>' in msg_file
+
+
+async def test_standard_sass(cli, tmpdir):
+    data = dict(
+        uid=str(uuid.uuid4()),
+        company_code='foobar',
+        from_address='Sender Name <sender@example.com>',
+        method='email-test',
+        subject_template='test message',
+        context={'message': 'this is a test'},
+        recipients=[{'address': 'foobar@testing.com'}]
+    )
+    r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201
+    message_id = data['uid'] + '-foobartestingcom'
+
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    assert '#body{-webkit-font-smoothing' in msg_file
+
+
+async def test_custom_sass(send_message, tmpdir):
+    message_id = await send_message(
+        main_template='{{{ css }}}',
+        context={
+            'css__sass': (
+                '.foo {\n'
+                '  .bar {\n'
+                '    color: black;\n'
+                '    width: (60px / 6);\n'
+                '  }\n'
+                '}'
+            )
+        }
+    )
+
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    assert '.foo .bar{color:black;width:10px}' in msg_file
+    assert '#body{-webkit-font-smoothing' not in msg_file
