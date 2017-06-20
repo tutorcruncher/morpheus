@@ -2,6 +2,7 @@
 
 [![Build Status](https://travis-ci.org/tutorcruncher/morpheus.svg?branch=master)](https://travis-ci.org/tutorcruncher/morpheus)
 [![codecov.io](https://codecov.io/gh/tutorcruncher/morpheus/branch/master/graph/badge.svg)](https://codecov.io/gh/tutorcruncher/morpheus)
+[![pypi](https://img.shields.io/pypi/v/morpheus-mail.svg)](https://pypi.python.org/pypi/morpheus-mail)
 
 MIT license, Copyright (c) 2017 TutorCruncher & Samuel Colvin. See [LICENSE](LICENSE) for details.
 
