@@ -69,7 +69,7 @@ class GeneralWebhookView(View):
     es_type = None
 
     async def update_message_status(self, m: MandrillSingleWebhook):
-            update_uri = f'messages/{self.es_type}/{m.message_id}/_update'
+            update_uri = f'messages/{self.es_type}/{m.message_id}/_update?retry_on_conflict=10'
             try:
                 await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
             except ApiError as e:
