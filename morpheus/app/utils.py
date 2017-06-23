@@ -185,7 +185,7 @@ class ApiError(RuntimeError):
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime):
-            return to_unix_ms(obj)[0]
+            return to_unix_ms(obj)
         elif isinstance(obj, set):
             return sorted(obj)
         return super().default(obj)
@@ -256,7 +256,7 @@ class MorpheusUserApi(ApiSession):
     def modify_url(self, url):
         args = dict(
             company='__all__',
-            expires=to_unix_ms(datetime(2032, 1, 1))[0]
+            expires=to_unix_ms(datetime(2032, 1, 1))
         )
         body = '{company}:{expires}'.format(**args).encode()
         args['signature'] = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
