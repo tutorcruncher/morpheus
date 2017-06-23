@@ -8,7 +8,7 @@ from typing import Dict, List, NamedTuple
 
 import msgpack
 from aiohttp import ClientSession
-from arq import Actor, BaseWorker, Drain, concurrent
+from arq import Actor, BaseWorker, Drain, concurrent, cron
 
 from .es import ElasticSearch
 from .models import THIS_DIR, MessageStatus, SendMethod
@@ -238,6 +238,15 @@ class Sender(Actor):
             attachments=[a['name'] for a in j.pdf_attachments],
             events=[]
         )
+
+    @cron(hour=3, minute=0)
+    async def snapshot_es(self):
+        main_logger.info('creating elastic search backup...')
+        r = await self.es.put(
+            f'/_snapshot/{self.settings.snapshot_repo_name}/'
+            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M}?wait_for_completion=true'
+        )
+        main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
 
 
 class Worker(BaseWorker):
