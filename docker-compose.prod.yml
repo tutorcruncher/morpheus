@@ -7,8 +7,6 @@ services:
     - '${LOGSPOUT_ENDPOINT}'
     ports:
     - 5001:80
-    networks:
-    - public
 
   elastic:
     environment:
@@ -27,6 +25,3 @@ services:
     - 443:443
     depends_on:
     - web
-    networks:
-    - public
-    - private

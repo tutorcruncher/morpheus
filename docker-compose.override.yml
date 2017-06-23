@@ -4,8 +4,6 @@ services:
   logs:
     ports:
     - 5001:80
-    networks:
-    - public
 
   nginx:
     image: nginx:1.13-alpine
@@ -16,6 +14,3 @@ services:
     - 5000:80
     depends_on:
     - web
-    networks:
-    - public
-    - private
