@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 from .settings import Settings
@@ -27,7 +28,7 @@ class ElasticSearch(ApiSession):
             r = await self.get(index_name, allowed_statuses=(200, 404))
             if r.status != 404:
                 if delete_existing:
-                    main_logger.warning('deleting index %s', index_name)
+                    main_logger.warning('deleting index "%s"', index_name)
                     await self.delete(index_name)
                 else:
                     main_logger.info('elasticsearch index %s already exists, not creating', index_name)
@@ -45,11 +46,13 @@ class ElasticSearch(ApiSession):
         r = await self.get(f'/_snapshot/{self.settings.snapshot_repo_name}', allowed_statuses=(200, 404))
         if r.status == 200:
             if delete_existing:
-                main_logger.info('snapshot repo already exists, deleting it, response: %s', await r.text())
+                main_logger.warning('snapshot repo already exists, deleting it, response: %s', await r.text())
                 await self.delete(f'/_snapshot/{self.settings.snapshot_repo_name}')
             else:
-                main_logger.info('snapshot repo already exists, not creating it, response: %s', await r.text())
-                return
+                data = await r.json()
+                main_logger.info('snapshot repo already exists, not creating it, '
+                                 'response: %s', json.dumps(data, indent=2))
+                return data[self.settings.snapshot_repo_name]['type'], False
 
         if all((self.settings.s3_access_key, self.settings.s3_secret_key)):
             bucket = f'{self.settings.snapshot_repo_name}-snapshots'
@@ -71,7 +74,7 @@ class ElasticSearch(ApiSession):
             }
         await self.put(f'/_snapshot/{self.settings.snapshot_repo_name}', type=snapshot_type, settings=settings)
         main_logger.info('snapshot %s created successfully using %s', self.settings.snapshot_repo_name, snapshot_type)
-        return snapshot_type
+        return snapshot_type, True
 
 
 KEYWORD = {'type': 'keyword'}
