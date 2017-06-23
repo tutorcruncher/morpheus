@@ -2,6 +2,7 @@ version: '2.1'
 
 volumes:
   es_data: {}
+  es_snapshots: {}
   redis_data: {}
   pdf_data: {}
   test_data: {}
@@ -38,7 +39,7 @@ services:
     - logs
 
   elastic:
-    image: docker.elastic.co/elasticsearch/elasticsearch:5.4.1
+    build: elasticsearch
     environment:
     - cluster.name=docker-cluster
     - xpack.security.enabled=false
@@ -46,11 +47,13 @@ services:
     - xpack.monitoring.enabled=false
     - xpack.graph.enabled=false
     - xpack.ml.enabled=false
+    - "path.repo=[\"/snapshots\"]"
     restart: always
     volumes:
     - es_data:/usr/share/elasticsearch/data
+    - es_snapshots:/snapshots
     networks:
-    - private
+    - public  # for sending backups to S3
     depends_on:
     - logs
 
@@ -90,6 +93,8 @@ services:
       APP_HOST_NAME: ${APP_HOST_NAME}
       APP_ADMIN_BASIC_AUTH_PASSWORD: ${APP_ADMIN_BASIC_AUTH_PASSWORD}
       APP_PUBLIC_LOCAL_API_URL: ${APP_PUBLIC_LOCAL_API_URL}
+      APP_S3_ACCESS_KEY: ${APP_S3_ACCESS_KEY}
+      APP_S3_SECRET_KEY: ${APP_S3_SECRET_KEY}
 #      APP_LOG_LEVEL: DEBUG
     restart: always
     networks:

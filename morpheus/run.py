@@ -91,19 +91,21 @@ def worker(wait):
     RunWorkerProcess('app/worker.py', 'Worker')
 
 
-def _elasticsearch_setup(settings, force=False):
+def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False):
     es = ElasticSearch(settings=settings)
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(es.create_indices(delete_existing=force))
+    loop.run_until_complete(es.create_indices(delete_existing=force_create_index))
+    loop.run_until_complete(es.create_snapshot_repo(delete_existing=force_create_repo))
     es.close()
 
 
 @cli.command()
-@click.option('--force', is_flag=True)
-def elasticsearch_setup(force):
+@click.option('--force-create-index', is_flag=True)
+@click.option('--force-create-repo', is_flag=True)
+def elasticsearch_setup(force_create_index, force_create_repo):
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    _elasticsearch_setup(settings, force)
+    _elasticsearch_setup(settings, force_create_index, force_create_repo)
 
 
 EXEC_LINES = [

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 from .settings import Settings
@@ -9,6 +10,7 @@ main_logger = logging.getLogger('morpheus.elastic')
 
 class ElasticSearch(ApiSession):
     def __init__(self, settings: Settings, loop=None):
+        self.settings = settings
         super().__init__(settings.elastic_url, settings, loop)
 
     async def create_indices(self, delete_existing=False):
@@ -26,7 +28,7 @@ class ElasticSearch(ApiSession):
             r = await self.get(index_name, allowed_statuses=(200, 404))
             if r.status != 404:
                 if delete_existing:
-                    main_logger.warning('deleting index %s', index_name)
+                    main_logger.warning('deleting index "%s"', index_name)
                     await self.delete(index_name)
                 else:
                     main_logger.info('elasticsearch index %s already exists, not creating', index_name)
@@ -39,6 +41,40 @@ class ElasticSearch(ApiSession):
                     }
                 }
             )
+
+    async def create_snapshot_repo(self, delete_existing=False):
+        r = await self.get(f'/_snapshot/{self.settings.snapshot_repo_name}', allowed_statuses=(200, 404))
+        if r.status == 200:
+            if delete_existing:
+                main_logger.warning('snapshot repo already exists, deleting it, response: %s', await r.text())
+                await self.delete(f'/_snapshot/{self.settings.snapshot_repo_name}')
+            else:
+                data = await r.json()
+                main_logger.info('snapshot repo already exists, not creating it, '
+                                 'response: %s', json.dumps(data, indent=2))
+                return data[self.settings.snapshot_repo_name]['type'], False
+
+        if all((self.settings.s3_access_key, self.settings.s3_secret_key)):
+            bucket = f'{self.settings.snapshot_repo_name}-snapshots'
+            main_logger.info('s3 credentials set, creating s3 repo, bucket: %s', bucket)
+            snapshot_type = 's3'
+            settings = {
+                'bucket': bucket,
+                'access_key': self.settings.s3_access_key,
+                'secret_key': self.settings.s3_secret_key,
+                'endpoint': 's3-eu-west-1.amazonaws.com',
+                'compress': True,
+            }
+        else:
+            main_logger.info('s3 credentials not set, creating fs repo')
+            snapshot_type = 'fs'
+            settings = {
+                'location': self.settings.snapshot_repo_name,
+                'compress': True,
+            }
+        await self.put(f'/_snapshot/{self.settings.snapshot_repo_name}', type=snapshot_type, settings=settings)
+        main_logger.info('snapshot %s created successfully using %s', self.settings.snapshot_repo_name, snapshot_type)
+        return snapshot_type, True
 
 
 KEYWORD = {'type': 'keyword'}

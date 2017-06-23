@@ -70,7 +70,7 @@ def print_response(r, *, include=None, exclude=set()):
 def modify_url(url, user_auth_key, company):
     args = dict(
         company=company,
-        expires=to_unix_ms(datetime(2032, 1, 1))[0]
+        expires=to_unix_ms(datetime(2032, 1, 1))
     )
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(user_auth_key.encode(), body, hashlib.sha256).hexdigest()

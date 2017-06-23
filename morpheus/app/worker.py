@@ -8,7 +8,7 @@ from typing import Dict, List, NamedTuple
 
 import msgpack
 from aiohttp import ClientSession
-from arq import Actor, BaseWorker, Drain, concurrent
+from arq import Actor, BaseWorker, Drain, concurrent, cron
 
 from .es import ElasticSearch
 from .models import THIS_DIR, MessageStatus, SendMethod
@@ -50,7 +50,7 @@ class Sender(Actor):
         self.mandrill_webhook_auth_key = None
 
     async def startup(self):
-        main_logger.info('Sender initialising session and elasticsearch...')
+        main_logger.info('Sender initialising session and elasticsearch and mandrill...')
         self.session = ClientSession(loop=self.loop)
         self.es = ElasticSearch(settings=self.settings, loop=self.loop)
         self.mandrill = Mandrill(settings=self.settings, loop=self.loop)
@@ -240,8 +240,32 @@ class Sender(Actor):
         )
 
 
+class AuxActor(Actor):
+    def __init__(self, settings: Settings = None, **kwargs):
+        self.settings = settings or Settings()
+        self.redis_settings = self.settings.redis_settings
+        super().__init__(**kwargs)
+        self.es = None
+
+    async def startup(self):
+        main_logger.info('Sender initialising elasticsearch...')
+        self.es = ElasticSearch(settings=self.settings, loop=self.loop)
+
+    async def shutdown(self):
+        self.es.close()
+
+    @cron(hour=3, minute=0)
+    async def snapshot_es(self):
+        main_logger.info('creating elastic search backup...')
+        r = await self.es.put(
+            f'/_snapshot/{self.settings.snapshot_repo_name}/'
+            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true'
+        )
+        main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
+
+
 class Worker(BaseWorker):
-    shadows = [Sender]
+    shadows = [Sender, AuxActor]
 
     def __init__(self, **kwargs):
         self.settings = Settings(sender_cls='app.worker.Sender')

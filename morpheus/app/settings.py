@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     local_api_url: str = 'http://localhost:8000'
     public_local_api_url: str = 'http://localhost:5000'
 
+    # used for es snapshots
+    s3_access_key: str = None
+    s3_secret_key: str = None
+    snapshot_repo_name = 'morpheus'
+
     @property
     def redis_settings(self) -> RedisSettings:
         return RedisSettings(

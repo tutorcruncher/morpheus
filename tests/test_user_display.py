@@ -11,7 +11,7 @@ from arq.utils import to_unix_ms
 def modify_url(url, settings, company='foobar'):
     args = dict(
         company=company,
-        expires=to_unix_ms(datetime(2032, 1, 1))[0]
+        expires=to_unix_ms(datetime(2032, 1, 1))
     )
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
