@@ -208,17 +208,17 @@ class ApiSession:
     def close(self):
         self.session.close()
 
-    async def get(self, uri, **kwargs):
-        return await self._request(METH_GET, uri, **kwargs)
+    async def get(self, uri, *, allowed_statuses=(200, 201), **data):
+        return await self._request(METH_GET, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def delete(self, uri, **kwargs):
-        return await self._request(METH_DELETE, uri, **kwargs)
+    async def delete(self, uri, *, allowed_statuses=(200, 201), **data):
+        return await self._request(METH_DELETE, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def post(self, uri, **kwargs):
-        return await self._request(METH_POST, uri, **kwargs)
+    async def post(self, uri, *, allowed_statuses=(200, 201), **data):
+        return await self._request(METH_POST, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def put(self, uri, **kwargs):
-        return await self._request(METH_PUT, uri, **kwargs)
+    async def put(self, uri, *, allowed_statuses=(200, 201), **data):
+        return await self._request(METH_PUT, uri, allowed_statuses=allowed_statuses, **data)
 
     async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
         method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)

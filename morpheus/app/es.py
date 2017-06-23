@@ -9,6 +9,7 @@ main_logger = logging.getLogger('morpheus.elastic')
 
 class ElasticSearch(ApiSession):
     def __init__(self, settings: Settings, loop=None):
+        self.settings = settings
         super().__init__(settings.elastic_url, settings, loop)
 
     async def create_indices(self, delete_existing=False):
@@ -39,6 +40,37 @@ class ElasticSearch(ApiSession):
                     }
                 }
             )
+
+    async def create_snapshot_repo(self, delete_existing=False):
+        r = await self.get(f'/_snapshot/{self.settings.snapshot_repo_name}', allowed_statuses=(200, 404))
+        if r.status == 200:
+            if delete_existing:
+                main_logger.info('snapshot repo already exists, deleting it, response: %s', await r.text())
+                await self.delete(f'/_snapshot/{self.settings.snapshot_repo_name}')
+            else:
+                main_logger.info('snapshot repo already exists, not creating it, response: %s', await r.text())
+                return
+
+        if all((self.settings.s3_access_key, self.settings.s3_secret_key)):
+            bucket = f'{self.settings.snapshot_repo_name}-snapshots'
+            main_logger.info('s3 credentials set, creating s3 repo, bucket: %s', bucket)
+            snapshot_type = 's3'
+            settings = {
+                'bucket': bucket,
+                'access_key': self.settings.s3_access_key,
+                'secret_key': self.settings.s3_secret_key,
+                'compress': True,
+            }
+        else:
+            main_logger.info('s3 credentials not set, creating fs repo')
+            snapshot_type = 'fs'
+            settings = {
+                'location': self.settings.snapshot_repo_name,
+                'compress': True,
+            }
+        await self.put(f'/_snapshot/{self.settings.snapshot_repo_name}', type=snapshot_type, settings=settings)
+        main_logger.info('snapshot %s created successfully using %s', self.settings.snapshot_repo_name, snapshot_type)
+        return snapshot_type
 
 
 KEYWORD = {'type': 'keyword'}
