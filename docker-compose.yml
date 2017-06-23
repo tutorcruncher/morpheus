@@ -53,7 +53,7 @@ services:
     - es_data:/usr/share/elasticsearch/data
     - es_snapshots:/snapshots
     networks:
-    - private
+    - public  # for sending backups to S3
     depends_on:
     - logs
 

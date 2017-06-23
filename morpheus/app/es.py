@@ -59,6 +59,7 @@ class ElasticSearch(ApiSession):
                 'bucket': bucket,
                 'access_key': self.settings.s3_access_key,
                 'secret_key': self.settings.s3_secret_key,
+                'endpoint': 's3-eu-west-1.amazonaws.com',
                 'compress': True,
             }
         else:
