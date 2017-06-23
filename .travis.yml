@@ -16,6 +16,7 @@ python:
 install:
 - curl -O https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-5.4.0.deb
 - sudo dpkg -i --force-confnew elasticsearch-5.4.0.deb
+- "echo 'path.repo: [\"/tmp\"]' | sudo tee --append /etc/elasticsearch/elasticsearch.yml"
 - sudo service elasticsearch start
 - make install
 
