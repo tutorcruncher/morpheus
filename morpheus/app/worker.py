@@ -44,9 +44,10 @@ def validate_number(number, country, include_description=True):
         descr = country if country == region else f'{region}, {country}'
 
     return {
-        'number': f_number,
+        'number': f'{p.country_code}{p.national_number}',
+        'formatted_number': f_number,
         'descr': descr,
-        'is_mobile': is_mobile
+        'is_mobile': is_mobile,
     }
 
 
@@ -337,7 +338,7 @@ class Sender(Actor):
         message = chevron.render(j.main_template, data=j.context)
         number = number_info['number']
 
-        msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_id}-{number}')
+        msg_id = f'{j.group_id}-{number}'
         send_ts = datetime.utcnow()
         output = (
             f'to: {number}\n'
