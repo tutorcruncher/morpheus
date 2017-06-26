@@ -11,7 +11,7 @@ from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
 
 from .es import ElasticSearch
-from .models import THIS_DIR, MessageStatus, SendMethod
+from .models import THIS_DIR, EmailSendMethod, MessageStatus
 from .render import EmailInfo, render_email
 from .settings import Settings
 from .utils import Mandrill
@@ -61,26 +61,26 @@ class Sender(Actor):
         self.mandrill.close()
 
     @concurrent
-    async def send(self,
-                   recipients_key, *,
-                   uid,
-                   main_template,
-                   mustache_partials,
-                   macros,
-                   subject_template,
-                   company_code,
-                   from_email,
-                   from_name,
-                   method,
-                   subaccount,
-                   important,
-                   tags,
-                   context,
-                   headers):
-        if method == SendMethod.email_mandrill:
+    async def send_emails(self,
+                          recipients_key, *,
+                          uid,
+                          main_template,
+                          mustache_partials,
+                          macros,
+                          subject_template,
+                          company_code,
+                          from_email,
+                          from_name,
+                          method,
+                          subaccount,
+                          important,
+                          tags,
+                          context,
+                          headers):
+        if method == EmailSendMethod.email_mandrill:
             coro = self._send_mandrill
-        elif method == SendMethod.email_test:
-            coro = self._send_test
+        elif method == EmailSendMethod.email_test:
+            coro = self._send_test_email
         else:
             raise NotImplementedError()
         tags.append(uid)
@@ -168,7 +168,7 @@ class Sender(Actor):
             main_logger.warning('message not sent %s %s response: %s', j.group_id, j.address, data)
         await self._store_msg(data['_id'], send_ts, j, email_info)
 
-    async def _send_test(self, j: Job):
+    async def _send_test_email(self, j: Job):
         email_info = render_email(j)
         data = dict(
             from_email=j.from_email,

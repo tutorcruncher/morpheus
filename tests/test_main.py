@@ -49,7 +49,7 @@ async def test_send_message(cli, tmpdir):
             }
         ]
     }
-    r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
+    r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join('xxxxxxxxxxxxxxxxxxxx-foobarexamplecom.txt').read()
@@ -166,7 +166,7 @@ async def test_send_message_headers(cli, tmpdir):
             }
         ]
     }
-    r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
+    r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 2
     msg_file = tmpdir.join(f'{uid}-foobarexamplecom.txt').read()
@@ -373,7 +373,7 @@ async def test_standard_sass(cli, tmpdir):
         context={'message': 'this is a test'},
         recipients=[{'address': 'foobar@testing.com'}]
     )
-    r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
+    r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201
     message_id = data['uid'] + '-foobartestingcom'
 

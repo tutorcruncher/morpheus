@@ -18,6 +18,17 @@ class SendMethod(str, Enum):
     sms_test = 'sms-test'
 
 
+class EmailSendMethod(str, Enum):
+    email_mandrill = 'email-mandrill'
+    email_ses = 'email-ses'
+    email_test = 'email-test'
+
+
+class SmsSendMethod(str, Enum):
+    sms_messagebird = 'sms-messagebird'
+    sms_test = 'sms-test'
+
+
 class MessageStatus(str, Enum):
     """
     compatible with mandrill webhook event field
@@ -39,7 +50,7 @@ class AttachmentModel(BaseModel):
     html: str = ...
 
 
-class RecipientModel(BaseModel):
+class EmailRecipientModel(BaseModel):
     # TODO prepend to_ to first_name, last_name, address
     first_name: str = None
     last_name: str = None
@@ -50,7 +61,7 @@ class RecipientModel(BaseModel):
     pdf_attachments: List[AttachmentModel] = []
 
 
-class SendModel(WebModel):
+class EmailSendModel(WebModel):
     uid: constr(min_length=20, max_length=40) = ...
     main_template: str = (THIS_DIR / 'extra' / 'default-email-template.mustache').read_text()
     mustache_partials: Dict[str, str] = None
@@ -58,13 +69,13 @@ class SendModel(WebModel):
     subject_template: str = ...
     company_code: str = ...
     from_address: NameEmail = ...
-    method: SendMethod = ...
+    method: EmailSendMethod = ...
     subaccount: str = None
     tags: List[str] = []
     context: dict = {}
     headers: dict = {}
     important = False
-    recipients: List[RecipientModel] = ...
+    recipients: List[EmailRecipientModel] = ...
 
 
 class MandrillSingleWebhook(WebModel):

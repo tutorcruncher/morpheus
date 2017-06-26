@@ -17,7 +17,7 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
-from .models import MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SendModel
+from .models import EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod
 from .utils import THIS_DIR, ApiError, BasicAuthView, ServiceView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
@@ -30,9 +30,9 @@ async def index(request):
     return Response(text=chevron.render(template, data=ctx), content_type='text/html')
 
 
-class SendView(ServiceView):
+class EmailSendView(ServiceView):
     async def call(self, request):
-        m: SendModel = await self.request_data(SendModel)
+        m: EmailSendModel = await self.request_data(EmailSendModel)
         async with await self.sender.get_redis_conn() as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
@@ -49,7 +49,7 @@ class SendView(ServiceView):
             pipe.expire(group_key, 86400)
             pipe.expire(recipients_key, 86400)
             await pipe.execute()
-            await self.sender.send(recipients_key, **data)
+            await self.sender.send_emails(recipients_key, **data)
         return Response(text='201 job enqueued\n', status=201)
 
 

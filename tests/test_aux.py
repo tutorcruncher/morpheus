@@ -1,3 +1,7 @@
+import os
+
+import pytest
+
 from morpheus.app.worker import AuxActor
 
 
@@ -20,6 +24,7 @@ async def test_create_repo(cli, settings):
     assert created is True
 
 
+@pytest.mark.skipif(not os.getenv('TRAVIS'),  reason='only run on travis')
 async def test_run_snapshot(cli, settings, loop):
     es = cli.server.app['es']
     await es.create_snapshot_repo()

@@ -101,7 +101,7 @@ def send_message(cli, **extra):
         )
         # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
-        r = await cli.post('/send/', json=data, headers={'Authorization': 'testing-key'})
+        r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
         return data['uid'] + '-foobartestingcom'
     return _send_message
