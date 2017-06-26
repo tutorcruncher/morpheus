@@ -6,21 +6,51 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
+import chevron
 import msgpack
+import phonenumbers
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
+from phonenumbers import parse as parse_number
+from phonenumbers import NumberParseException, PhoneNumberType, format_number, is_valid_number, number_type
+from phonenumbers.geocoder import country_name_for_number, description_for_number
 
 from .es import ElasticSearch
-from .models import THIS_DIR, EmailSendMethod, MessageStatus
+from .models import THIS_DIR, EmailSendMethod, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
 from .settings import Settings
 from .utils import Mandrill
 
 test_logger = logging.getLogger('morpheus.worker.test')
 main_logger = logging.getLogger('morpheus.worker')
+MOBILE_NUMBER_TYPES = PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE
 
 
-class Job(NamedTuple):
+def validate_number(number, country, include_description=True):
+    try:
+        p = parse_number(number, country)
+    except NumberParseException:
+        return
+
+    if not is_valid_number(p):
+        return
+
+    is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
+    f_number = format_number(p, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+    descr = None
+    if include_description:
+        country = country_name_for_number(p, 'en')
+        region = description_for_number(p, 'en')
+        descr = country if country == region else f'{region}, {country}'
+
+    return {
+        'number': f_number,
+        'descr': descr,
+        'is_mobile': is_mobile
+    }
+
+
+class EmailJob(NamedTuple):
     group_id: str
     send_method: str
     first_name: str
@@ -39,6 +69,18 @@ class Job(NamedTuple):
     important: bool
     context: dict
     headers: dict
+
+
+class SmsJob(NamedTuple):
+    group_id: str
+    send_method: str
+    number: str
+    tags: List[str]
+    main_template: str
+    company_code: str
+    country_code: str
+    from_name: str
+    context: dict
 
 
 class Sender(Actor):
@@ -84,7 +126,7 @@ class Sender(Actor):
         else:
             raise NotImplementedError()
         tags.append(uid)
-        main_logger.info('sending group %s via %s', uid, method)
+        main_logger.info('sending email group %s via %s', uid, method)
         base_kwargs = dict(
             group_id=uid,
             send_method=method,
@@ -121,12 +163,12 @@ class Sender(Actor):
                     **base_kwargs,
                     **msg_data,
                 )
-                drain.add(coro, Job(**data))
+                drain.add(coro, EmailJob(**data))
                 # TODO stop if worker is not running
                 jobs += 1
         return jobs
 
-    async def _send_mandrill(self, j: Job):
+    async def _send_mandrill(self, j: EmailJob):
         email_info = render_email(j)
         data = {
             'async': True,
@@ -166,9 +208,9 @@ class Sender(Actor):
         assert data['email'] == j.address, data
         if data['status'] not in ('sent', 'queued'):
             main_logger.warning('message not sent %s %s response: %s', j.group_id, j.address, data)
-        await self._store_msg(data['_id'], send_ts, j, email_info)
+        await self._store_email(data['_id'], send_ts, j, email_info)
 
-    async def _send_test_email(self, j: Job):
+    async def _send_test_email(self, j: EmailJob):
         email_info = render_email(j)
         data = dict(
             from_email=j.from_email,
@@ -201,7 +243,7 @@ class Sender(Actor):
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_msg(msg_id, send_ts, j, email_info)
+        await self._store_email(msg_id, send_ts, j, email_info)
 
     async def _generate_base64_pdf(self, html):
         if not self.settings.pdf_generation_url:
@@ -219,7 +261,7 @@ class Sender(Actor):
             pdf_content = await r.read()
         return base64.b64encode(pdf_content).decode()
 
-    async def _store_msg(self, uid, send_ts, j: Job, email_info: EmailInfo):
+    async def _store_email(self, uid, send_ts, j: EmailJob, email_info: EmailInfo):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -236,6 +278,102 @@ class Sender(Actor):
             subject=email_info.subject,
             body=email_info.html_body,
             attachments=[a['name'] for a in j.pdf_attachments],
+            events=[]
+        )
+
+    async def send_smss(self,
+                        recipients_key, *,
+                        uid,
+                        main_template,
+                        company_code,
+                        country_code,
+                        from_name,
+                        method,
+                        tags):
+        if method == SmsSendMethod.sms_test:
+            coro = self._send_test_smss
+        else:
+            raise NotImplementedError()
+        tags.append(uid)
+        main_logger.info('sending group %s via %s', uid, method)
+        base_kwargs = dict(
+            group_id=uid,
+            send_method=method,
+            main_template=main_template,
+            company_code=company_code,
+            country_code=country_code,
+            from_name=from_name,
+        )
+
+        drain = Drain(
+            redis_pool=await self.get_redis_pool(),
+            raise_task_exception=True,
+            max_concurrent_tasks=10,
+            shutdown_delay=60,
+        )
+        jobs = 0
+        async with drain:
+            async for raw_queue, raw_data in drain.iter(recipients_key):
+                if not raw_queue:
+                    break
+
+                msg_data = msgpack.unpackb(raw_data, encoding='utf8')
+                data = dict(
+                    tags=list(set(tags + msg_data.pop('tags'))),
+                    **base_kwargs,
+                    **msg_data,
+                )
+                drain.add(coro, SmsJob(**data))
+                # TODO stop if worker is not running
+                jobs += 1
+        return jobs
+
+    async def _send_test_smss(self, j: SmsJob):
+        number_info = validate_number(j.number, j.country_code, include_description=False)
+        if not number_info or not number_info['is_mobile']:
+            main_logger.warning('invalid mobile number "%s", not sending', j.number)
+            return
+
+        message = chevron.render(j.main_template, data=j.context)
+        number = number_info['number']
+
+        msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_id}-{number}')
+        send_ts = datetime.utcnow()
+        output = (
+            f'to: {number}\n'
+            f'msg id: {msg_id}\n'
+            f'ts: {send_ts}\n'
+            f'group_id: {j.group_id}\n'
+            f'tags: {j.tags}\n'
+            f'company_code: {j.company_code}\n'
+            f'from_name: {j.from_name}\n'
+            f'message:\n'
+            f'{message}\n'
+        )
+        if self.settings.test_output:
+            Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
+            save_path = self.settings.test_output / f'{msg_id}.txt'
+            test_logger.info('sending message: %s (saved to %s)', output, save_path)
+            save_path.write_text(output)
+        await self._store_sms(msg_id, send_ts, j, number, message)
+
+    async def _store_sms(self, uid, send_ts, j: SmsJob, number, message):
+        await self.es.post(
+            f'messages/{j.send_method}/{uid}',
+            company=j.company_code,
+            send_ts=send_ts,
+            update_ts=send_ts,
+            status=MessageStatus.send,
+            group_id=j.group_id,
+            to_first_name=None,
+            to_last_name=None,
+            to_email=number,
+            from_email=None,
+            from_name=j.from_name,
+            tags=j.tags,
+            subject=None,
+            body=message,
+            attachments=[],
             events=[]
         )
 

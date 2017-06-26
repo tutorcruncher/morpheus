@@ -10,15 +10,17 @@ from html import escape
 
 import chevron
 import msgpack
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response, json_response
 from arq.utils import from_unix_ms
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
-from .models import EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod
+from .models import (EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SmsNumbersModel,
+                     SmsSendModel)
 from .utils import THIS_DIR, ApiError, BasicAuthView, ServiceView, UserView, View
+from .worker import validate_number
 
 logger = logging.getLogger('morpheus.web')
 
@@ -51,6 +53,32 @@ class EmailSendView(ServiceView):
             await pipe.execute()
             await self.sender.send_emails(recipients_key, **data)
         return Response(text='201 job enqueued\n', status=201)
+
+
+class SmsSendView(ServiceView):
+    async def call(self, request):
+        m: SmsSendModel = await self.request_data(SmsSendModel)
+        async with await self.sender.get_redis_conn() as redis:
+            group_key = f'group:{m.uid}'
+            v = await redis.incr(group_key)
+            if v > 1:
+                raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+            recipients_key = f'recipients:{m.uid}'
+            data = m.values(exclude={'recipients'})
+            pipe = redis.pipeline()
+            pipe.lpush(recipients_key, *[msgpack.packb(r.values(), use_bin_type=True) for r in m.recipients])
+            pipe.expire(group_key, 86400)
+            pipe.expire(recipients_key, 86400)
+            await pipe.execute()
+            await self.sender.send_smss(recipients_key, **data)
+        return Response(text='201 job enqueued\n', status=201)
+
+
+class SmsValidateView(ServiceView):
+    async def call(self, request):
+        m: SmsNumbersModel = await self.request_data(SmsNumbersModel)
+        result = {k: validate_number(n, m.country_code) for k, n in m.numbers.items()}
+        return json_response(text=json.dumps(result), content_type='application/json')
 
 
 MSG_FIELDS = (
