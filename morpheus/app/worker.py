@@ -26,31 +26,6 @@ main_logger = logging.getLogger('morpheus.worker')
 MOBILE_NUMBER_TYPES = PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE
 
 
-def validate_number(number, country, include_description=True):
-    try:
-        p = parse_number(number, country)
-    except NumberParseException:
-        return
-
-    if not is_valid_number(p):
-        return
-
-    is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
-    f_number = format_number(p, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
-    descr = None
-    if include_description:
-        country = country_name_for_number(p, 'en')
-        region = description_for_number(p, 'en')
-        descr = country if country == region else f'{region}, {country}'
-
-    return {
-        'number': f'{p.country_code}{p.national_number}',
-        'formatted_number': f_number,
-        'descr': descr,
-        'is_mobile': is_mobile,
-    }
-
-
 class EmailJob(NamedTuple):
     group_id: str
     send_method: str
@@ -282,6 +257,31 @@ class Sender(Actor):
             events=[]
         )
 
+    @classmethod
+    def validate_number(cls, number, country, include_description=True):
+        try:
+            p = parse_number(number, country)
+        except NumberParseException:
+            return
+
+        if not is_valid_number(p):
+            return
+
+        is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
+        f_number = format_number(p, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+        descr = None
+        if include_description:
+            country = country_name_for_number(p, 'en')
+            region = description_for_number(p, 'en')
+            descr = country if country == region else f'{region}, {country}'
+
+        return {
+            'number': f'{p.country_code}{p.national_number}',
+            'formatted_number': f_number,
+            'descr': descr,
+            'is_mobile': is_mobile,
+        }
+
     async def send_smss(self,
                         recipients_key, *,
                         uid,
@@ -332,7 +332,7 @@ class Sender(Actor):
         return jobs
 
     async def _send_test_smss(self, j: SmsJob):
-        number_info = validate_number(j.number, j.country_code, include_description=False)
+        number_info = self.validate_number(j.number, j.country_code, include_description=False)
         if not number_info or not number_info['is_mobile']:
             main_logger.warning('invalid mobile number "%s", not sending', j.number)
             return
@@ -375,7 +375,7 @@ class Sender(Actor):
             tags=j.tags,
             body=message,
             cost=cost,
-            events=[]
+            events=[],
         )
 
 

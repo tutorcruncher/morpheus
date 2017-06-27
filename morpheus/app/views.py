@@ -20,7 +20,6 @@ from pygments.lexers.data import JsonLexer
 from .models import (EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SmsNumbersModel,
                      SmsSendModel)
 from .utils import THIS_DIR, ApiError, BasicAuthView, ServiceView, UserView, View
-from .worker import validate_number
 
 logger = logging.getLogger('morpheus.web')
 
@@ -77,7 +76,7 @@ class SmsSendView(ServiceView):
 class SmsValidateView(ServiceView):
     async def call(self, request):
         m: SmsNumbersModel = await self.request_data(SmsNumbersModel)
-        result = {k: validate_number(n, m.country_code) for k, n in m.numbers.items()}
+        result = {k: self.sender.validate_number(n, m.country_code) for k, n in m.numbers.items()}
         return json_response(text=json.dumps(result), content_type='application/json')
 
 

@@ -64,3 +64,41 @@ async def test_validate_number(cli, tmpdir):
         },
         '11': None,
     } == data
+
+
+async def test_repeat_uuid(cli, tmpdir):
+    data = {
+        'uid': 'a' * 20,
+        'company_code': 'foobar',
+        'method': 'sms-test',
+        'main_template': 'this is a message',
+        'recipients': [{'number': '07891123856'}]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert len(tmpdir.listdir()) == 1
+    assert str(tmpdir.listdir()[0]).endswith('aaaaaaaaaaaaaaaaaaaa-447891123856.txt')
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 409, await r.text()
+    assert 'Send group with id "aaaaaaaaaaaaaaaaaaaa" already exists\n' in await r.text()
+
+
+async def test_invalid_number(cli, tmpdir):
+    data = {
+        'uid': 'a' * 20,
+        'company_code': 'foobar',
+        'country_code': 'US',
+        'method': 'sms-test',
+        'main_template': 'this is a message',
+        'recipients': [
+            {'number': '+447891123856'},  # uk mobile
+            {'number': '+44 (0) 207 1128 953'},  # not mobile
+            {'number': '1 818 337 3095'},  # US mobile or fix
+            {'number': '+12001230101'},  # not possible
+        ]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert len(tmpdir.listdir()) == 2
+    files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
+    assert files == {'aaaaaaaaaaaaaaaaaaaa-18183373095.txt', 'aaaaaaaaaaaaaaaaaaaa-447891123856.txt'}
