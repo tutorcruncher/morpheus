@@ -1,3 +1,4 @@
+import uuid
 
 
 async def test_send_message(cli, tmpdir):
@@ -102,3 +103,39 @@ async def test_invalid_number(cli, tmpdir):
     assert len(tmpdir.listdir()) == 2
     files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
     assert files == {'aaaaaaaaaaaaaaaaaaaa-18183373095.txt', 'aaaaaaaaaaaaaaaaaaaa-447891123856.txt'}
+
+
+async def test_exceed_cost_limit(cli, tmpdir):
+    d = {
+        'company_code': 'cost-test',
+        'cost_limit': 0.1,
+        'method': 'sms-test',
+        'main_template': 'this is a message',
+        'recipients': [{'number': f'0789112385{i}'} for i in range(4)]
+    }
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert {'status': 'enqueued', 'spend': 0.0} == await r.json()
+    assert len(tmpdir.listdir()) == 4
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert {'status': 'enqueued', 'spend': 0.048} == await r.json()
+    assert len(tmpdir.listdir()) == 8
+
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    obj = await r.json()
+    assert 0.095 < obj['spend'] < 0.097
+    assert len(tmpdir.listdir()) == 12
+
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    assert r.status == 402, await r.text()
+    obj = await r.json()
+    assert 0.143 < obj['spend'] < 0.145
+    assert obj['cost_limit'] == 0.1
+    assert len(tmpdir.listdir()) == 12

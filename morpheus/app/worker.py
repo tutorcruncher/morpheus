@@ -287,6 +287,7 @@ class Sender(Actor):
                         uid,
                         main_template,
                         company_code,
+                        cost_limit,
                         country_code,
                         from_name,
                         method,
@@ -319,6 +320,11 @@ class Sender(Actor):
                 if not raw_queue:
                     break
 
+                if cost_limit is not None:
+                    spend = await self.check_sms_limit(company_code)
+                    if spend >= cost_limit:
+                        main_logger.warning('cost limit exceeded %0.2f >= %0.2f, %s', spend, cost_limit, company_code)
+                        break
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
                 data = dict(
                     context=dict(context, **msg_data.pop('context')),
@@ -334,7 +340,7 @@ class Sender(Actor):
     async def _send_test_smss(self, j: SmsJob):
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
         if not number_info or not number_info['is_mobile']:
-            main_logger.warning('invalid mobile number "%s", not sending', j.number)
+            main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
             return
 
         message = chevron.render(j.main_template, data=j.context)
@@ -342,7 +348,7 @@ class Sender(Actor):
 
         msg_id = f'{j.group_id}-{number}'
         send_ts = datetime.utcnow()
-        cost = 1.2
+        cost = 0.012
         output = (
             f'to: {number}\n'
             f'msg id: {msg_id}\n'
@@ -377,6 +383,28 @@ class Sender(Actor):
             cost=cost,
             events=[],
         )
+
+    async def check_sms_limit(self, company_code):
+        r = await self.es.get(
+            'messages/_search?size=0',
+            query={
+                'bool': {
+                    'filter': [
+                        {
+                            'term': {'company': company_code}
+                        },
+                        {
+                            'range': {'send_ts': {'gte': 'now-28d/d'}}
+                        }
+                    ]
+                }
+            },
+            aggs={
+                'total_spend': {'sum': {'field': 'cost'}}
+            }
+        )
+        data = await r.json()
+        return data['aggregations']['total_spend']['value']
 
 
 class AuxActor(Actor):

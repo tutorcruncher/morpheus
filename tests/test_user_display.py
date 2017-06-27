@@ -173,7 +173,7 @@ async def test_user_sms(cli, settings, send_sms):
     assert hit['_source']['status'] == 'send'
     assert hit['_source']['from_name'] == 'FooBar'
     assert hit['_source']['body'] == 'this is a test apples'
-    assert hit['_source']['cost'] == 1.2
+    assert hit['_source']['cost'] == 0.012
     assert hit['_source']['events'] == []
 
     r = await cli.get(modify_url('/user/sms-test/', settings, '__all__'))

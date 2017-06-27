@@ -10,7 +10,7 @@ from html import escape
 
 import chevron
 import msgpack
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response, json_response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
 from arq.utils import from_unix_ms
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
@@ -57,11 +57,21 @@ class EmailSendView(ServiceView):
 class SmsSendView(ServiceView):
     async def call(self, request):
         m: SmsSendModel = await self.request_data(SmsSendModel)
+        spend = None
         async with await self.sender.get_redis_conn() as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
                 raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+            if m.cost_limit is not None:
+                spend = await self.sender.check_sms_limit(m.company_code)
+                if spend >= m.cost_limit:
+                    return self.json_response(
+                        status='send limit exceeded',
+                        cost_limit=m.cost_limit,
+                        spend=spend,
+                        status_=402,
+                    )
             recipients_key = f'recipients:{m.uid}'
             data = m.values(exclude={'recipients'})
             pipe = redis.pipeline()
@@ -70,14 +80,18 @@ class SmsSendView(ServiceView):
             pipe.expire(recipients_key, 86400)
             await pipe.execute()
             await self.sender.send_smss(recipients_key, **data)
-        return Response(text='201 job enqueued\n', status=201)
+        return self.json_response(
+            status='enqueued',
+            spend=spend,
+            status_=201,
+        )
 
 
 class SmsValidateView(ServiceView):
     async def call(self, request):
         m: SmsNumbersModel = await self.request_data(SmsNumbersModel)
-        result = {k: self.sender.validate_number(n, m.country_code) for k, n in m.numbers.items()}
-        return json_response(text=json.dumps(result), content_type='application/json')
+        result = {str(k): self.sender.validate_number(n, m.country_code) for k, n in m.numbers.items()}
+        return self.json_response(**result)
 
 
 MSG_FIELDS = (
@@ -256,6 +270,9 @@ class UserAggregationView(UserView):
                             'filter': [
                                 {'match_all': {}} if self.session.company == '__all__' else
                                 {'term': {'company': self.session.company}},
+                                {
+                                    'range': {'send_ts': {'gte': 'now-90d/d'}}
+                                }
                             ]
                         }
                     },

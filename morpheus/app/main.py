@@ -68,6 +68,7 @@ async def app_startup(app):
         async with redis_pool.get() as redis:
             info = await redis.info()
             logger.info('redis version: %s', info['server']['redis_version'])
+    # app['sender'].es = app['es']
     loop.create_task(get_mandrill_webhook_key(app))
 
 

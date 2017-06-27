@@ -111,6 +111,15 @@ class View:
         except ValueError:
             raise HTTPBadRequest(text=f'invalid get argument "{name}": {v!r}')
 
+    @classmethod
+    def json_response(cls, *, status_=200, list_=None, headers_=None, **data):
+        return Response(
+            body=json.dumps(data if list_ is None else list_).encode(),
+            status=status_,
+            content_type='application/json',
+            headers=headers_,
+        )
+
 
 class ServiceView(View):
     """
