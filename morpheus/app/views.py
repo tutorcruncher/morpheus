@@ -90,8 +90,12 @@ class SmsSendView(ServiceView):
 class SmsValidateView(ServiceView):
     async def call(self, request):
         m: SmsNumbersModel = await self.request_data(SmsNumbersModel)
-        result = {str(k): self.sender.validate_number(n, m.country_code) for k, n in m.numbers.items()}
+        result = {str(k): self.to_dict(self.sender.validate_number(n, m.country_code)) for k, n in m.numbers.items()}
         return self.json_response(**result)
+
+    @classmethod
+    def to_dict(cls, v):
+        return v and dict(v._asdict())
 
 
 MSG_FIELDS = (

@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     s3_secret_key: str = None
     snapshot_repo_name = 'morpheus'
 
+    # message bird
+    messagebird_key: str = ''
+    messagebird_url: str = 'https://rest.messagebird.com'
+
+    messagebird_pricing_api = 'https://api.mobiletulip.com/api/coverage/json/'
+    messagebird_pricing_username: str = None
+    messagebird_pricing_password: str = None
+
     @property
     def redis_settings(self) -> RedisSettings:
         return RedisSettings(

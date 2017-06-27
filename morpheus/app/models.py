@@ -44,6 +44,9 @@ class MessageStatus(str, Enum):
     unsub = 'unsub'
     reject = 'reject'
 
+    # used for sms
+    delivered = 'delivered'
+
 
 class AttachmentModel(BaseModel):
     name: str = ...

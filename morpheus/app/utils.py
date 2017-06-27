@@ -217,10 +217,10 @@ class ApiSession:
     def close(self):
         self.session.close()
 
-    async def get(self, uri, *, allowed_statuses=(200, 201), **data):
+    async def get(self, uri, *, allowed_statuses=(200,), **data):
         return await self._request(METH_GET, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def delete(self, uri, *, allowed_statuses=(200, 201), **data):
+    async def delete(self, uri, *, allowed_statuses=(200,), **data):
         return await self._request(METH_DELETE, uri, allowed_statuses=allowed_statuses, **data)
 
     async def post(self, uri, *, allowed_statuses=(200, 201), **data):
@@ -271,3 +271,12 @@ class MorpheusUserApi(ApiSession):
         args['signature'] = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
         url = str(url)
         return url + ('&' if '?' in url else '?') + urlencode(args)
+
+
+class MessageBird(ApiSession):
+    def __init__(self, settings, loop):
+        super().__init__(settings.messagebird_url, settings, loop)
+
+    def _modify_request(self, method, url, data):
+        data['headers_'] = {'Authorization': f'AccessKey {self.settings.messagebird_key}'}
+        return method, url, data
