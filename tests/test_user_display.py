@@ -18,17 +18,17 @@ def modify_url(url, settings, company='foobar'):
     return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
 
 
-async def test_user_list(cli, settings, send_message):
+async def test_user_list(cli, settings, send_email):
     await cli.server.app['es'].create_indices(True)
 
     expected_msg_ids = []
     for i in range(4):
         uid = str(uuid.uuid4())
-        await send_message(uid=uid, company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
+        await send_email(uid=uid, company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
         expected_msg_ids.append(f'{uid}-{i}tcom')
 
-    await send_message(uid=str(uuid.uuid4()), company_code='different1')
-    await send_message(uid=str(uuid.uuid4()), company_code='different2')
+    await send_email(uid=str(uuid.uuid4()), company_code='different1')
+    await send_email(uid=str(uuid.uuid4()), company_code='different2')
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/', settings, 'whoever'))
     assert r.status == 200, await r.text()
@@ -49,15 +49,15 @@ async def test_user_list(cli, settings, send_message):
     assert data['hits']['total'] == 6
 
 
-async def test_user_search(cli, settings, send_message):
+async def test_user_search(cli, settings, send_email):
     msgs = {}
     for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):
         uid = str(uuid.uuid4())
-        await send_message(uid=uid, company_code='whoever',
-                           recipients=[{'address': f'{i}@t.com'}], subject_template=subject)
+        await send_email(uid=uid, company_code='whoever',
+                         recipients=[{'address': f'{i}@t.com'}], subject_template=subject)
         msgs[subject] = f'{uid}-{i}tcom'
 
-    await send_message(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
+    await send_email(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/?q=cherry', settings, 'whoever'))
     assert r.status == 200, await r.text()
@@ -74,13 +74,13 @@ async def test_user_search(cli, settings, send_message):
     assert data['hits']['total'] == 0
 
 
-async def test_user_aggregate(cli, settings, send_message):
+async def test_user_aggregate(cli, settings, send_email):
     await cli.server.app['es'].create_indices(True)
 
     for i in range(4):
-        await send_message(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
+        await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
 
-    await send_message(uid=str(uuid.uuid4()), company_code='different')
+    await send_email(uid=str(uuid.uuid4()), company_code='different')
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/aggregation/', settings, 'whoever'))
     assert r.status == 200, await r.text()
@@ -97,9 +97,9 @@ async def test_user_aggregate(cli, settings, send_message):
     assert data['aggregations']['_']['_']['buckets'][0]['doc_count'] == 5
 
 
-async def test_user_tags(cli, settings, send_message):
+async def test_user_tags(cli, settings, send_email):
     uid1 = str(uuid.uuid4())
-    await send_message(
+    await send_email(
         uid=uid1,
         company_code='tagtest',
         tags=['trigger:broadcast', 'broadcast:123'],
@@ -109,7 +109,7 @@ async def test_user_tags(cli, settings, send_message):
         ]
     )
     uid2 = str(uuid.uuid4())
-    await send_message(
+    await send_email(
         uid=uid2,
         company_code='tagtest',
         tags=['trigger:other'],
@@ -119,8 +119,8 @@ async def test_user_tags(cli, settings, send_message):
         ]
     )
 
-    await send_message(uid=str(uuid.uuid4()), company_code='different1')
-    await send_message(uid=str(uuid.uuid4()), company_code='different2')
+    await send_email(uid=str(uuid.uuid4()), company_code='different1')
+    await send_email(uid=str(uuid.uuid4()), company_code='different2')
     await cli.server.app['es'].get('messages/_refresh')
 
     url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')])
@@ -147,9 +147,36 @@ async def test_user_tags(cli, settings, send_message):
     assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
 
 
-async def test_message_preview(cli, settings, send_message):
-    msg_id = await send_message(company_code='preview')
+async def test_message_preview(cli, settings, send_email):
+    msg_id = await send_email(company_code='preview')
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url(f'/user/email-test/{msg_id}/preview/', settings, 'preview'))
     assert r.status == 200, await r.text()
     assert '<body>\nthis is a test\n</body>' == await r.text()
+
+
+async def test_user_sms(cli, settings, send_sms):
+    await cli.server.app['es'].create_indices(True)
+    await send_sms(company_code='snapcrap')
+
+    await send_sms(uid=str(uuid.uuid4()), company_code='flip')
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.get(modify_url('/user/sms-test/', settings, 'snapcrap'))
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    print(json.dumps(data, indent=2))
+    assert data['hits']['total'] == 1
+    hit = data['hits']['hits'][0]
+    assert hit['_index'] == 'messages'
+    assert hit['_type'] == 'sms-test'
+    assert hit['_source']['company'] == 'snapcrap'
+    assert hit['_source']['status'] == 'send'
+    assert hit['_source']['from_name'] == 'FooBar'
+    assert hit['_source']['body'] == 'this is a test apples'
+    assert hit['_source']['cost'] == 1.2
+    assert hit['_source']['events'] == []
+
+    r = await cli.get(modify_url('/user/sms-test/', settings, '__all__'))
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 2

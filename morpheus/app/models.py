@@ -92,6 +92,7 @@ class SmsSendModel(WebModel):
     from_name: constr(min_length=1, max_length=11) = 'Morpheus'
     method: SmsSendMethod = ...
     tags: List[str] = []
+    context: dict = {}
     recipients: List[SmsRecipientModel] = ...
 
 

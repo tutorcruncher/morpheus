@@ -97,6 +97,10 @@ MAPPINGS = {
         'subject': TEXT,
         'body': TEXT,
         'attachments': KEYWORD,
+        'cost': {
+          'type': 'scaled_float',
+          'scaling_factor': 1000,
+        },
         'events': {
             'properties': {
                 'ts': DATE,

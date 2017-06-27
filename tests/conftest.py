@@ -85,7 +85,7 @@ def cli(loop, test_client, settings, setup_elastic_search):
 
 
 @pytest.fixture
-def send_message(cli, **extra):
+def send_email(cli, **extra):
     async def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),
@@ -104,4 +104,26 @@ def send_message(cli, **extra):
         r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
         return data['uid'] + '-foobartestingcom'
+    return _send_message
+
+
+@pytest.fixture
+def send_sms(cli, **extra):
+    async def _send_message(**extra):
+        data = dict(
+            uid=str(uuid.uuid4()),
+            main_template='this is a test {{ variable }}',
+            company_code='foobar',
+            from_name='FooBar',
+            method='sms-test',
+            context={
+                'variable': 'apples'
+            },
+            recipients=[{'number': '07896541236'}]
+        )
+        # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
+        data.update(**extra)
+        r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+        assert r.status == 201
+        return data['uid'] + '-447896541236'
     return _send_message

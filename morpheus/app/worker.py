@@ -290,6 +290,7 @@ class Sender(Actor):
                         country_code,
                         from_name,
                         method,
+                        context,
                         tags):
         if method == SmsSendMethod.sms_test:
             coro = self._send_test_smss
@@ -320,6 +321,7 @@ class Sender(Actor):
 
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
                 data = dict(
+                    context=dict(context, **msg_data.pop('context')),
                     tags=list(set(tags + msg_data.pop('tags'))),
                     **base_kwargs,
                     **msg_data,
@@ -340,6 +342,7 @@ class Sender(Actor):
 
         msg_id = f'{j.group_id}-{number}'
         send_ts = datetime.utcnow()
+        cost = 1.2
         output = (
             f'to: {number}\n'
             f'msg id: {msg_id}\n'
@@ -348,6 +351,7 @@ class Sender(Actor):
             f'tags: {j.tags}\n'
             f'company_code: {j.company_code}\n'
             f'from_name: {j.from_name}\n'
+            f'cost: {cost}\n'
             f'message:\n'
             f'{message}\n'
         )
@@ -356,9 +360,9 @@ class Sender(Actor):
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_sms(msg_id, send_ts, j, number, message)
+        await self._store_sms(msg_id, send_ts, j, number, message, cost)
 
-    async def _store_sms(self, uid, send_ts, j: SmsJob, number, message):
+    async def _store_sms(self, uid, send_ts, j: SmsJob, number, message, cost):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -366,15 +370,11 @@ class Sender(Actor):
             update_ts=send_ts,
             status=MessageStatus.send,
             group_id=j.group_id,
-            to_first_name=None,
-            to_last_name=None,
             to_email=number,
-            from_email=None,
             from_name=j.from_name,
             tags=j.tags,
-            subject=None,
             body=message,
-            attachments=[],
+            cost=cost,
             events=[]
         )
 

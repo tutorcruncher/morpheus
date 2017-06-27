@@ -5,7 +5,7 @@ import json
 import uuid
 
 
-async def test_send_message(cli, tmpdir):
+async def test_send_email(cli, tmpdir):
     data = {
         'uid': 'x' * 20,
         'company_code': 'foobar',
@@ -36,8 +36,8 @@ async def test_send_message(cli, tmpdir):
     assert '"to_email": "foobar@example.com",\n' in msg_file
 
 
-async def test_webhook(cli, send_message):
-    message_id = await send_message(uid='x' * 20)
+async def test_webhook(cli, send_email):
+    message_id = await send_email(uid='x' * 20)
     r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
     data = await r.json()
     assert data['_source']['status'] == 'send'
@@ -59,10 +59,10 @@ async def test_webhook(cli, send_message):
     assert data['_source']['update_ts'] > first_update_ts
 
 
-async def test_mandrill_send(cli, send_message):
+async def test_mandrill_send(cli, send_email):
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
     assert r.status == 404, await r.text()
-    await send_message(method='email-mandrill')
+    await send_email(method='email-mandrill')
 
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
     assert r.status == 200, await r.text()
@@ -105,7 +105,7 @@ async def test_mandrill_webhook(cli):
     assert data['_source']['status'] == 'open'
 
 
-async def test_send_message_headers(cli, tmpdir):
+async def test_send_email_headers(cli, tmpdir):
     uid = str(uuid.uuid4())
     data = {
         'uid': uid,
@@ -160,9 +160,9 @@ async def test_send_message_headers(cli, tmpdir):
     assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
 
 
-async def test_send_unsub_context(send_message, tmpdir):
+async def test_send_unsub_context(send_email, tmpdir):
     uid = str(uuid.uuid4())
-    await send_message(
+    await send_email(
         uid=uid,
         context={
             'message__render': 'test email {{ unsubscribe_link }}.\n',
@@ -195,8 +195,8 @@ async def test_send_unsub_context(send_message, tmpdir):
     assert '<p>test email http://example.com/context.</p>\n' in msg_file
 
 
-async def test_markdown_context(send_message, tmpdir):
-    message_id = await send_message(
+async def test_markdown_context(send_email, tmpdir):
+    message_id = await send_email(
         main_template='testing {{{ foobar }}}',
         context={
             'message__render': 'test email {{ unsubscribe_link }}.\n',
@@ -209,8 +209,8 @@ async def test_markdown_context(send_message, tmpdir):
     assert 'content:\ntesting <p><a href="www.example.com/hello">hello</a></p>\n' in msg_file
 
 
-async def test_partials(send_message, tmpdir):
-    message_id = await send_message(
+async def test_partials(send_email, tmpdir):
+    message_id = await send_email(
         main_template=('message: |{{{ message }}}|\n'
                        'foo: {{ foo }}\n'
                        'partial: {{> test_p }}'),
@@ -235,8 +235,8 @@ partial: foo (FOO) bar **BAR**
 """ in msg_file
 
 
-async def test_macros(send_message, tmpdir):
-    message_id = await send_message(
+async def test_macros(send_email, tmpdir):
+    message_id = await send_email(
         main_template='macro result: foobar(hello | {{ foo }})',
         context={
             'foo': 'FOO',
@@ -252,8 +252,8 @@ async def test_macros(send_message, tmpdir):
     assert 'content:\nmacro result: ___hello FOO___\n' in msg_file
 
 
-async def test_macros_more(send_message, tmpdir):
-    message_id = await send_message(
+async def test_macros_more(send_email, tmpdir):
+    message_id = await send_email(
         main_template=(
             'foo:foo()\n'
             'foo wrong:foo(1 | 2)\n'
@@ -298,8 +298,8 @@ button:
 """ in msg_file
 
 
-async def test_macro_in_message(send_message, tmpdir):
-    message_id = await send_message(
+async def test_macro_in_message(send_email, tmpdir):
+    message_id = await send_email(
         context={
             'pay_link': '/pay/now/123/',
             'first_name': 'John',
@@ -332,8 +332,8 @@ content:
 """ in msg_file
 
 
-async def test_send_md_options(send_message, tmpdir):
-    message_id = await send_message(context={'message__render': 'we are_testing_emphasis **bold**\nnewline'})
+async def test_send_md_options(send_email, tmpdir):
+    message_id = await send_email(context={'message__render': 'we are_testing_emphasis **bold**\nnewline'})
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
     assert '<p>we are_testing_emphasis <strong>bold</strong><br>\nnewline</p>' in msg_file
@@ -358,8 +358,8 @@ async def test_standard_sass(cli, tmpdir):
     assert '<style>#body{-webkit-font-smoothing' in msg_file
 
 
-async def test_custom_sass(send_message, tmpdir):
-    message_id = await send_message(
+async def test_custom_sass(send_email, tmpdir):
+    message_id = await send_email(
         main_template='{{{ css }}}',
         context={
             'css__sass': (
