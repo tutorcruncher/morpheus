@@ -33,7 +33,7 @@ async def test_send_email(cli, tmpdir):
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
     assert '"from_email": "s@muelcolvin.com",\n' in msg_file
-    assert '"to_email": "foobar@example.com",\n' in msg_file
+    assert '"to_address": "foobar@example.com",\n' in msg_file
 
 
 async def test_webhook(cli, send_email):
@@ -67,7 +67,7 @@ async def test_mandrill_send(cli, send_email):
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['_source']['to_email'] == 'foobar@testing.com'
+    assert data['_source']['to_address'] == 'foobar@testing.com'
 
 
 async def test_mandrill_webhook(cli):
@@ -77,7 +77,7 @@ async def test_mandrill_webhook(cli):
         send_ts=123,
         update_ts=123,
         status='send',
-        to_email='testing@example.com',
+        to_address='testing@example.com',
         events=[]
     )
     r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
@@ -148,14 +148,14 @@ async def test_send_email_headers(cli, tmpdir):
     msg_file = tmpdir.join(f'{uid}-foobarexamplecom.txt').read()
     # print(msg_file)
     assert '<p>test email Apple Banana Carrot.</p>\n' in msg_file
-    assert '"to_email": "foobar@example.com",\n' in msg_file
+    assert '"to_address": "foobar@example.com",\n' in msg_file
     assert '"Reply-To": "another@whoever.com",\n' in msg_file
     assert '"List-Unsubscribe": "<http://example.com/unsub>"\n' in msg_file
 
     msg_file = tmpdir.join(f'{uid}-2examplecom.txt').read()
     print(msg_file)
     assert '<p>test email Apple Banker .</p>\n' in msg_file
-    assert '"to_email": "2@example.com",\n' in msg_file
+    assert '"to_address": "2@example.com",\n' in msg_file
     assert '"Reply-To": "another@whoever.com",\n' in msg_file
     assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
 
@@ -184,13 +184,13 @@ async def test_send_unsub_context(send_email, tmpdir):
     assert len(tmpdir.listdir()) == 2
     msg_file = tmpdir.join(f'{uid}-1examplecom.txt').read()
     # print(msg_file)
-    assert '"to_email": "1@example.com",\n' in msg_file
+    assert '"to_address": "1@example.com",\n' in msg_file
     assert '"List-Unsubscribe": "<http://example.com/unsub>"\n' in msg_file
     assert '<p>test email http://example.com/unsub.</p>\n' in msg_file
 
     msg_file = tmpdir.join(f'{uid}-2examplecom.txt').read()
     print(msg_file)
-    assert '"to_email": "2@example.com",\n' in msg_file
+    assert '"to_address": "2@example.com",\n' in msg_file
     assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
     assert '<p>test email http://example.com/context.</p>\n' in msg_file
 

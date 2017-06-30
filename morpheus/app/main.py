@@ -11,8 +11,8 @@ from .models import SendMethod
 from .settings import Settings
 from .utils import Mandrill, MorpheusUserApi
 from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, EmailSendView, MandrillWebhookView,
-                    SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView, UserMessagePreviewView,
-                    UserMessageView, index)
+                    MessageBirdWebhookView, SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView,
+                    UserMessagePreviewView, UserMessageView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -104,6 +104,7 @@ def create_app(loop, settings: Settings=None):
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
     app.router.add_head('/webhook/mandrill/', index, name='webhook-mandrill-head')
     app.router.add_post('/webhook/mandrill/', MandrillWebhookView.view(), name='webhook-mandrill')
+    app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
     user_prefix = '/user/{method:%s}/' % '|'.join(m.value for m in SendMethod)
     app.router.add_get(user_prefix, UserMessageView.view(), name='user-messages')

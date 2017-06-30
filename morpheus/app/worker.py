@@ -206,7 +206,7 @@ class Sender(Actor):
             from_name=j.from_name,
             group_id=j.group_id,
             headers=email_info.headers,
-            to_email=j.address,
+            to_address=j.address,
             to_name=email_info.full_name,
             tags=j.tags,
             important=j.important,
@@ -260,7 +260,7 @@ class Sender(Actor):
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
-            to_email=j.address,
+            to_address=j.address,
             from_email=j.from_email,
             from_name=j.from_name,
             tags=j.tags,
@@ -447,13 +447,14 @@ class Sender(Actor):
             body=message,
             recipients=[number.number],
             allowed_statuses=201,
+            reference='morpheus',  # required to prompt status updates to occur
         )
         data = await r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
         await self._store_sms(data['id'], send_ts, j, number, message, cost)
 
-    async def _store_sms(self, uid, send_ts, j: SmsJob, number, message, cost):
+    async def _store_sms(self, uid, send_ts, j: SmsJob, number: Number, message: str, cost: float):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -461,7 +462,8 @@ class Sender(Actor):
             update_ts=send_ts,
             status=MessageStatus.send,
             group_id=j.group_id,
-            to_email=number,
+            to_last_name=number.number_formatted,
+            to_address=number.number,
             from_name=j.from_name,
             tags=j.tags,
             body=message,

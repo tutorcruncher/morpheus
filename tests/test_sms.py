@@ -1,4 +1,5 @@
 import uuid
+from urllib.parse import urlencode
 
 
 async def test_send_message(cli, tmpdir):
@@ -172,3 +173,50 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
     assert [
         'POST /messagebird/messages > 201',
     ] == mock_external.app['request_log']
+
+
+async def test_messagebird_webhook(cli, mock_external):
+    data = {
+        'uid': str(uuid.uuid4()),
+        'company_code': 'webhook-test',
+        'method': 'sms-messagebird',
+        'main_template': 'this is a message',
+        'recipients': [{'number': '07801234567'}]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/sms-messagebird/_search?q=company:webhook-test')
+    response_data = await r.json()
+    # import json
+    # print(json.dumps(response_data, indent=2))
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'send'
+    assert source['to_last_name'] == '+44 7801 234567'
+    assert source['to_address'] == '447801234567'
+    assert source['from_name'] == 'Morpheus'
+    assert source['body'] == 'this is a message'
+    assert source['cost'] == 0.02
+    assert source['events'] == []
+
+    url_args = {
+        'id': response_data['hits']['hits'][0]['_id'],
+        'reference': 'morpheus',
+        'recipient': '447801234567',
+        'status': 'delivered',
+        'statusDatetime': '2017-06-06T12:00:00',
+    }
+    r = await cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
+    assert r.status == 200, await r.text()
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/sms-messagebird/_search?q=company:webhook-test')
+    response_data = await r.json()
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+
+    assert source['status'] == 'delivered'
+    assert len(source['events']) == 1
+    assert source['events'][0]['status'] == 'delivered'

@@ -17,8 +17,8 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
-from .models import (EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod, SmsNumbersModel,
-                     SmsSendModel)
+from .models import (BaseWebhook, EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageBirdWebHook,
+                     MessageStatus, SendMethod, SmsNumbersModel, SmsSendModel)
 from .utils import THIS_DIR, ApiError, BasicAuthView, ServiceView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
@@ -98,34 +98,22 @@ class SmsValidateView(ServiceView):
         return v and dict(v._asdict())
 
 
-MSG_FIELDS = (
-    'bounce_description',
-    'clicks',
-    'diag',
-    'reject',
-    'opens',
-    'resends',
-    'smtp_events',
-    'state',
-)
-
-
 class GeneralWebhookView(View):
     es_type = None
 
-    async def update_message_status(self, m: MandrillSingleWebhook):
+    async def update_message_status(self, m: BaseWebhook):
             update_uri = f'messages/{self.es_type}/{m.message_id}/_update?retry_on_conflict=10'
             try:
-                await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
+                await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
             except ApiError as e:
                 if e.status == 404:
                     # we still return 200 here to avoid mandrill repeatedly trying to send the event
-                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.event,
+                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status,
                                    extra={'data': m.values()})
                     return
                 else:
                     raise
-            logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
+            logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
             await self.app['es'].post(
                 update_uri,
                 script={
@@ -134,12 +122,8 @@ class GeneralWebhookView(View):
                     'params': {
                         'event': {
                             'ts': m.ts,
-                            'status': m.event,
-                            'extra': {
-                                'user_agent': m.user_agent,
-                                'location': m.location,
-                                **{f: m.msg.get(f) for f in MSG_FIELDS},
-                            },
+                            'status': m.status,
+                            'extra': m.extra(),
                         }
                     }
                 }
@@ -187,6 +171,18 @@ class MandrillWebhookView(GeneralWebhookView):
 
         coros = [self.update_message_status(m) for m in MandrillWebhook(events=events).events]
         await asyncio.gather(*coros)
+        return Response(text='message status updated\n')
+
+
+class MessageBirdWebhookView(GeneralWebhookView):
+    """
+    Update messages sent with message bird
+    """
+    es_type = 'sms-messagebird'
+
+    async def call(self, request):
+        m = MessageBirdWebHook(**request.query)
+        await self.update_message_status(m)
         return Response(text='message status updated\n')
 
 
@@ -381,7 +377,7 @@ class AdminListView(AdminView):
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
                 f'<a href="/admin/get/{method}/{message["_id"]}/" class="short">{message["_id"]}</a>',
                 source['company'],
-                source['to_email'],
+                source['to_address'],
                 source['status'],
                 from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
                 from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
