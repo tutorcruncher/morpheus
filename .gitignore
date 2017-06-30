@@ -6,6 +6,7 @@ build/
 dist/
 .cache/
 /test*.*
+/sandbox/
 .coverage
 htmlcov/
 nginx/keys

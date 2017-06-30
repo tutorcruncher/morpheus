@@ -17,7 +17,8 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
-from .models import EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageStatus, SendMethod
+from .models import (BaseWebhook, EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageBirdWebHook,
+                     MessageStatus, SendMethod, SmsNumbersModel, SmsSendModel)
 from .utils import THIS_DIR, ApiError, BasicAuthView, ServiceView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
@@ -53,34 +54,66 @@ class EmailSendView(ServiceView):
         return Response(text='201 job enqueued\n', status=201)
 
 
-MSG_FIELDS = (
-    'bounce_description',
-    'clicks',
-    'diag',
-    'reject',
-    'opens',
-    'resends',
-    'smtp_events',
-    'state',
-)
+class SmsSendView(ServiceView):
+    async def call(self, request):
+        m: SmsSendModel = await self.request_data(SmsSendModel)
+        spend = None
+        async with await self.sender.get_redis_conn() as redis:
+            group_key = f'group:{m.uid}'
+            v = await redis.incr(group_key)
+            if v > 1:
+                raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+            if m.cost_limit is not None:
+                spend = await self.sender.check_sms_limit(m.company_code)
+                if spend >= m.cost_limit:
+                    return self.json_response(
+                        status='send limit exceeded',
+                        cost_limit=m.cost_limit,
+                        spend=spend,
+                        status_=402,
+                    )
+            recipients_key = f'recipients:{m.uid}'
+            data = m.values(exclude={'recipients'})
+            pipe = redis.pipeline()
+            pipe.lpush(recipients_key, *[msgpack.packb(r.values(), use_bin_type=True) for r in m.recipients])
+            pipe.expire(group_key, 86400)
+            pipe.expire(recipients_key, 86400)
+            await pipe.execute()
+            await self.sender.send_smss(recipients_key, **data)
+        return self.json_response(
+            status='enqueued',
+            spend=spend,
+            status_=201,
+        )
+
+
+class SmsValidateView(ServiceView):
+    async def call(self, request):
+        m: SmsNumbersModel = await self.request_data(SmsNumbersModel)
+        result = {str(k): self.to_dict(self.sender.validate_number(n, m.country_code)) for k, n in m.numbers.items()}
+        return self.json_response(**result)
+
+    @classmethod
+    def to_dict(cls, v):
+        return v and dict(v._asdict())
 
 
 class GeneralWebhookView(View):
     es_type = None
 
-    async def update_message_status(self, m: MandrillSingleWebhook):
+    async def update_message_status(self, m: BaseWebhook):
             update_uri = f'messages/{self.es_type}/{m.message_id}/_update?retry_on_conflict=10'
             try:
-                await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.event})
+                await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
             except ApiError as e:
                 if e.status == 404:
                     # we still return 200 here to avoid mandrill repeatedly trying to send the event
-                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.event,
+                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status,
                                    extra={'data': m.values()})
                     return
                 else:
                     raise
-            logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.event)
+            logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
             await self.app['es'].post(
                 update_uri,
                 script={
@@ -89,12 +122,8 @@ class GeneralWebhookView(View):
                     'params': {
                         'event': {
                             'ts': m.ts,
-                            'status': m.event,
-                            'extra': {
-                                'user_agent': m.user_agent,
-                                'location': m.location,
-                                **{f: m.msg.get(f) for f in MSG_FIELDS},
-                            },
+                            'status': m.status,
+                            'extra': m.extra(),
                         }
                     }
                 }
@@ -142,6 +171,18 @@ class MandrillWebhookView(GeneralWebhookView):
 
         coros = [self.update_message_status(m) for m in MandrillWebhook(events=events).events]
         await asyncio.gather(*coros)
+        return Response(text='message status updated\n')
+
+
+class MessageBirdWebhookView(GeneralWebhookView):
+    """
+    Update messages sent with message bird
+    """
+    es_type = 'sms-messagebird'
+
+    async def call(self, request):
+        m = MessageBirdWebHook(**request.query)
+        await self.update_message_status(m)
         return Response(text='message status updated\n')
 
 
@@ -229,6 +270,9 @@ class UserAggregationView(UserView):
                             'filter': [
                                 {'match_all': {}} if self.session.company == '__all__' else
                                 {'term': {'company': self.session.company}},
+                                {
+                                    'range': {'send_ts': {'gte': 'now-90d/d'}}
+                                }
                             ]
                         }
                     },
@@ -333,7 +377,7 @@ class AdminListView(AdminView):
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
                 f'<a href="/admin/get/{method}/{message["_id"]}/" class="short">{message["_id"]}</a>',
                 source['company'],
-                source['to_email'],
+                source['to_address'],
                 source['status'],
                 from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
                 from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),

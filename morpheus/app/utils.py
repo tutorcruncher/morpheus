@@ -111,6 +111,15 @@ class View:
         except ValueError:
             raise HTTPBadRequest(text=f'invalid get argument "{name}": {v!r}')
 
+    @classmethod
+    def json_response(cls, *, status_=200, list_=None, headers_=None, **data):
+        return Response(
+            body=json.dumps(data if list_ is None else list_).encode(),
+            status=status_,
+            content_type='application/json',
+            headers=headers_,
+        )
+
 
 class ServiceView(View):
     """
@@ -208,10 +217,10 @@ class ApiSession:
     def close(self):
         self.session.close()
 
-    async def get(self, uri, *, allowed_statuses=(200, 201), **data):
+    async def get(self, uri, *, allowed_statuses=(200,), **data):
         return await self._request(METH_GET, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def delete(self, uri, *, allowed_statuses=(200, 201), **data):
+    async def delete(self, uri, *, allowed_statuses=(200,), **data):
         return await self._request(METH_DELETE, uri, allowed_statuses=allowed_statuses, **data)
 
     async def post(self, uri, *, allowed_statuses=(200, 201), **data):
@@ -227,6 +236,8 @@ class ApiSession:
             # always read entire response before closing the connection
             response_text = await r.text()
 
+        if isinstance(allowed_statuses, int):
+            allowed_statuses = allowed_statuses,
         if allowed_statuses != '*' and r.status not in allowed_statuses:
             raise ApiError(method, url, data, r, response_text)
         else:
@@ -262,3 +273,12 @@ class MorpheusUserApi(ApiSession):
         args['signature'] = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
         url = str(url)
         return url + ('&' if '?' in url else '?') + urlencode(args)
+
+
+class MessageBird(ApiSession):
+    def __init__(self, settings, loop):
+        super().__init__(settings.messagebird_url, settings, loop)
+
+    def _modify_request(self, method, url, data):
+        data['headers_'] = {'Authorization': f'AccessKey {self.settings.messagebird_key}'}
+        return method, url, data

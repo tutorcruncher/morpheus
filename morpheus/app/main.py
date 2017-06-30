@@ -11,7 +11,8 @@ from .models import SendMethod
 from .settings import Settings
 from .utils import Mandrill, MorpheusUserApi
 from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, EmailSendView, MandrillWebhookView,
-                    TestWebhookView, UserAggregationView, UserMessagePreviewView, UserMessageView, index)
+                    MessageBirdWebhookView, SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView,
+                    UserMessagePreviewView, UserMessageView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -67,6 +68,7 @@ async def app_startup(app):
         async with redis_pool.get() as redis:
             info = await redis.info()
             logger.info('redis version: %s', info['server']['redis_version'])
+    # app['sender'].es = app['es']
     loop.create_task(get_mandrill_webhook_key(app))
 
 
@@ -96,10 +98,13 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/', index, name='index')
 
     app.router.add_post('/send/email/', EmailSendView.view(), name='send-emails')
+    app.router.add_post('/send/sms/', SmsSendView.view(), name='send-smss')
+    app.router.add_get('/validate/sms/', SmsValidateView.view(), name='validate-smss')
 
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
     app.router.add_head('/webhook/mandrill/', index, name='webhook-mandrill-head')
     app.router.add_post('/webhook/mandrill/', MandrillWebhookView.view(), name='webhook-mandrill')
+    app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
     user_prefix = '/user/{method:%s}/' % '|'.join(m.value for m in SendMethod)
     app.router.add_get(user_prefix, UserMessageView.view(), name='user-messages')

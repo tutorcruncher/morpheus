@@ -90,13 +90,17 @@ MAPPINGS = {
         'status': KEYWORD,
         'to_first_name': KEYWORD,
         'to_last_name': KEYWORD,
-        'to_email': KEYWORD,
+        'to_address': KEYWORD,
         'from_email': KEYWORD,
         'from_name': KEYWORD,
         'tags': KEYWORD,
         'subject': TEXT,
         'body': TEXT,
         'attachments': KEYWORD,
+        'cost': {
+          'type': 'scaled_float',
+          'scaling_factor': 1000,
+        },
         'events': {
             'properties': {
                 'ts': DATE,

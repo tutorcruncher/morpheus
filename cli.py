@@ -113,7 +113,7 @@ def print_messages(data, print_heading=True, limit=1000, p_from=0):
         print(f'{score} '
               f'{blue(message["_id"], 32)} '
               f'{magenta(source["company"], 15)} '
-              f'{green(source["to_email"], 25, 25)} '
+              f'{green(source["to_address"], 25, 25)} '
               f'{magenta(source["status"], 12)} '
               f'{green(sent_ts, 20)} '
               f'{yellow(update_ts, 20)} '

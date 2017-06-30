@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -6,21 +7,29 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
+import chevron
 import msgpack
+import phonenumbers
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
+from phonenumbers import parse as parse_number
+from phonenumbers import NumberParseException, PhoneNumberType, format_number, is_valid_number, number_type
+from phonenumbers.geocoder import country_name_for_number, description_for_number
 
 from .es import ElasticSearch
-from .models import THIS_DIR, EmailSendMethod, MessageStatus
+from .models import THIS_DIR, EmailSendMethod, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
 from .settings import Settings
-from .utils import Mandrill
+from .utils import Mandrill, MessageBird
 
 test_logger = logging.getLogger('morpheus.worker.test')
 main_logger = logging.getLogger('morpheus.worker')
+MOBILE_NUMBER_TYPES = PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE
+ONE_DAY = 86400
+ONE_YEAR = ONE_DAY * 365
 
 
-class Job(NamedTuple):
+class EmailJob(NamedTuple):
     group_id: str
     send_method: str
     first_name: str
@@ -41,12 +50,32 @@ class Job(NamedTuple):
     headers: dict
 
 
+class SmsJob(NamedTuple):
+    group_id: str
+    send_method: str
+    number: str
+    tags: List[str]
+    main_template: str
+    company_code: str
+    country_code: str
+    from_name: str
+    context: dict
+
+
+class Number(NamedTuple):
+    number: str
+    country_code: str
+    number_formatted: str
+    descr: str
+    is_mobile: bool
+
+
 class Sender(Actor):
     def __init__(self, settings: Settings=None, **kwargs):
         self.settings = settings or Settings()
         self.redis_settings = self.settings.redis_settings
         super().__init__(**kwargs)
-        self.session = self.es = self.mandrill = None
+        self.session = self.es = self.mandrill = self.messagebird = None
         self.mandrill_webhook_auth_key = None
 
     async def startup(self):
@@ -54,11 +83,13 @@ class Sender(Actor):
         self.session = ClientSession(loop=self.loop)
         self.es = ElasticSearch(settings=self.settings, loop=self.loop)
         self.mandrill = Mandrill(settings=self.settings, loop=self.loop)
+        self.messagebird = MessageBird(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):
         self.session.close()
         self.es.close()
         self.mandrill.close()
+        self.messagebird.close()
 
     @concurrent
     async def send_emails(self,
@@ -84,7 +115,7 @@ class Sender(Actor):
         else:
             raise NotImplementedError()
         tags.append(uid)
-        main_logger.info('sending group %s via %s', uid, method)
+        main_logger.info('sending email group %s via %s', uid, method)
         base_kwargs = dict(
             group_id=uid,
             send_method=method,
@@ -121,12 +152,12 @@ class Sender(Actor):
                     **base_kwargs,
                     **msg_data,
                 )
-                drain.add(coro, Job(**data))
+                drain.add(coro, EmailJob(**data))
                 # TODO stop if worker is not running
                 jobs += 1
         return jobs
 
-    async def _send_mandrill(self, j: Job):
+    async def _send_mandrill(self, j: EmailJob):
         email_info = render_email(j)
         data = {
             'async': True,
@@ -166,16 +197,16 @@ class Sender(Actor):
         assert data['email'] == j.address, data
         if data['status'] not in ('sent', 'queued'):
             main_logger.warning('message not sent %s %s response: %s', j.group_id, j.address, data)
-        await self._store_msg(data['_id'], send_ts, j, email_info)
+        await self._store_email(data['_id'], send_ts, j, email_info)
 
-    async def _send_test_email(self, j: Job):
+    async def _send_test_email(self, j: EmailJob):
         email_info = render_email(j)
         data = dict(
             from_email=j.from_email,
             from_name=j.from_name,
             group_id=j.group_id,
             headers=email_info.headers,
-            to_email=j.address,
+            to_address=j.address,
             to_name=email_info.full_name,
             tags=j.tags,
             important=j.important,
@@ -201,7 +232,7 @@ class Sender(Actor):
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_msg(msg_id, send_ts, j, email_info)
+        await self._store_email(msg_id, send_ts, j, email_info)
 
     async def _generate_base64_pdf(self, html):
         if not self.settings.pdf_generation_url:
@@ -219,7 +250,7 @@ class Sender(Actor):
             pdf_content = await r.read()
         return base64.b64encode(pdf_content).decode()
 
-    async def _store_msg(self, uid, send_ts, j: Job, email_info: EmailInfo):
+    async def _store_email(self, uid, send_ts, j: EmailJob, email_info: EmailInfo):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -229,7 +260,7 @@ class Sender(Actor):
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
-            to_email=j.address,
+            to_address=j.address,
             from_email=j.from_email,
             from_name=j.from_name,
             tags=j.tags,
@@ -238,6 +269,229 @@ class Sender(Actor):
             attachments=[a['name'] for a in j.pdf_attachments],
             events=[]
         )
+
+    @classmethod
+    def validate_number(cls, number, country, include_description=True):
+        try:
+            p = parse_number(number, country)
+        except NumberParseException:
+            return
+
+        if not is_valid_number(p):
+            return
+
+        is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
+        f_number = format_number(p, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+        descr = None
+        if include_description:
+            country = country_name_for_number(p, 'en')
+            region = description_for_number(p, 'en')
+            descr = country if country == region else f'{region}, {country}'
+
+        return Number(
+            number=f'{p.country_code}{p.national_number}',
+            country_code=f'{p.country_code}',
+            number_formatted=f_number,
+            descr=descr,
+            is_mobile=is_mobile,
+        )
+
+    @concurrent
+    async def send_smss(self,
+                        recipients_key, *,
+                        uid,
+                        main_template,
+                        company_code,
+                        cost_limit,
+                        country_code,
+                        from_name,
+                        method,
+                        context,
+                        tags):
+        if method == SmsSendMethod.sms_test:
+            coro = self._test_send_sms
+        elif method == SmsSendMethod.sms_messagebird:
+            coro = self._messagebird_send_sms
+        else:
+            raise NotImplementedError()
+        tags.append(uid)
+        main_logger.info('sending group %s via %s', uid, method)
+        base_kwargs = dict(
+            group_id=uid,
+            send_method=method,
+            main_template=main_template,
+            company_code=company_code,
+            country_code=country_code,
+            from_name=from_name,
+        )
+
+        drain = Drain(
+            redis_pool=await self.get_redis_pool(),
+            raise_task_exception=True,
+            max_concurrent_tasks=10,
+            shutdown_delay=60,
+        )
+        jobs = 0
+        async with drain:
+            async for raw_queue, raw_data in drain.iter(recipients_key):
+                if not raw_queue:
+                    break
+
+                if cost_limit is not None:
+                    spend = await self.check_sms_limit(company_code)
+                    if spend >= cost_limit:
+                        main_logger.warning('cost limit exceeded %0.2f >= %0.2f, %s', spend, cost_limit, company_code)
+                        break
+                msg_data = msgpack.unpackb(raw_data, encoding='utf8')
+                data = dict(
+                    context=dict(context, **msg_data.pop('context')),
+                    tags=list(set(tags + msg_data.pop('tags'))),
+                    **base_kwargs,
+                    **msg_data,
+                )
+                drain.add(coro, SmsJob(**data))
+                # TODO stop if worker is not running
+                jobs += 1
+        return jobs
+
+    def _sms_get_number_message(self, j: SmsJob):
+        number_info = self.validate_number(j.number, j.country_code, include_description=False)
+        if not number_info or not number_info.is_mobile:
+            main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
+            return None, None
+
+        return number_info, chevron.render(j.main_template, data=j.context)
+
+    async def _test_send_sms(self, j: SmsJob):
+        number, message = self._sms_get_number_message(j)
+        if not number:
+            return
+
+        msg_id = f'{j.group_id}-{number.number}'
+        send_ts = datetime.utcnow()
+        cost = 0.012
+        output = (
+            f'to: {number}\n'
+            f'msg id: {msg_id}\n'
+            f'ts: {send_ts}\n'
+            f'group_id: {j.group_id}\n'
+            f'tags: {j.tags}\n'
+            f'company_code: {j.company_code}\n'
+            f'from_name: {j.from_name}\n'
+            f'cost: {cost}\n'
+            f'message:\n'
+            f'{message}\n'
+        )
+        if self.settings.test_output:
+            Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
+            save_path = self.settings.test_output / f'{msg_id}.txt'
+            test_logger.info('sending message: %s (saved to %s)', output, save_path)
+            save_path.write_text(output)
+        await self._store_sms(msg_id, send_ts, j, number, message, cost)
+
+    async def _messagebird_get_mcc_cost(self, redis, mcc):
+        rates_key = 'messagebird-rates'
+        if not await redis.exists(rates_key):
+            # get fresh data on rates by mcc
+            url = (
+                f'{self.settings.messagebird_pricing_api}'
+                f'?username={self.settings.messagebird_pricing_username}'
+                f'&password={self.settings.messagebird_pricing_password}'
+            )
+            async with self.session.get(url) as r:
+                assert r.status == 200, await r.text()
+                data = await r.json()
+            if not next((1 for g in data if g['mcc'] == '0'), None):
+                main_logger.error('no default messagebird pricing with mcc "0"', extra={
+                    'data': data,
+                })
+            data = {g['mcc']: f'{float(g["rate"]):0.5f}' for g in data}
+            await asyncio.gather(
+                redis.hmset_dict(rates_key, data),
+                redis.expire(rates_key, ONE_DAY),
+            )
+        rate = await redis.hget(rates_key, mcc, encoding='utf8')
+        if not rate:
+            main_logger.warning('no rate found for mcc: "%s", using default', mcc)
+            rate = await redis.hget(rates_key, '0', encoding='utf8')
+        assert rate, f'no rate found for mcc: {mcc}'
+        return float(rate)
+
+    async def _messagebird_get_number_cost(self, number: Number):
+        cc_mcc_key = f'messagebird-cc:{number.country_code}'
+        pool = await self.get_redis_pool()
+        async with pool.get() as redis:
+            mcc = await redis.get(cc_mcc_key)
+            if mcc is None:
+                await self.messagebird.post(f'lookup/{number.number}/hlr')
+                while True:
+                    r = await self.messagebird.get(f'lookup/{number.number}')
+                    data = await r.json()
+                    if data['hlr']['status'] == 'active':
+                        break
+                    await asyncio.sleep(1)
+                mcc = str(data['hlr']['network'])[:3]
+                await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
+            return await self._messagebird_get_mcc_cost(redis, mcc)
+
+    async def _messagebird_send_sms(self, j: SmsJob):
+        number, message = self._sms_get_number_message(j)
+        if not number:
+            return
+
+        cost = await self._messagebird_get_number_cost(number)
+        send_ts = datetime.utcnow()
+        r = await self.messagebird.post(
+            'messages',
+            originator=j.from_name,
+            body=message,
+            recipients=[number.number],
+            allowed_statuses=201,
+            reference='morpheus',  # required to prompt status updates to occur
+        )
+        data = await r.json()
+        if data['recipients']['totalCount'] != 1:
+            main_logger.error('not one recipients in send response', extra={'data': data})
+        await self._store_sms(data['id'], send_ts, j, number, message, cost)
+
+    async def _store_sms(self, uid, send_ts, j: SmsJob, number: Number, message: str, cost: float):
+        await self.es.post(
+            f'messages/{j.send_method}/{uid}',
+            company=j.company_code,
+            send_ts=send_ts,
+            update_ts=send_ts,
+            status=MessageStatus.send,
+            group_id=j.group_id,
+            to_last_name=number.number_formatted,
+            to_address=number.number,
+            from_name=j.from_name,
+            tags=j.tags,
+            body=message,
+            cost=cost,
+            events=[],
+        )
+
+    async def check_sms_limit(self, company_code):
+        r = await self.es.get(
+            'messages/_search?size=0',
+            query={
+                'bool': {
+                    'filter': [
+                        {
+                            'term': {'company': company_code}
+                        },
+                        {
+                            'range': {'send_ts': {'gte': 'now-28d/d'}}
+                        }
+                    ]
+                }
+            },
+            aggs={
+                'total_spend': {'sum': {'field': 'cost'}}
+            }
+        )
+        data = await r.json()
+        return data['aggregations']['total_spend']['value']
 
 
 class AuxActor(Actor):
