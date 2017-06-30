@@ -393,6 +393,7 @@ class Sender(Actor):
         rates_key = 'messagebird-rates'
         if not await redis.exists(rates_key):
             # get fresh data on rates by mcc
+            main_logger.info('getting fresh pricing data from messagebird...')
             url = (
                 f'{self.settings.messagebird_pricing_api}'
                 f'?username={self.settings.messagebird_pricing_username}'
@@ -423,11 +424,15 @@ class Sender(Actor):
         async with pool.get() as redis:
             mcc = await redis.get(cc_mcc_key)
             if mcc is None:
+                main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
                 await self.messagebird.post(f'lookup/{number.number}/hlr')
-                while True:
+                data = None
+                for i in range(30):
                     r = await self.messagebird.get(f'lookup/{number.number}')
                     data = await r.json()
                     if data['hlr']['status'] == 'active':
+                        main_logger.info('found result for %s after %d attempts %s',
+                                         number.number, i, json.dumps(data, indent=2))
                         break
                     await asyncio.sleep(1)
                 mcc = str(data['hlr']['network'])[:3]
@@ -441,6 +446,7 @@ class Sender(Actor):
 
         cost = await self._messagebird_get_number_cost(number)
         send_ts = datetime.utcnow()
+        main_logger.info('sending SMS to %s, cost: %0.2fp', number.number, cost * 100)
         r = await self.messagebird.post(
             'messages',
             originator=j.from_name,
