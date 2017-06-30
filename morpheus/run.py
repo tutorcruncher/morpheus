@@ -92,6 +92,9 @@ def worker(wait):
 
 
 def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False):
+    """
+    setup elastic search db: create indexes and snapshot repo
+    """
     es = ElasticSearch(settings=settings)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(es.set_license())
@@ -107,6 +110,19 @@ def elasticsearch_setup(force_create_index, force_create_repo):
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
     _elasticsearch_setup(settings, force_create_index, force_create_repo)
+
+
+@cli.command()
+def elasticsearch_snapshot():
+    """
+    create an elastic search snapshot
+    """
+    settings = Settings(sender_cls='app.worker.Sender')
+    setup_logging(settings)
+    es = ElasticSearch(settings=settings)
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(es.create_snapshot())
+    es.close()
 
 
 EXEC_LINES = [
@@ -127,6 +143,9 @@ EXEC_LINES += (
 
 @cli.command()
 def shell():
+    """
+    Run an interactive python shell
+    """
     from IPython import start_ipython
     from IPython.terminal.ipapp import load_default_config
     c = load_default_config()

@@ -510,12 +510,7 @@ class AuxActor(Actor):
 
     @cron(hour=3, minute=0)
     async def snapshot_es(self):
-        main_logger.info('creating elastic search backup...')
-        r = await self.es.put(
-            f'/_snapshot/{self.settings.snapshot_repo_name}/'
-            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true'
-        )
-        main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
+        await self.es.create_snapshot()
 
 
 class Worker(BaseWorker):

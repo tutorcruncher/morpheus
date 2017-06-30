@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 
 from .settings import Settings
 from .utils import THIS_DIR, ApiSession
@@ -87,6 +88,14 @@ class ElasticSearch(ApiSession):
         await self.put(f'/_snapshot/{self.settings.snapshot_repo_name}', type=snapshot_type, settings=settings)
         main_logger.info('snapshot %s created successfully using %s', self.settings.snapshot_repo_name, snapshot_type)
         return snapshot_type, True
+
+    async def create_snapshot(self):
+        main_logger.info('creating elastic search snapshot...')
+        r = await self.put(
+            f'/_snapshot/{self.settings.snapshot_repo_name}/'
+            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true'
+        )
+        main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
 
 
 KEYWORD = {'type': 'keyword'}
