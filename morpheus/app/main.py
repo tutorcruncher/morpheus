@@ -39,9 +39,9 @@ async def get_mandrill_webhook_key(app):
                 'url': mandrill_webhook_url,
                 'description': 'morpheus (auto created)',
                 # infuriatingly this list appears to differ from those the api returns or actually submits in hooks
+                # blacklist and whitelist are skipped since they are "sync events" not "message events"
                 'events': (
-                   'send', 'hard_bounce', 'soft_bounce', 'open', 'click', 'spam', 'unsub', 'reject',
-                   'blacklist', 'whitelist',
+                   'send', 'hard_bounce', 'soft_bounce', 'open', 'click', 'spam', 'unsub', 'reject'
                    # 'deferral' can't request this.
                 ),
             }

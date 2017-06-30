@@ -3,7 +3,7 @@ import json
 import logging
 
 from .settings import Settings
-from .utils import ApiSession
+from .utils import THIS_DIR, ApiSession
 
 main_logger = logging.getLogger('morpheus.elastic')
 
@@ -12,6 +12,18 @@ class ElasticSearch(ApiSession):
     def __init__(self, settings: Settings, loop=None):
         self.settings = settings
         super().__init__(settings.elastic_url, settings, loop)
+
+    async def set_license(self):
+        license_file = (THIS_DIR.resolve() / '..' / 'es-license' / 'license.json').resolve()
+        if not license_file.exists():
+            main_logger.info('X license file "%s" does not exist, not setting license', license_file)
+            return
+
+        with license_file.open() as f:
+            data = json.load(f)
+        main_logger.info('settings elasticsearch license...')
+        r = await self.put('_xpack/license?acknowledge=true', **data)
+        main_logger.info('license set, response: %s', json.dumps(await r.json(), indent=2))
 
     async def create_indices(self, delete_existing=False):
         """

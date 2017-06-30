@@ -12,6 +12,7 @@ RUN pip install -r /home/root/requirements_two.txt
 
 ADD ./app /home/root/app
 ADD ./run.py /home/root/run.py
+ADD es-license /home/root/es-license
 
 WORKDIR /home/root
 #HEALTHCHECK --interval=60s --timeout=10s --retries=2 CMD /home/root/run.py check || exit 1

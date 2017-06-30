@@ -14,3 +14,4 @@ activate.prod.sh
 activate.client.sh
 nginx/htpasswd
 nginx/_build.nginx.conf
+morpheus/es-license/license.json

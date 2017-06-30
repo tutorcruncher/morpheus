@@ -94,6 +94,7 @@ def worker(wait):
 def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False):
     es = ElasticSearch(settings=settings)
     loop = asyncio.get_event_loop()
+    loop.run_until_complete(es.set_license())
     loop.run_until_complete(es.create_indices(delete_existing=force_create_index))
     loop.run_until_complete(es.create_snapshot_repo(delete_existing=force_create_repo))
     es.close()
