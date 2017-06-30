@@ -247,13 +247,26 @@ class UserMessagePreviewView(UserView):
                 ]
             }
         }
+        method = request.match_info['method']
         r = await self.app['es'].get(
-            'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), query=es_query
+            f'messages/{method}/_search?filter_path=hits', query=es_query
         )
         data = await r.json()
         if data['hits']['total'] != 1:
             raise HTTPNotFound(text='message not found')
-        body = data['hits']['hits'][0]['_source']['body']
+        source = data['hits']['hits'][0]['_source']
+        body = source['body']
+        if method.startswith('sms'):
+            # need to render the sms so it makes sense to users
+            body = chevron.render(
+                (THIS_DIR / 'extra/sms-display-preview.html').read_text(),
+                data={
+                    'from': source['from_name'],
+                    'to': source['to_last_name'],
+                    'status': source['status'],
+                    'message': body,
+                }
+            )
         return Response(body=body, content_type='text/html')
 
 
@@ -381,7 +394,7 @@ class AdminListView(AdminView):
                 source['status'],
                 from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
                 from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
-                source['subject'],
+                source.get('subject') or source.get('body', '')[:50],
             ])
 
         if len(data['hits']['hits']) == 100:

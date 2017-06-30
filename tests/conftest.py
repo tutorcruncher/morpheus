@@ -33,10 +33,12 @@ async def mandrill_send_view(request):
 
 
 async def messagebird_hlr_post(request):
+    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
     return Response(status=201)
 
 
 async def messagebird_lookup(request):
+    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
     return json_response({
         'hlr': {
             'status': 'active',
@@ -46,6 +48,7 @@ async def messagebird_lookup(request):
 
 
 async def messagebird_send(request):
+    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
     data = await request.json()
     return json_response({
         'id': '6a23b2037595620ca8459a3b00026003',

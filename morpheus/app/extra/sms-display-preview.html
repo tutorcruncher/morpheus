@@ -1,0 +1,61 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>SMS {{ from }} - {{ to }}</title>
+  <link href="https://fonts.googleapis.com/css?family=Inconsolata" rel="stylesheet">
+  <style>
+    html, body {
+      height: 100%;
+    }
+    #body {
+      width: 100% !important;
+      background: #fafafa;
+      padding: 10px 0;
+      height: calc(100vh - 20px);
+    }
+
+    #main {
+      margin: 20px auto;
+      line-height: 120%;
+      max-width: 350px;
+      padding: 20px 15px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      background: white;
+      font-family: 'Inconsolata', monospace;
+      font-weight: normal;
+      color: #333;
+    }
+
+    hr {
+      margin: 15px 0;
+      border: none;
+      border-top: 1px solid #ddd;
+    }
+
+    a {
+      color: #016997 !important;
+    }
+
+    .metadata {
+      display: inline-block;
+      width: 8ch;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body marginheight="0" marginwidth="0">
+  <div id="body">
+    <div id="main">
+      <span class="metadata">From:</span>{{ from }}
+      <br>
+      <span class="metadata">To:</span>{{ to }}
+      <br>
+      <span class="metadata">Status:</span>{{ status }}
+      <hr>
+      {{ message }}
+    </div>
+  </div>
+</body>
+</html>

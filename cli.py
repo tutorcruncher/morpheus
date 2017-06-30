@@ -178,7 +178,6 @@ def status(username, password, user_auth_key, company, send_method):
         print('{dt:%a %Y-%m-%d}   {opens}'.format(dt=dt, opens=opens))
 
 
-
 @cli.command()
 @click.argument('recipient_email')
 @click.option('--recipient-first-name', default='John {}')
@@ -191,17 +190,17 @@ def status(username, password, user_auth_key, company, send_method):
 @click.option('--company', default='testing')
 @click.option('--recipient-count', default=1)
 @click.option('--send-method', default='email-mandrill')
-def send(recipient_email,
-         recipient_first_name,
-         recipient_last_name,
-         subject,
-         body,
-         efrom,
-         attachment,
-         auth_key,
-         company,
-         recipient_count,
-         send_method):
+def send_email(recipient_email,
+               recipient_first_name,
+               recipient_last_name,
+               subject,
+               body,
+               efrom,
+               attachment,
+               auth_key,
+               company,
+               recipient_count,
+               send_method):
     uid = str(uuid.uuid4())
     if body:
         body = body.read()
@@ -245,7 +244,7 @@ This is a **test** at {{ time }}.
     print_data(data)
     start = time()
     r = requests.post(
-        f'{root_url}/send/',
+        f'{root_url}/send/email/',
         data=json.dumps(data),
         headers={'Authorization': auth_key}
     )
@@ -255,6 +254,49 @@ This is a **test** at {{ time }}.
         print(f'email sent:\n{r.text}')
     else:
         print(f'{recipient_count} emails sent:\n{r.text}')
+
+
+@cli.command()
+@click.argument('recipient_number')
+@click.option('--message', default='this is a test message')
+@click.option('--from', 'from_name', default='Morpheus')
+@click.option('--auth-key', envvar='APP_AUTH_KEY')
+@click.option('--company', default='testing')
+@click.option('--send-method', default='sms-messagebird')
+def send_sms(recipient_number,
+             message,
+             from_name,
+             auth_key,
+             company,
+             send_method):
+    uid = str(uuid.uuid4())
+
+    data = {
+        'uid': uid,
+        'company_code': company,
+        'cost_limit': 100,
+        'from_name': from_name,
+        'method': send_method,
+        'main_template': message,
+        'context': {
+            'time': datetime.now().strftime('%a %Y-%m-%d %H:%M')
+        },
+        'recipients': [
+            {
+                'number': recipient_number,
+            }
+        ]
+    }
+    print_data(data)
+    start = time()
+    r = requests.post(
+        f'{root_url}/send/sms/',
+        data=json.dumps(data),
+        headers={'Authorization': auth_key}
+    )
+    assert r.status_code == 201, (r.status_code, r.text)
+    print(f'time taken: {time() - start:0.3f}')
+    print(f'sms sent: {r.text}')
 
 
 if __name__ == '__main__':
