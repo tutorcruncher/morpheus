@@ -145,3 +145,30 @@ async def test_exceed_cost_limit(cli, tmpdir):
     assert 0.143 < obj['spend'] < 0.145
     assert obj['cost_limit'] == 0.1
     assert len(tmpdir.listdir()) == 12
+
+
+async def test_send_messagebird(cli, tmpdir, mock_external):
+    data = {
+        'uid': str(uuid.uuid4()),
+        'company_code': 'foobar',
+        'method': 'sms-messagebird',
+        'main_template': 'this is a message',
+        'recipients': [{'number': '07801234567'}]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert [
+        'POST /messagebird/lookup/447801234567/hlr > 201',
+        'GET /messagebird/lookup/447801234567 > 200',
+        'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
+        'POST /messagebird/messages > 201',
+    ] == mock_external.app['request_log']
+    mock_external.app['request_log'] = []
+
+    # send again, this time hlr look and pricing requests shouldn't occur
+    data = dict(data, uid=str(uuid.uuid4()))
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert [
+        'POST /messagebird/messages > 201',
+    ] == mock_external.app['request_log']

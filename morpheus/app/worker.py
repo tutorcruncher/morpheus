@@ -296,6 +296,7 @@ class Sender(Actor):
             is_mobile=is_mobile,
         )
 
+    @concurrent
     async def send_smss(self,
                         recipients_key, *,
                         uid,
@@ -308,7 +309,9 @@ class Sender(Actor):
                         context,
                         tags):
         if method == SmsSendMethod.sms_test:
-            coro = self._send_test_smss
+            coro = self._test_send_sms
+        elif method == SmsSendMethod.sms_messagebird:
+            coro = self._messagebird_send_sms
         else:
             raise NotImplementedError()
         tags.append(uid)
@@ -359,7 +362,7 @@ class Sender(Actor):
 
         return number_info, chevron.render(j.main_template, data=j.context)
 
-    async def _send_test_smss(self, j: SmsJob):
+    async def _test_send_sms(self, j: SmsJob):
         number, message = self._sms_get_number_message(j)
         if not number:
             return
@@ -386,6 +389,70 @@ class Sender(Actor):
             save_path.write_text(output)
         await self._store_sms(msg_id, send_ts, j, number, message, cost)
 
+    async def _messagebird_get_mcc_cost(self, redis, mcc):
+        rates_key = 'messagebird-rates'
+        if not await redis.exists(rates_key):
+            # get fresh data on rates by mcc
+            url = (
+                f'{self.settings.messagebird_pricing_api}'
+                f'?username={self.settings.messagebird_pricing_username}'
+                f'&password={self.settings.messagebird_pricing_password}'
+            )
+            async with self.session.get(url) as r:
+                assert r.status == 200, await r.text()
+                data = await r.json()
+            if not next((1 for g in data if g['mcc'] == '0'), None):
+                main_logger.error('no default messagebird pricing with mcc "0"', extra={
+                    'data': data,
+                })
+            data = {g['mcc']: f'{float(g["rate"]):0.5f}' for g in data}
+            await asyncio.gather(
+                redis.hmset_dict(rates_key, data),
+                redis.expire(rates_key, ONE_DAY),
+            )
+        rate = await redis.hget(rates_key, mcc, encoding='utf8')
+        if not rate:
+            main_logger.warning('no rate found for mcc: "%s", using default', mcc)
+            rate = await redis.hget(rates_key, '0', encoding='utf8')
+        assert rate, f'no rate found for mcc: {mcc}'
+        return float(rate)
+
+    async def _messagebird_get_number_cost(self, number: Number):
+        cc_mcc_key = f'messagebird-cc:{number.country_code}'
+        pool = await self.get_redis_pool()
+        async with pool.get() as redis:
+            mcc = await redis.get(cc_mcc_key)
+            if mcc is None:
+                await self.messagebird.post(f'lookup/{number.number}/hlr')
+                while True:
+                    r = await self.messagebird.get(f'lookup/{number.number}')
+                    data = await r.json()
+                    if data['hlr']['status'] == 'active':
+                        break
+                    await asyncio.sleep(1)
+                mcc = str(data['hlr']['network'])[:3]
+                await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
+            return await self._messagebird_get_mcc_cost(redis, mcc)
+
+    async def _messagebird_send_sms(self, j: SmsJob):
+        number, message = self._sms_get_number_message(j)
+        if not number:
+            return
+
+        cost = await self._messagebird_get_number_cost(number)
+        send_ts = datetime.utcnow()
+        r = await self.messagebird.post(
+            'messages',
+            originator=j.from_name,
+            body=message,
+            recipients=[number.number],
+            allowed_statuses=201,
+        )
+        data = await r.json()
+        if data['recipients']['totalCount'] != 1:
+            main_logger.error('not one recipients in send response', extra={'data': data})
+        await self._store_sms(data['id'], send_ts, j, number, message, cost)
+
     async def _store_sms(self, uid, send_ts, j: SmsJob, number, message, cost):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
@@ -401,57 +468,6 @@ class Sender(Actor):
             cost=cost,
             events=[],
         )
-
-    async def _messagebird_get_mcc_rate(self, redis, mcc):
-        rates_key = 'messagebird-rates'
-        if not await redis.hexists(rates_key):
-            # get fresh data on rates by mcc
-            url = (
-                f'{self.settings.messagebird_pricing_api}'
-                f'?username={self.settings.messagebird_pricing_username}'
-                f'&password={self.settings.messagebird_pricing_password}'
-            )
-            async with self.session.get(url) as r:
-                assert r.status == 200, await r.text()
-                data = await r.json()
-            data = {g['mcc']: f'{g["rate"]:0.4f}' for g in data}
-            await asyncio.gather(
-                redis.hmset_dict(rates_key, data),
-                redis.expire(rates_key, ONE_DAY),
-            )
-        rate = await redis.hget(rates_key, mcc, encoding='utf8')
-        assert rate, f'no rate found for mcc: {mcc}'
-        return float(rate)
-
-    async def _messagebird_get_number_rate(self, number: Number):
-        cc_mcc_key = f'messagebird-cc:{number.country_code}'
-        pool = await self.get_redis_pool()
-        async with pool.get() as redis:
-            mcc = await redis.get(cc_mcc_key)
-            if mcc is None:
-                self.messagebird.post(f'lookup/{number.number}/hlr')
-                while True:
-                    r = self.messagebird.get(f'lookup/{number.number}')
-                    data = await r.json()
-                    if data['hlr']['status'] == 'active':
-                        break
-                    await asyncio.sleep(1)
-                mcc = str(data['hlr']['network'])[:3]
-                mcc = await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
-            return await self._messagebird_get_mcc_rate(redis, mcc)
-
-    async def _messagebird_send_smss(self, j: SmsJob):
-        number, message = self._sms_get_number_message(j)
-        if not number:
-            return
-
-        r = self.messagebird.post(
-            'messages',
-            originator=j.from_name,
-            body=message,
-            recipients=[number.number],
-        )
-        print(r)
 
     async def check_sms_limit(self, company_code):
         r = await self.es.get(

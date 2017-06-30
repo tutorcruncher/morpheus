@@ -236,6 +236,8 @@ class ApiSession:
             # always read entire response before closing the connection
             response_text = await r.text()
 
+        if isinstance(allowed_statuses, int):
+            allowed_statuses = allowed_statuses,
         if allowed_statuses != '*' and r.status not in allowed_statuses:
             raise ApiError(method, url, data, r, response_text)
         else:
