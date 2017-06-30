@@ -108,8 +108,8 @@ class GeneralWebhookView(View):
             except ApiError as e:
                 if e.status == 404:
                     # we still return 200 here to avoid mandrill repeatedly trying to send the event
-                    logger.warning('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status,
-                                   extra={'data': m.values()})
+                    logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status,
+                                extra={'data': m.values()})
                     return
                 else:
                     raise
