@@ -59,6 +59,28 @@ async def test_webhook(cli, send_email):
     assert data['_source']['update_ts'] > first_update_ts
 
 
+async def test_webhook_missing(cli, send_email):
+    await send_email(uid='x' * 20)
+    r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
+    data = await r.json()
+    assert data['_source']['status'] == 'send'
+    first_update_ts = data['_source']['update_ts']
+    assert data['_source']['send_ts'] == first_update_ts
+    assert len(data['_source']['events']) == 0
+    data = {
+        'ts': int(1e10),
+        'event': 'open',
+        '_id': 'missing',
+        'foobar': ['hello', 'world']
+    }
+    r = await cli.post('/webhook/test/', json=data)
+    assert r.status == 200, await r.text()
+    r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
+    data = await r.json()
+    assert data['_source']['status'] == 'send'
+    assert len(data['_source']['events']) == 0
+
+
 async def test_mandrill_send(cli, send_email):
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
     assert r.status == 404, await r.text()

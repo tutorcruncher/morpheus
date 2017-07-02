@@ -51,6 +51,7 @@ class EmailSendView(ServiceView):
             pipe.expire(recipients_key, 86400)
             await pipe.execute()
             await self.sender.send_emails(recipients_key, **data)
+            logger.info('%s sending %d emails', m.company_code, len(m.recipients))
         return Response(text='201 job enqueued\n', status=201)
 
 
@@ -80,6 +81,7 @@ class SmsSendView(ServiceView):
             pipe.expire(recipients_key, 86400)
             await pipe.execute()
             await self.sender.send_smss(recipients_key, **data)
+            logger.info('%s sending %d SMSs', m.company_code, len(m.recipients))
         return self.json_response(
             status='enqueued',
             spend=spend,
@@ -101,33 +103,33 @@ class SmsValidateView(ServiceView):
 class GeneralWebhookView(View):
     es_type = None
 
-    async def update_message_status(self, m: BaseWebhook):
-            update_uri = f'messages/{self.es_type}/{m.message_id}/_update?retry_on_conflict=10'
-            try:
-                await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
-            except ApiError as e:
-                if e.status == 404:
-                    # we still return 200 here to avoid mandrill repeatedly trying to send the event
-                    logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status,
-                                extra={'data': m.values()})
-                    return
-                else:
-                    raise
-            logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-            await self.app['es'].post(
-                update_uri,
-                script={
-                    'lang': 'painless',
-                    'inline': 'ctx._source.events.add(params.event)',
-                    'params': {
-                        'event': {
-                            'ts': m.ts,
-                            'status': m.status,
-                            'extra': m.extra(),
-                        }
+    async def update_message_status(self, m: BaseWebhook, log_each=True):
+        update_uri = f'messages/{self.es_type}/{m.message_id}/_update?retry_on_conflict=10'
+        try:
+            await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
+        except ApiError as e:
+            if e.status == 404:
+                # we still return 200 here to avoid mandrill repeatedly trying to send the event
+                logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status,
+                            extra={'data': m.values()})
+                return
+            else:
+                raise
+        log_each and logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+        await self.app['es'].post(
+            update_uri,
+            script={
+                'lang': 'painless',
+                'inline': 'ctx._source.events.add(params.event)',
+                'params': {
+                    'event': {
+                        'ts': m.ts,
+                        'status': m.status,
+                        'extra': m.extra(),
                     }
                 }
-            )
+            }
+        )
 
 
 class TestWebhookView(GeneralWebhookView):
@@ -169,7 +171,9 @@ class MandrillWebhookView(GeneralWebhookView):
         except ValueError as e:
             raise HTTPBadRequest(text=f'invalid json data: {e}')
 
-        coros = [self.update_message_status(m) for m in MandrillWebhook(events=events).events]
+        mandrill_webhook = MandrillWebhook(events=events)
+        logger.info('updating %d messages', len(mandrill_webhook.events))
+        coros = [self.update_message_status(m, log_each=False) for m in mandrill_webhook.events]
         await asyncio.gather(*coros)
         return Response(text='message status updated\n')
 

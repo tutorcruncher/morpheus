@@ -520,6 +520,8 @@ class AuxActor(Actor):
 
 
 class Worker(BaseWorker):
+    max_concurrent_tasks = 5
+    timeout_seconds = 1200
     shadows = [Sender, AuxActor]
 
     def __init__(self, **kwargs):
