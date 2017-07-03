@@ -185,6 +185,7 @@ class MessageBirdWebhookView(GeneralWebhookView):
     es_type = 'sms-messagebird'
 
     async def call(self, request):
+        # TODO looks like ts might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
         await self.update_message_status(m)
         return Response(text='message status updated\n')

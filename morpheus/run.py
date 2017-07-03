@@ -17,7 +17,7 @@ logger = logging.getLogger('morpheus.main')
 
 
 async def _check_port_open(host, port, loop):
-    steps, delay = 20, 0.5
+    steps, delay = 40, 0.5
     for i in range(steps):
         try:
             await loop.create_connection(lambda: asyncio.Protocol(), host=host, port=port)
@@ -61,7 +61,8 @@ def web(wait):
     logger.info('waiting for elasticsearch and redis to come up...')
     # give es a chance to come up fully, this just prevents lots of es errors, create_indices is itself lenient
 
-    wait and sleep(4)
+    # skip wait as es and redis are generally already up and delay is causing missed requests
+    # wait and sleep(4)
     _check_services_ready(settings)
 
     _elasticsearch_setup(settings)
@@ -70,7 +71,7 @@ def web(wait):
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
     app = create_app(loop, settings)
-    run_app(app, port=8000, loop=loop, print=lambda v: None)
+    run_app(app, port=8000, loop=loop, print=lambda v: None, access_log=None)
 
 
 @cli.command()
