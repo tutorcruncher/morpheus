@@ -34,6 +34,7 @@ async def test_send_email(cli, tmpdir):
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
     assert '"from_email": "s@muelcolvin.com",\n' in msg_file
     assert '"to_address": "foobar@example.com",\n' in msg_file
+    assert '\n  "attachments": []\n' in msg_file
 
 
 async def test_webhook(cli, send_email):
@@ -440,3 +441,45 @@ async def test_invalid_mustache_body(send_email, tmpdir, cli):
     assert 'subject' not in source
     # https://github.com/noahmorrison/chevron/pull/22
     assert source['body'].startswith('Error rendering email: unclosed tag at line')
+
+
+async def test_send_with_pdf(send_email, tmpdir, cli):
+    message_id = await send_email(
+        recipients=[
+            {
+                'address': 'foobar@testing.com',
+                'pdf_attachments': [
+                    {
+                        'name': 'testing.pdf',
+                        'html': '<h1>testing</h1>',
+                    }
+                ]
+            }
+        ]
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert ('\n  "attachments": [\n'
+            '    "testing.pdf:<h1>testing</h1>"\n'
+            '  ]\n') in msg_file
+
+
+async def test_pdf_empty(send_email, tmpdir):
+    message_id = await send_email(
+        recipients=[
+            {
+                'address': 'foobar@testing.com',
+                'pdf_attachments': [
+                    {
+                        'name': 'testing.pdf',
+                        'html': '',
+                    }
+                ]
+            }
+        ]
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    print(msg_file)
+    assert '\n  "attachments": []\n' in msg_file

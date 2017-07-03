@@ -55,7 +55,7 @@ services:
     - logs
 
   pdf:
-    image: samuelcolvin/pydf:latest
+    image: samuelcolvin/pydf:v0.36
     restart: always
     volumes:
     - pdf_data:/tmp/pydf_cache

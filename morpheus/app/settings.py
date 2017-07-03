@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     user_auth_key: bytes = b'insecure'
     admin_basic_auth_password = 'testing'
     test_output: Path = None
-    pdf_generation_url: NoneStr = 'http://pdf/generate.pdf'
+    pdf_generation_url: str = 'http://pdf/generate.pdf'
     local_api_url: str = 'http://localhost:8000'
     public_local_api_url: str = 'http://localhost:5000'
 

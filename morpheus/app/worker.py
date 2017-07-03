@@ -162,6 +162,9 @@ class Sender(Actor):
         email_info = await self._render_email(j)
         if not email_info:
             return
+        main_logger.info('send to "%s" subject="%s" body=%d attachments=[%s]',
+                         j.address, email_info.subject, len(email_info.html_body),
+                         ', '.join(f'{a["name"]}:{len(a["html"])}' for a in j.pdf_attachments))
         data = {
             'async': True,
             'message': dict(
@@ -185,11 +188,7 @@ class Sender(Actor):
                 tags=j.tags,
                 inline_css=True,
                 important=j.important,
-                attachments=[dict(
-                    type='application/pdf',
-                    name=a['name'],
-                    content=await self._generate_base64_pdf(a['html']),
-                ) for a in j.pdf_attachments]
+                attachments=[a async for a in self._generate_base64_pdf(j.pdf_attachments)]
             ),
         }
         send_ts = datetime.utcnow()
@@ -216,11 +215,8 @@ class Sender(Actor):
             to_name=email_info.full_name,
             tags=j.tags,
             important=j.important,
-            attachments=[dict(
-                type='application/pdf',
-                name=a['name'],
-                content=(await self._generate_base64_pdf(a['html']))[:20] + '...',
-            ) for a in j.pdf_attachments]
+            attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode():.40}'
+                         async for a in self._generate_base64_pdf(j.pdf_attachments)],
         )
         msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_id}-{j.address}')
         send_ts = datetime.utcnow()
@@ -261,21 +257,25 @@ class Sender(Actor):
                 attachments=[a['name'] for a in j.pdf_attachments]
             )
 
-    async def _generate_base64_pdf(self, html):
-        if not self.settings.pdf_generation_url:
-            return 'no-pdf-generated'
+    async def _generate_base64_pdf(self, pdf_attachments):
         headers = dict(
             pdf_page_size='A4',
             pdf_zoom='1.25',
             pdf_margin_left='8mm',
             pdf_margin_right='8mm',
         )
-        async with self.session.get(self.settings.pdf_generation_url, data=html, headers=headers) as r:
-            if r.status != 200:
-                data = await r.text()
-                raise RuntimeError(f'error generating pdf {r.status}, data: {data}')
-            pdf_content = await r.read()
-        return base64.b64encode(pdf_content).decode()
+        for a in pdf_attachments:
+            async with self.session.get(self.settings.pdf_generation_url, data=a['html'], headers=headers) as r:
+                if r.status == 200:
+                    pdf_content = await r.read()
+                    yield dict(
+                        type='application/pdf',
+                        name=a['name'],
+                        content=base64.b64encode(pdf_content).decode(),
+                    )
+                else:
+                    data = await r.text()
+                    main_logger.warning('error generating pdf %s, data: %s', r.status, data)
 
     async def _store_email(self, uid, send_ts, j: EmailJob, email_info: EmailInfo):
         await self.es.post(

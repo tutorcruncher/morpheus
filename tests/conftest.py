@@ -77,6 +77,15 @@ async def messagebird_pricing(request):
     ])
 
 
+async def generate_pdf(request):
+    assert request.headers['pdf_zoom'] == '1.25'
+    data = await request.read()
+    if not data:
+        return Response(text='request was empty', status=400)
+    else:
+        return Response(body=data, content_type='application/pdf')
+
+
 async def logging_middleware(app, handler):
     async def _handler(request):
         r = await handler(request)
@@ -93,6 +102,7 @@ def mock_external(loop, test_server):
     app.router.add_get('/messagebird/lookup/{number}', messagebird_lookup)
     app.router.add_post('/messagebird/messages', messagebird_send)
     app.router.add_get('/messagebird-pricing', messagebird_pricing)
+    app.router.add_route('*', '/generate.pdf', generate_pdf)
     app.update(
         request_log=[],
     )
@@ -106,6 +116,7 @@ def settings(tmpdir, mock_external):
     return Settings(
         auth_key='testing-key',
         test_output=str(tmpdir),
+        pdf_generation_url=mock_external.app['server_name'] + '/generate.pdf',
         mandrill_key='good-mandrill-testing-key',
         log_level='ERROR',
         mandrill_url=mock_external.app['server_name'] + '/mandrill',
