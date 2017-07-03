@@ -83,14 +83,17 @@ async def test_webhook_missing(cli, send_email):
 
 
 async def test_mandrill_send(cli, send_email):
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobaratestingcom', allowed_statuses='*')
     assert r.status == 404, await r.text()
-    await send_email(method='email-mandrill')
+    await send_email(
+        method='email-mandrill',
+        recipients=[{'address': 'foobar_a@testing.com'}]
+    )
 
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobartestingcom', allowed_statuses='*')
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobaratestingcom', allowed_statuses='*')
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['_source']['to_address'] == 'foobar@testing.com'
+    assert data['_source']['to_address'] == 'foobar_a@testing.com'
 
 
 async def test_mandrill_webhook(cli):
@@ -126,6 +129,19 @@ async def test_mandrill_webhook(cli):
     assert len(data['_source']['events']) == 1
     assert data['_source']['update_ts'] == 1e13
     assert data['_source']['status'] == 'open'
+
+
+async def test_mandrill_send_bad_template(cli, send_email):
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarbtestingcom', allowed_statuses='*')
+    assert r.status == 404, await r.text()
+    await send_email(
+        method='email-mandrill',
+        main_template='{{ foo } test message',
+        recipients=[{'address': 'foobar_b@testing.com'}]
+    )
+
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarbtestingcom', allowed_statuses='*')
+    assert r.status == 404, await r.text()
 
 
 async def test_send_email_headers(cli, tmpdir):

@@ -541,7 +541,7 @@ class Sender(Actor):
         return data['aggregations']['total_spend']['value']
 
 
-class AuxActor(Actor):
+class AuxActor(Actor):  # pragma: no cover
     def __init__(self, settings: Settings = None, **kwargs):
         self.settings = settings or Settings()
         self.redis_settings = self.settings.redis_settings
@@ -560,7 +560,7 @@ class AuxActor(Actor):
         await self.es.create_snapshot()
 
 
-class Worker(BaseWorker):
+class Worker(BaseWorker):  # pragma: no cover
     max_concurrent_tasks = 5
     timeout_seconds = 1200
     shadows = [Sender, AuxActor]
