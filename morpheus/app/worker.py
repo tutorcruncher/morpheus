@@ -12,6 +12,7 @@ import msgpack
 import phonenumbers
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
+from chevron import ChevronError
 from phonenumbers import parse as parse_number
 from phonenumbers import NumberParseException, PhoneNumberType, format_number, is_valid_number, number_type
 from phonenumbers.geocoder import country_name_for_number, description_for_number
@@ -158,7 +159,9 @@ class Sender(Actor):
         return jobs
 
     async def _send_mandrill(self, j: EmailJob):
-        email_info = render_email(j)
+        email_info = await self._render_email(j)
+        if not email_info:
+            return
         data = {
             'async': True,
             'message': dict(
@@ -200,7 +203,10 @@ class Sender(Actor):
         await self._store_email(data['_id'], send_ts, j, email_info)
 
     async def _send_test_email(self, j: EmailJob):
-        email_info = render_email(j)
+        email_info = await self._render_email(j)
+        if not email_info:
+            return
+
         data = dict(
             from_email=j.from_email,
             from_name=j.from_name,
@@ -233,6 +239,27 @@ class Sender(Actor):
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
         await self._store_email(msg_id, send_ts, j, email_info)
+
+    async def _render_email(self, j: EmailJob):
+        try:
+            return render_email(j)
+        except ChevronError as e:
+            await self.es.post(
+                f'messages/{j.send_method}',
+                company=j.company_code,
+                send_ts=datetime.utcnow(),
+                update_ts=datetime.utcnow(),
+                status=MessageStatus.render_failed,
+                group_id=j.group_id,
+                to_first_name=j.first_name,
+                to_last_name=j.last_name,
+                to_address=j.address,
+                from_email=j.from_email,
+                from_name=j.from_name,
+                tags=j.tags,
+                body=f'Error rendering email: {e}',
+                attachments=[a['name'] for a in j.pdf_attachments]
+            )
 
     async def _generate_base64_pdf(self, html):
         if not self.settings.pdf_generation_url:
@@ -354,16 +381,32 @@ class Sender(Actor):
                 jobs += 1
         return jobs
 
-    def _sms_get_number_message(self, j: SmsJob):
+    async def _sms_get_number_message(self, j: SmsJob):
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
         if not number_info or not number_info.is_mobile:
             main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
             return None, None
 
-        return number_info, chevron.render(j.main_template, data=j.context)
+        try:
+            msg = chevron.render(j.main_template, data=j.context)
+        except ChevronError as e:
+            await self.es.post(
+                f'messages/{j.send_method}',
+                company=j.company_code,
+                send_ts=datetime.utcnow(),
+                update_ts=datetime.utcnow(),
+                status=MessageStatus.render_failed,
+                group_id=j.group_id,
+                from_name=j.from_name,
+                tags=j.tags,
+                body=f'Error rendering SMS: {e}',
+            )
+            return None, None
+        else:
+            return number_info, msg
 
     async def _test_send_sms(self, j: SmsJob):
-        number, message = self._sms_get_number_message(j)
+        number, message = await self._sms_get_number_message(j)
         if not number:
             return
 
@@ -440,7 +483,7 @@ class Sender(Actor):
             return await self._messagebird_get_mcc_cost(redis, mcc)
 
     async def _messagebird_send_sms(self, j: SmsJob):
-        number, message = self._sms_get_number_message(j)
+        number, message = await self._sms_get_number_message(j)
         if not number:
             return
 

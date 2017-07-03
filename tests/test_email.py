@@ -398,3 +398,45 @@ async def test_custom_sass(send_email, tmpdir):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert '.foo .bar{color:black;width:10px}' in msg_file
     assert '#body{-webkit-font-smoothing' not in msg_file
+
+
+async def test_invalid_mustache_subject(send_email, tmpdir, cli):
+    message_id = await send_email(
+        subject_template='{{ foo } test message',
+        context={'foo': 'FOO'},
+        company_code='test_invalid_mustache_subject',
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    assert '\nsubject: {{ foo } test message\n' in msg_file
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_invalid_mustache_subject')
+    response_data = await r.json()
+    # import json
+    # print(json.dumps(response_data, indent=2))
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'send'
+    assert source['subject'] == '{{ foo } test message'
+    assert source['body'] == '<body>\n\n</body>'
+
+
+async def test_invalid_mustache_body(send_email, tmpdir, cli):
+    await send_email(
+        main_template='{{ foo } test message',
+        context={'foo': 'FOO'},
+        company_code='test_invalid_mustache_body',
+    )
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_invalid_mustache_body')
+    response_data = await r.json()
+    import json
+    print(json.dumps(response_data, indent=2))
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'render-failed'
+    assert 'subject' not in source
+    # https://github.com/noahmorrison/chevron/pull/22
+    assert source['body'].startswith('Error rendering email: unclosed tag at line')

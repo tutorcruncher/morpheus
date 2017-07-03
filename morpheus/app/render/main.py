@@ -4,6 +4,7 @@ from typing import Dict, NamedTuple
 
 import chevron
 import sass
+from chevron import ChevronError
 from misaka import HtmlRenderer, Markdown
 
 markdown = Markdown(HtmlRenderer(flags=['hard-wrap']), extensions=['no-intra-emphasis'])
@@ -70,7 +71,11 @@ def render_email(m: MessageDef) -> EmailInfo:
     m.context.setdefault('recipient_name', full_name)
     m.context.setdefault('recipient_first_name', m.first_name or full_name)
     m.context.setdefault('recipient_last_name', m.last_name)
-    subject = chevron.render(m.subject_template, data=m.context)
+    try:
+        subject = chevron.render(m.subject_template, data=m.context)
+    except ChevronError as e:
+        logger.warning('invalid subject template: %s', e)
+        subject = m.subject_template
     m.context.update(
         email_subject=subject,
         **dict(_update_context(m.context, m.mustache_partials, m.macros))

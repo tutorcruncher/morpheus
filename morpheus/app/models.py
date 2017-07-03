@@ -61,6 +61,8 @@ class MessageStatus(str, Enum):
     """
     Combined MandrillMessageStatus and MessageBirdMessageStatus
     """
+    render_failed = 'render-failed'
+
     send = 'send'
     deferral = 'deferral'
     hard_bounce = 'hard_bounce'

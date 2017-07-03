@@ -220,3 +220,24 @@ async def test_messagebird_webhook(cli, mock_external):
     assert source['status'] == 'delivered'
     assert len(source['events']) == 1
     assert source['events'][0]['status'] == 'delivered'
+
+
+async def test_failed_render(cli, tmpdir):
+    data = {
+        'uid': 'x' * 20,
+        'company_code': 'test_failed_render',
+        'method': 'sms-test',
+        'context': {'foo': 'FOO'},
+        'main_template': 'this is a message {{ foo }',
+        'recipients': [{'number': '07891123856'}]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert len(tmpdir.listdir()) == 0
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/sms-test/_search?q=company:test_failed_render')
+    response_data = await r.json()
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'render-failed'
