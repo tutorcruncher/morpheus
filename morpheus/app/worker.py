@@ -197,8 +197,6 @@ class Sender(Actor):
         assert len(data) == 1, data
         data = data[0]
         assert data['email'] == j.address, data
-        if data['status'] not in ('sent', 'queued'):
-            main_logger.warning('message not sent %s %s response: %s', j.group_id, j.address, data)
         await self._store_email(data['_id'], send_ts, j, email_info)
 
     async def _send_test_email(self, j: EmailJob):
@@ -229,7 +227,7 @@ class Sender(Actor):
             f'content:\n'
             f'{email_info.html_body}\n'
         )
-        if self.settings.test_output:
+        if self.settings.test_output:  # pragma: no branch
             Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
@@ -425,7 +423,7 @@ class Sender(Actor):
             f'message:\n'
             f'{message}\n'
         )
-        if self.settings.test_output:
+        if self.settings.test_output:  # pragma: no branch
             Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
