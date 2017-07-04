@@ -484,7 +484,7 @@ class MessageStatsView(AuthView):
             '_': {
                 'filter': {
                     'range': {
-                        'update_ts': {'gte': 'now-1m'}
+                        'update_ts': {'gte': 'now-10m'}
                     }
                 },
                 # TODO allow more filtering here, filter to last X days.
@@ -498,7 +498,7 @@ class MessageStatsView(AuthView):
                                 ]
                             }
                         }
-                    } for method, status in product(SendMethod, MessageStatus)
+                    } for status, method in product(MessageStatus, SendMethod)
                 }
             }
         }
@@ -523,5 +523,5 @@ class MessageStatsView(AuthView):
                             count=v['doc_count']
                         ))
                 response_data = ujson.dumps(result).encode()
-                await redis.setex(cache_key, 58, response_data)
+                await redis.setex(cache_key, 598, response_data)
         return Response(body=response_data, content_type='application/json')
