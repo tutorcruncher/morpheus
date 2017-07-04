@@ -70,6 +70,11 @@ async def test_run_snapshot(cli, settings, loop):
     assert len(data['snapshots']) == snapshots_before + 1
 
 
+async def test_stats_unauthorised(cli):
+    r = await cli.get('/request-stats/')
+    assert r.status == 403, await r.text()
+
+
 async def test_stats(cli):
     async with await cli.server.app['sender'].get_redis_conn() as redis:
         await redis.delete(cli.server.app['stats_key'])

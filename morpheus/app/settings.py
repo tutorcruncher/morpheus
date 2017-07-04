@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # WARNING without setting a token here the stats page will be publicly viewable
     stats_token: str = ''
-    max_stats = int(1e5)
+    max_request_stats = int(1e5)
 
     # used for es snapshots
     s3_access_key: str = None

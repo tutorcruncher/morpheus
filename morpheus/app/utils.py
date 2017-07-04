@@ -130,7 +130,7 @@ class AuthView(View):
     async def authenticate(self, request):
         auth_token = getattr(self.settings, self.auth_token_field)
         if not secrets.compare_digest(auth_token, request.headers.get('Authorization', '')):
-            raise HTTPForbidden(text='Invalid "Authorization" header')
+            raise HTTPForbidden(text='Invalid Authorization header')
 
 
 class ServiceView(AuthView):

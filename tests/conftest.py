@@ -130,7 +130,7 @@ def settings(tmpdir, mock_external):
         messagebird_pricing_username='mb-username',
         messagebird_pricing_password='mb-password',
         stats_token='test-token',
-        max_stats=10,
+        max_request_stats=10,
     )
 
 

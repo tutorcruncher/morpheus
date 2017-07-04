@@ -17,9 +17,9 @@ async def stats_middleware(app, handler):
                 redis.lpush(redis_key, f'{time_taken:0.4f}:{status}:{request.method}:{route}'),
                 redis.llen(redis_key),
             )
-            if list_len > app['settings'].max_stats:
-                # to avoid filling up redis we empty prevent the list length getting too long
-                await redis.ltrim(redis_key, int(app['settings'].max_stats / 5), -1)
+            if list_len > app['settings'].max_request_stats:
+                # to avoid filling up redis we trim the list to prevent it getting too long
+                await redis.ltrim(redis_key, int(app['settings'].max_request_stats / 5), -1)
 
     async def _handler(request):
         try:
