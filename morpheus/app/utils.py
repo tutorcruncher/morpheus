@@ -104,7 +104,7 @@ class View:
         return await self.request.json(loads=ujson.loads)
 
     def get_arg_int(self, name, default=None):
-        v = self.request.query(name)
+        v = self.request.query.get(name)
         if v is None:
             return default
         try:

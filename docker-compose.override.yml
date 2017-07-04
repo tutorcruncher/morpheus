@@ -14,14 +14,3 @@ services:
     - 5000:80
     depends_on:
     - web
-
-  telegraf:
-    build: telegraf
-    hostname: morpheus-telegraf
-    volumes:
-    - /var/run/docker.sock:/var/run/docker.sock:ro
-    - /var/run/utmp:/var/run/utmp:ro
-    environment:
-      STATS_TOKEN: ${APP_STATS_TOKEN}
-    pid: host
-    restart: always
