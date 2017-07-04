@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import hmac
@@ -170,11 +169,13 @@ class GeneralWebhookView(View):
         update_uri = f'messages/{self.es_type}/{m.message_id}/_update?retry_on_conflict=10'
         try:
             await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
-        except ApiError as e:
-            if e.status == 404:
-                # we still return 200 here to avoid mandrill repeatedly trying to send the event
-                logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status,
-                            extra={'data': m.values()})
+        except ApiError as e:  # pragma: no cover
+            # we still return 200 here if we know the problem to avoid mandrill repeatedly trying to send the event
+            if e.status == 409:
+                logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+                return
+            elif e.status == 404:
+                logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
                 return
             else:
                 raise
@@ -236,8 +237,9 @@ class MandrillWebhookView(GeneralWebhookView):
 
         mandrill_webhook = MandrillWebhook(events=events)
         logger.info('updating %d messages', len(mandrill_webhook.events))
-        coros = [self.update_message_status(m, log_each=False) for m in mandrill_webhook.events]
-        await asyncio.gather(*coros)
+        # do in a loop to avoid elastic search conflict
+        for m in mandrill_webhook.events:
+            await self.update_message_status(m, log_each=False)
         return Response(text='message status updated\n')
 
 
