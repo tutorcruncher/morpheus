@@ -92,7 +92,8 @@ def create_app(loop, settings: Settings=None):
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
         webhook_auth_key=None,
         morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
-        stats_key='request-stats',
+        stats_list_key='request-stats-list',
+        stats_start_key='request-stats-start',
     )
 
     app.on_startup.append(app_startup)

@@ -77,12 +77,13 @@ async def test_stats_unauthorised(cli):
 
 async def test_stats(cli):
     async with await cli.server.app['sender'].get_redis_conn() as redis:
-        await redis.delete(cli.server.app['stats_key'])
+        await redis.delete(cli.server.app['stats_list_key'])
+        await redis.delete(cli.server.app['stats_start_key'])
     await asyncio.gather(*(cli.get('/') for _ in range(5)))
     await cli.post('/')
 
     async with await cli.server.app['sender'].get_redis_conn() as redis:
-        assert 6 == await redis.llen(cli.server.app['stats_key'])
+        assert 6 == await redis.llen(cli.server.app['stats_list_key'])
 
     r = await cli.get('/request-stats/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
@@ -94,7 +95,7 @@ async def test_stats(cli):
     assert good['route'] == 'index'
 
     async with await cli.server.app['sender'].get_redis_conn() as redis:
-        keys = await redis.llen(cli.server.app['stats_key'])
+        keys = await redis.llen(cli.server.app['stats_list_key'])
         # /request-stats/ request may or may not be included here
         assert keys in (0, 1)
 
@@ -107,7 +108,7 @@ async def test_stats(cli):
 
 async def test_stats_reset(cli):
     async with await cli.server.app['sender'].get_redis_conn() as redis:
-        await redis.delete(cli.server.app['stats_key'])
+        await redis.delete(cli.server.app['stats_list_key'])
     for _ in range(30):
         await cli.get('/')
     r = await cli.get('/request-stats/', headers={'Authorization': 'test-token'})

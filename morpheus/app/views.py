@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 from html import escape
 from statistics import mean, stdev
+from time import time
 
 import chevron
 import msgpack
@@ -37,7 +38,7 @@ class StatsView(AuthView):
     auth_token_field = 'stats_token'
 
     @classmethod
-    def process_values(cls, values):
+    def process_values(cls, values, time_taken):
         groups = {}
         for v in values:
             time, tags = v.decode().split(':', 1)
@@ -55,7 +56,9 @@ class StatsView(AuthView):
                 status=status,
                 method=method,
                 route=route,
+                stats_interval=time_taken,
                 request_count=times_count,
+                request_per_second=times_count / time_taken,
                 time_min=times[0],
                 time_max=times[-1],
                 time_mean=mean(times),
@@ -70,15 +73,23 @@ class StatsView(AuthView):
         return ujson.dumps(data).encode()
 
     async def call(self, request):
-        stats_key, stats_cache_key = self.app['stats_key'], 'request-stats-cache'
+        stats_list_key, stats_start_key = self.app['stats_list_key'], self.app['stats_start_key']
+        stats_cache_key = 'request-stats-cache'
         async with await self.sender.get_redis_conn() as redis:
             response_data = await redis.get(stats_cache_key)
             if not response_data:
+                finish_time = time()
                 tr = redis.multi_exec()
-                tr.lrange(stats_key, 0, -1)
-                tr.delete(stats_key)
-                values, _ = await tr.execute()
-                response_data = self.process_values(values)
+                tr.lrange(stats_list_key, 0, -1)
+                tr.delete(stats_list_key)
+                tr.get(stats_start_key)
+                tr.set(stats_start_key, finish_time)
+                values, _, start_time, _ = await tr.execute()
+                if start_time:
+                    time_taken = finish_time - float(start_time)
+                else:
+                    time_taken = 60  # completely random guess
+                response_data = self.process_values(values, time_taken)
                 await redis.setex(stats_cache_key, 8, response_data)
         return Response(body=response_data, content_type='application/json')
 

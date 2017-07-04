@@ -10,7 +10,7 @@ async def stats_middleware(app, handler):
         sender = app['sender']
         route = request.match_info.route.name or request.path
         status = f'{int(response_status/100)}XX'
-        redis_key = app['stats_key']
+        redis_key = app['stats_list_key']
         async with await sender.get_redis_conn() as redis:
             # we put route_name last as it could have colons in it
             _, list_len = await asyncio.gather(
@@ -18,8 +18,11 @@ async def stats_middleware(app, handler):
                 redis.llen(redis_key),
             )
             if list_len > app['settings'].max_request_stats:
-                # to avoid filling up redis we trim the list to prevent it getting too long
-                await redis.ltrim(redis_key, int(app['settings'].max_request_stats / 5), -1)
+                # to avoid filling up redis we nuke this data if it exceeds the max length
+                tr = redis.multi_exec()
+                tr.delete(redis_key)
+                tr.set(app['stats_start_key'], time())
+                await tr.execute()
 
     async def _handler(request):
         try:
