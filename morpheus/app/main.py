@@ -6,13 +6,13 @@ from aiohttp.web import Application
 
 from .es import ElasticSearch
 from .logs import setup_logging
-from .middleware import ErrorLoggingMiddleware
+from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
 from .settings import Settings
 from .utils import Mandrill, MorpheusUserApi
 from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, EmailSendView, MandrillWebhookView,
-                    MessageBirdWebhookView, SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView,
-                    UserMessagePreviewView, UserMessageView, index)
+                    MessageBirdWebhookView, SmsSendView, SmsValidateView, StatsView, TestWebhookView,
+                    UserAggregationView, UserMessagePreviewView, UserMessageView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -80,7 +80,10 @@ async def app_cleanup(app):
 def create_app(loop, settings: Settings=None):
     settings = settings or Settings()
     setup_logging(settings)
-    app = Application(client_max_size=1024**2*100, middlewares=(ErrorLoggingMiddleware(),))
+    app = Application(
+        client_max_size=1024**2*100,
+        middlewares=(stats_middleware, ErrorLoggingMiddleware())
+    )
 
     app.update(
         settings=settings,
@@ -89,6 +92,7 @@ def create_app(loop, settings: Settings=None):
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
         webhook_auth_key=None,
         morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
+        stats_key='request-stats',
     )
 
     app.on_startup.append(app_startup)
@@ -112,5 +116,7 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
     app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')
+
+    app.router.add_get('/stats/', StatsView.view(), name='stats')
     app.router.add_static('/', str(THIS_DIR / 'static'))
     return app

@@ -7,9 +7,11 @@ import logging
 import re
 from datetime import datetime
 from html import escape
+from statistics import mean, stdev
 
 import chevron
 import msgpack
+import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
 from arq.utils import from_unix_ms
 from pydantic.datetime_parse import parse_datetime
@@ -19,7 +21,7 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (BaseWebhook, EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageBirdWebHook,
                      MessageStatus, SendMethod, SmsNumbersModel, SmsSendModel)
-from .utils import THIS_DIR, ApiError, BasicAuthView, ServiceView, UserView, View
+from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, ServiceView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
 
@@ -29,6 +31,56 @@ async def index(request):
     settings = request.app['settings']
     ctx = {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
     return Response(text=chevron.render(template, data=ctx), content_type='text/html')
+
+
+class StatsView(AuthView):
+    auth_token_field = 'stats_token'
+
+    @classmethod
+    def process_values(cls, values):
+        groups = {}
+        for v in values:
+            time, tags = v.decode().split(':', 1)
+            time = float(time)
+            if tags in groups:
+                groups[tags].add(time)
+            else:
+                groups[tags] = {time}
+        data = []
+        for tags, times in groups.items():
+            status, method, route = tags.split(':', 2)
+            times = sorted(times)
+            times_count = len(times)
+            data_ = dict(
+                status=status,
+                method=method,
+                route=route,
+                request_count=times_count,
+                time_min=times[0],
+                time_max=times[-1],
+                time_mean=mean(times),
+            )
+            if times_count > 2:
+                data_.update(
+                    time_stdev=stdev(times),
+                    time_90=times[int(times_count*0.9)],
+                    time_95=times[int(times_count*0.95)],
+                )
+            data.append(data_)
+        return ujson.dumps(data).encode()
+
+    async def call(self, request):
+        stats_key, stats_cache_key = self.app['stats_key'], 'request-stats-cache'
+        async with await self.sender.get_redis_conn() as redis:
+            response_data = await redis.get(stats_cache_key)
+            if not response_data:
+                tr = redis.multi_exec()
+                tr.lrange(stats_key, 0, -1)
+                tr.delete(stats_key)
+                values, _ = await tr.execute()
+                response_data = self.process_values(values)
+                await redis.setex(stats_cache_key, 8, response_data)
+        return Response(body=response_data, content_type='application/json')
 
 
 class EmailSendView(ServiceView):
@@ -167,7 +219,7 @@ class MandrillWebhookView(GeneralWebhookView):
         if not hmac.compare_digest(sig_generated, sig_given):
             raise HTTPForbidden(text='invalid signature')
         try:
-            events = json.loads(event_data)
+            events = ujson.loads(event_data)
         except ValueError as e:
             raise HTTPBadRequest(text=f'invalid json data: {e}')
 

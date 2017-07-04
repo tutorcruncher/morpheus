@@ -1,6 +1,45 @@
+import asyncio
 import logging
+from time import time
 
 from aiohttp.web_exceptions import HTTPException, HTTPInternalServerError
+
+
+async def stats_middleware(app, handler):
+    async def _save_request(time_taken, request, response_status):
+        sender = app['sender']
+        route = request.match_info.route.name or request.path
+        status = f'{int(response_status/100)}XX'
+        redis_key = app['stats_key']
+        async with await sender.get_redis_conn() as redis:
+            # we put route_name last as it could have colons in it
+            _, list_len = await asyncio.gather(
+                redis.lpush(redis_key, f'{time_taken:0.4f}:{status}:{request.method}:{route}'),
+                redis.llen(redis_key),
+            )
+            if list_len > 1e5:
+                # to avoid filling up redis we empty prevent the list length getting too long
+                await redis.ltrim(redis_key, int(1e5 / 5), -1)
+
+    async def _handler(request):
+        try:
+            start = float(request.headers.get('X-Request-Start', '.'))
+        except ValueError:
+            start = request.time_service.time()
+        http_exception = getattr(request.match_info, 'http_exception', None)
+        try:
+            if http_exception:
+                raise http_exception
+            else:
+                r = await handler(request)
+        except HTTPException as e:
+            app.loop.create_task(_save_request(time() - start, request, e.status))
+            raise
+        else:
+            app.loop.create_task(_save_request(time() - start, request, r.status))
+            return r
+
+    return _handler
 
 
 class ErrorLoggingMiddleware:
