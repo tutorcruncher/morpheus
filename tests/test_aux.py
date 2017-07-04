@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import pytest
@@ -67,3 +68,45 @@ async def test_run_snapshot(cli, settings, loop):
     print(await r.text())
     data = await r.json()
     assert len(data['snapshots']) == snapshots_before + 1
+
+
+async def test_stats(cli):
+    async with await cli.server.app['sender'].get_redis_conn() as redis:
+        await redis.delete(cli.server.app['stats_key'])
+    await asyncio.gather(*(cli.get('/') for _ in range(5)))
+    await cli.post('/')
+
+    async with await cli.server.app['sender'].get_redis_conn() as redis:
+        assert 6 == await redis.llen(cli.server.app['stats_key'])
+
+    r = await cli.get('/stats/', headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert len(data) == 2
+    good = next(d for d in data if d['status'] == '2XX')
+    assert good['request_count'] == 5
+    assert good['method'] == 'GET'
+    assert good['route'] == 'index'
+
+    async with await cli.server.app['sender'].get_redis_conn() as redis:
+        keys = await redis.llen(cli.server.app['stats_key'])
+        # /stats/ request may or may not be included here
+        assert keys in (0, 1)
+
+    # used cached value
+    r = await cli.get('/stats/', headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert len(data) == 2
+
+
+async def test_stats_reset(cli):
+    async with await cli.server.app['sender'].get_redis_conn() as redis:
+        await redis.delete(cli.server.app['stats_key'])
+    for _ in range(30):
+        await cli.get('/')
+    r = await cli.get('/stats/', headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert len(data) == 1
+    assert data[0]['request_count'] < 10

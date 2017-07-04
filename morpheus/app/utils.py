@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
 from pathlib import Path
-from random import random
 from typing import Optional, Type  # noqa
 from urllib.parse import urlencode
 
@@ -131,8 +130,6 @@ class AuthView(View):
     async def authenticate(self, request):
         auth_token = getattr(self.settings, self.auth_token_field)
         if not secrets.compare_digest(auth_token, request.headers.get('Authorization', '')):
-            # avoid the need for constant time compare on auth key
-            await asyncio.sleep(random())
             raise HTTPForbidden(text='Invalid "Authorization" header')
 
 
@@ -154,7 +151,6 @@ class UserView(View):
         expected_sig = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
         signature = request.query.get('signature', '-')
         if not secrets.compare_digest(expected_sig, signature):
-            await asyncio.sleep(random())
             raise HTTPForbidden(text='Invalid token')
 
         self.session = Session(
@@ -177,7 +173,6 @@ class BasicAuthView(View):
             password = ''
 
         if not secrets.compare_digest(password, self.settings.admin_basic_auth_password):
-            await asyncio.sleep(random())
             raise HTTPUnauthorized(text='Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
 
 
