@@ -18,10 +18,10 @@ from phonenumbers import NumberParseException, PhoneNumberType, format_number, i
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 
 from .es import ElasticSearch
-from .models import THIS_DIR, EmailSendMethod, MessageStatus, SmsSendMethod
+from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
 from .settings import Settings
-from .utils import Mandrill, MessageBird
+from .utils import ApiError, Mandrill, MessageBird
 
 test_logger = logging.getLogger('morpheus.worker.test')
 main_logger = logging.getLogger('morpheus.worker')
@@ -539,6 +539,44 @@ class Sender(Actor):
         )
         data = await r.json()
         return data['aggregations']['total_spend']['value']
+
+    @concurrent
+    async def update_mandrill_webhooks(self, events):
+        mandrill_webhook = MandrillWebhook(events=events)
+        main_logger.info('updating %d messages', len(mandrill_webhook.events))
+        # do in a loop to avoid elastic search conflict
+        for m in mandrill_webhook.events:
+            await self.update_message_status('email-mandrill', m, log_each=False)
+
+    async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
+        update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=10'
+        try:
+            await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
+        except ApiError as e:  # pragma: no cover
+            # we still return 200 here if we know the problem to avoid mandrill repeatedly trying to send the event
+            if e.status == 409:
+                main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+                return
+            elif e.status == 404:
+                main_logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+                return
+            else:
+                raise
+        log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+        await self.es.post(
+            update_uri,
+            script={
+                'lang': 'painless',
+                'inline': 'ctx._source.events.add(params.event)',
+                'params': {
+                    'event': {
+                        'ts': m.ts,
+                        'status': m.status,
+                        'extra': m.extra(),
+                    }
+                }
+            }
+        )
 
 
 class AuxActor(Actor):  # pragma: no cover

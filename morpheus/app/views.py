@@ -19,8 +19,8 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
-from .models import (BaseWebhook, EmailSendModel, MandrillSingleWebhook, MandrillWebhook, MessageBirdWebHook,
-                     MessageStatus, SendMethod, SmsNumbersModel, SmsSendModel)
+from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
+                     SmsNumbersModel, SmsSendModel)
 from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, ServiceView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
@@ -162,57 +162,21 @@ class SmsValidateView(ServiceView):
         return v and dict(v._asdict())
 
 
-class GeneralWebhookView(View):
-    es_type = None
-
-    async def update_message_status(self, m: BaseWebhook, log_each=True):
-        update_uri = f'messages/{self.es_type}/{m.message_id}/_update?retry_on_conflict=10'
-        try:
-            await self.app['es'].post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
-        except ApiError as e:  # pragma: no cover
-            # we still return 200 here if we know the problem to avoid mandrill repeatedly trying to send the event
-            if e.status == 409:
-                logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-                return
-            elif e.status == 404:
-                logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-                return
-            else:
-                raise
-        log_each and logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-        await self.app['es'].post(
-            update_uri,
-            script={
-                'lang': 'painless',
-                'inline': 'ctx._source.events.add(params.event)',
-                'params': {
-                    'event': {
-                        'ts': m.ts,
-                        'status': m.status,
-                        'extra': m.extra(),
-                    }
-                }
-            }
-        )
-
-
-class TestWebhookView(GeneralWebhookView):
+class TestWebhookView(View):
     """
     Simple view to update messages faux-sent with email-test
     """
-    es_type = 'email-test'
 
     async def call(self, request):
         m: MandrillSingleWebhook = await self.request_data(MandrillSingleWebhook)
-        await self.update_message_status(m)
+        await self.sender.update_message_status('email-test', m)
         return Response(text='message status updated\n')
 
 
-class MandrillWebhookView(GeneralWebhookView):
+class MandrillWebhookView(View):
     """
     Update messages sent with mandrill
     """
-    es_type = 'email-mandrill'
 
     async def call(self, request):
         try:
@@ -235,24 +199,18 @@ class MandrillWebhookView(GeneralWebhookView):
         except ValueError as e:
             raise HTTPBadRequest(text=f'invalid json data: {e}')
 
-        mandrill_webhook = MandrillWebhook(events=events)
-        logger.info('updating %d messages', len(mandrill_webhook.events))
-        # do in a loop to avoid elastic search conflict
-        for m in mandrill_webhook.events:
-            await self.update_message_status(m, log_each=False)
+        await self.sender.update_mandrill_webhooks(events)
         return Response(text='message status updated\n')
 
 
-class MessageBirdWebhookView(GeneralWebhookView):
+class MessageBirdWebhookView(View):
     """
     Update messages sent with message bird
     """
-    es_type = 'sms-messagebird'
-
     async def call(self, request):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
-        await self.update_message_status(m)
+        await self.sender.update_message_status('sms-messagebird', m)
         return Response(text='message status updated\n')
 
 
