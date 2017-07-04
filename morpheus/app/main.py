@@ -117,6 +117,6 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
     app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')
 
-    app.router.add_get('/stats/', StatsView.view(), name='stats')
+    app.router.add_get('/request-stats/', StatsView.view(), name='stats')
     app.router.add_static('/', str(THIS_DIR / 'static'))
     return app

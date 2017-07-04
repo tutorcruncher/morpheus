@@ -79,7 +79,7 @@ async def test_stats(cli):
     async with await cli.server.app['sender'].get_redis_conn() as redis:
         assert 6 == await redis.llen(cli.server.app['stats_key'])
 
-    r = await cli.get('/stats/', headers={'Authorization': 'test-token'})
+    r = await cli.get('/request-stats/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
     assert len(data) == 2
@@ -90,11 +90,11 @@ async def test_stats(cli):
 
     async with await cli.server.app['sender'].get_redis_conn() as redis:
         keys = await redis.llen(cli.server.app['stats_key'])
-        # /stats/ request may or may not be included here
+        # /request-stats/ request may or may not be included here
         assert keys in (0, 1)
 
     # used cached value
-    r = await cli.get('/stats/', headers={'Authorization': 'test-token'})
+    r = await cli.get('/request-stats/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
     assert len(data) == 2
@@ -105,7 +105,7 @@ async def test_stats_reset(cli):
         await redis.delete(cli.server.app['stats_key'])
     for _ in range(30):
         await cli.get('/')
-    r = await cli.get('/stats/', headers={'Authorization': 'test-token'})
+    r = await cli.get('/request-stats/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
     assert len(data) == 1
