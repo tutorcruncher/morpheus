@@ -9,3 +9,4 @@ msgpack-python==0.4.8
 phonenumbers==8.5.2
 pydantic==0.3
 raven==6.1.0
+ujson==1.35

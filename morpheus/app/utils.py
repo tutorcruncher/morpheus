@@ -10,11 +10,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
 from pathlib import Path
-from random import random
 from typing import Optional, Type  # noqa
 from urllib.parse import urlencode
 
 import msgpack
+import ujson
 from aiohttp import ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
@@ -100,10 +100,10 @@ class View:
         return msgpack.unpackb(data, encoding='utf8')
 
     async def decode_json(self):
-        return await self.request.json()
+        return await self.request.json(loads=ujson.loads)
 
     def get_arg_int(self, name, default=None):
-        v = self.request.GET.get(name)
+        v = self.request.query.get(name)
         if v is None:
             return default
         try:
@@ -121,15 +121,23 @@ class View:
         )
 
 
-class ServiceView(View):
+class AuthView(View):
+    """
+    token authentication with no "Token " prefix
+    """
+    auth_token_field = None
+
+    async def authenticate(self, request):
+        auth_token = getattr(self.settings, self.auth_token_field)
+        if not secrets.compare_digest(auth_token, request.headers.get('Authorization', '')):
+            raise HTTPForbidden(text='Invalid Authorization header')
+
+
+class ServiceView(AuthView):
     """
     Views used by services. Services are in charge and can be trusted to do "whatever they like".
     """
-    async def authenticate(self, request):
-        if not secrets.compare_digest(self.settings.auth_key, request.headers.get('Authorization', '')):
-            # avoid the need for constant time compare on auth key
-            await asyncio.sleep(random())
-            raise HTTPForbidden(text='Invalid "Authorization" header')
+    auth_token_field = 'auth_key'
 
 
 class UserView(View):
@@ -143,7 +151,6 @@ class UserView(View):
         expected_sig = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
         signature = request.query.get('signature', '-')
         if not secrets.compare_digest(expected_sig, signature):
-            await asyncio.sleep(random())
             raise HTTPForbidden(text='Invalid token')
 
         self.session = Session(
@@ -166,7 +173,6 @@ class BasicAuthView(View):
             password = ''
 
         if not secrets.compare_digest(password, self.settings.admin_basic_auth_password):
-            await asyncio.sleep(random())
             raise HTTPUnauthorized(text='Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
 
 
@@ -178,7 +184,7 @@ class ApiError(RuntimeError):
         self.status = response.status
         self.request_data = request_data
         try:
-            self.response_text = json.dumps(json.loads(response_text), indent=2)
+            self.response_text = json.dumps(ujson.loads(response_text), indent=2)
         except ValueError:
             self.response_text = response_text
 

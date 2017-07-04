@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     local_api_url: str = 'http://localhost:8000'
     public_local_api_url: str = 'http://localhost:5000'
 
+    # WARNING without setting a token here the stats page will be publicly viewable
+    stats_token: str = ''
+    max_request_stats = int(1e5)
+
     # used for es snapshots
     s3_access_key: str = None
     s3_secret_key: str = None

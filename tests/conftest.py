@@ -129,6 +129,8 @@ def settings(tmpdir, mock_external):
         messagebird_pricing_api=mock_external.app['server_name'] + '/messagebird-pricing',
         messagebird_pricing_username='mb-username',
         messagebird_pricing_password='mb-password',
+        stats_token='test-token',
+        max_request_stats=10,
     )
 
 

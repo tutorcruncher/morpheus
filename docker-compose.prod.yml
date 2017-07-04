@@ -35,9 +35,7 @@ services:
     environment:
       INFLUXDB_URL: ${INFLUXDB_URL}
       INFLUXDB_PASSWORD: ${INFLUXDB_PASSWORD}
+      STATS_TOKEN: ${APP_STATS_TOKEN}
+      STATS_HOST: ${APP_HOST_NAME}
     pid: host
     restart: always
-    depends_on:
-    - logs
-    - elastic
-    - redis
