@@ -540,7 +540,7 @@ class Sender(Actor):
         data = await r.json()
         return data['aggregations']['total_spend']['value']
 
-    @concurrent
+    @concurrent(Actor.LOW_QUEUE)
     async def update_mandrill_webhooks(self, events):
         mandrill_webhook = MandrillWebhook(events=events)
         main_logger.info('updating %d messages', len(mandrill_webhook.events))
@@ -553,30 +553,36 @@ class Sender(Actor):
         try:
             await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
         except ApiError as e:  # pragma: no cover
-            # we still return 200 here if we know the problem to avoid mandrill repeatedly trying to send the event
+            # no error here if we know the problem to avoid mandrill repeatedly trying to send the event
             if e.status == 409:
                 main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
                 return
             elif e.status == 404:
-                main_logger.info('no message found for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
                 return
             else:
                 raise
         log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-        await self.es.post(
-            update_uri,
-            script={
-                'lang': 'painless',
-                'inline': 'ctx._source.events.add(params.event)',
-                'params': {
-                    'event': {
-                        'ts': m.ts,
-                        'status': m.status,
-                        'extra': m.extra(),
+        try:
+            await self.es.post(
+                update_uri,
+                script={
+                    'lang': 'painless',
+                    'inline': 'ctx._source.events.add(params.event)',
+                    'params': {
+                        'event': {
+                            'ts': m.ts,
+                            'status': m.status,
+                            'extra': m.extra(),
+                        }
                     }
                 }
-            }
-        )
+            )
+        except ApiError as e:  # pragma: no cover
+            if e.status == 409:
+                main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+                return
+            else:
+                raise
 
 
 class AuxActor(Actor):  # pragma: no cover
@@ -599,7 +605,7 @@ class AuxActor(Actor):  # pragma: no cover
 
 
 class Worker(BaseWorker):  # pragma: no cover
-    max_concurrent_tasks = 5
+    max_concurrent_tasks = 4
     timeout_seconds = 1200
     shadows = [Sender, AuxActor]
 
