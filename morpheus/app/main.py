@@ -11,8 +11,8 @@ from .models import SendMethod
 from .settings import Settings
 from .utils import Mandrill, MorpheusUserApi
 from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, EmailSendView, MandrillWebhookView,
-                    MessageBirdWebhookView, SmsSendView, SmsValidateView, StatsView, TestWebhookView,
-                    UserAggregationView, UserMessagePreviewView, UserMessageView, index)
+                    MessageBirdWebhookView, MessageStatsView, RequestStatsView, SmsSendView, SmsValidateView,
+                    TestWebhookView, UserAggregationView, UserMessagePreviewView, UserMessageView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -118,6 +118,7 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
     app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')
 
-    app.router.add_get('/request-stats/', StatsView.view(), name='stats')
+    app.router.add_get('/stats/requests/', RequestStatsView.view(), name='request-stats')
+    app.router.add_get('/stats/messages/', MessageStatsView.view(), name='message-stats')
     app.router.add_static('/', str(THIS_DIR / 'static'))
     return app

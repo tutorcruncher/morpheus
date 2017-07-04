@@ -453,7 +453,7 @@ async def test_invalid_mustache_body(send_email, tmpdir, cli):
     print(json.dumps(response_data, indent=2))
     assert response_data['hits']['total'] == 1
     source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'render-failed'
+    assert source['status'] == 'render_failed'
     assert 'subject' not in source
     # https://github.com/noahmorrison/chevron/pull/22
     assert source['body'].startswith('Error rendering email: unclosed tag at line')

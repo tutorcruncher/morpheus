@@ -240,4 +240,4 @@ async def test_failed_render(cli, tmpdir):
     response_data = await r.json()
     assert response_data['hits']['total'] == 1
     source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'render-failed'
+    assert source['status'] == 'render_failed'
