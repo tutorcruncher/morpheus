@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
 from pathlib import Path
-from typing import Optional, Type  # noqa
+from typing import Optional, NewType, Type  # noqa
 from urllib.parse import urlencode
 
 import msgpack
@@ -45,6 +45,9 @@ class Session(WebModel):
     expires: datetime = ...
 
 
+AWebModel = NewType('AWebModel', WebModel)
+
+
 class View:
     def __init__(self, request):
         from .worker import Sender  # noqa
@@ -76,7 +79,7 @@ class View:
     async def call(self, request):
         raise NotImplementedError()
 
-    async def request_data(self, validator: Type[WebModel]=None):
+    async def request_data(self, validator: Type[AWebModel]=None) -> AWebModel:
         decoder = self.decode_json
         content_type = self.request.headers.get('Content-Type')
         if content_type == ContentType.MSGPACK:
