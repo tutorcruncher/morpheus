@@ -566,7 +566,6 @@ class Sender(Actor):
             await self.es.post(
                 update_uri,
                 script={
-                    'lang': 'painless',
                     'inline': 'ctx._source.events.add(params.event)',
                     'params': {
                         'event': {

@@ -160,5 +160,17 @@ async def test_message_stats_old(cli, send_email):
     r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'send')['count'] == 3
-    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'open')['count'] == 1
+    # import json
+    # print(json.dumps(data, indent=2))
+    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'send') == dict(
+        method='email-test',
+        status='send',
+        count=3,
+        age=0,
+    )
+    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'open') == dict(
+        method='email-test',
+        status='open',
+        count=1,
+        age=1200,
+    )

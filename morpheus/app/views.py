@@ -488,6 +488,24 @@ class MessageStatsView(AuthView):
                     },
                     aggs={
                         f'{method}.{status}': {
+                            'aggs': {
+                                'age': {
+                                    'avg': {
+                                        'script': {
+                                            'inline': 'doc.update_ts.value - doc.send_ts.value'
+                                        }
+                                    },
+                                },
+                                # 'event_count': {
+                                #     'avg': {
+                                #         'field': 'events',
+                                #         'script': {
+                                #             'inline': '_value.length',
+                                #         },
+                                #         'missing': 0,
+                                #     },
+                                # }
+                            },
                             'filter': {
                                 'bool': {
                                     'filter': [
@@ -506,7 +524,9 @@ class MessageStatsView(AuthView):
                     result.append(dict(
                         method=method,
                         status=status,
-                        count=v['doc_count']
+                        count=v['doc_count'],
+                        age=round((v['age']['value'] or 0) / 1000),
+                        # events=int(v['event_count']['value'] or 0),
                     ))
                 response_data = ujson.dumps(result).encode()
                 await redis.setex(cache_key, 598, response_data)
