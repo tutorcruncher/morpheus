@@ -243,47 +243,38 @@ class UserAggregationView(UserView):
     """
     Aggregated sends and opens over time for an authenticated user
     """
-    def filter(self, interval='day'):
-        return {
-            'aggs': {
-                '_': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'match_all': {}} if self.session.company == '__all__' else
-                                {'term': {'company': self.session.company}},
-                                {
-                                    'range': {'send_ts': {'gte': 'now-90d/d'}}
-                                }
-                            ]
-                        }
-                    },
-                    # TODO allow more filtering here, filter to last X days.
-                    'aggs': {
-                        '_': {
-                            'date_histogram': {
-                                'field': 'send_ts',
-                                'interval': interval
-                            },
-                            'aggs': {
-                                status: {
-                                    'filter': {
-                                        'term': {
-                                            'status': status
-                                        }
-                                    }
-                                } for status in MessageStatus
-                            },
-                        }
-                    }
-                }
-            }
-        }
-
     async def call(self, request):
+        # TODO allow more filtering here, filter to last X days.
         r = await self.app['es'].get(
             'messages/{[method]}/_search?size=0&filter_path=aggregations'.format(request.match_info),
-            **self.filter()
+            query={
+                'bool': {
+                    'filter': [
+                        {'match_all': {}} if self.session.company == '__all__' else
+                        {'term': {'company': self.session.company}},
+                        {
+                            'range': {'send_ts': {'gte': 'now-90d/d'}}
+                        }
+                    ]
+                }
+            },
+            aggs={
+                '_': {
+                    'date_histogram': {
+                        'field': 'send_ts',
+                        'interval': 'day'
+                    },
+                    'aggs': {
+                        status: {
+                            'filter': {
+                                'term': {
+                                    'status': status
+                                }
+                            }
+                        } for status in MessageStatus
+                    },
+                }
+            }
         )
         return Response(body=await r.text(), content_type='application/json')
 
@@ -479,30 +470,6 @@ class RequestStatsView(AuthView):
 class MessageStatsView(AuthView):
     auth_token_field = 'stats_token'
 
-    def aggs(self):
-        return {
-            '_': {
-                'filter': {
-                    'range': {
-                        'update_ts': {'gte': 'now-10m'}
-                    }
-                },
-                # TODO allow more filtering here, filter to last X days.
-                'aggs': {
-                    f'{method}.{status}': {
-                        'filter': {
-                            'bool': {
-                                'filter': [
-                                    {'type': {'value': method}},
-                                    {'term': {'status': status}},
-                                ]
-                            }
-                        }
-                    } for status, method in product(MessageStatus, SendMethod)
-                }
-            }
-        }
-
     async def call(self, request):
         cache_key = 'message-stats'
         async with await self.sender.get_redis_conn() as redis:
@@ -510,18 +477,37 @@ class MessageStatsView(AuthView):
             if not response_data:
                 r = await self.app['es'].get(
                     'messages/_search?size=0&filter_path=aggregations',
-                    aggs=self.aggs()
+                    query={
+                        'bool': {
+                            'filter': {
+                                'range': {
+                                    'update_ts': {'gte': 'now-10m'}
+                                }
+                            }
+                        }
+                    },
+                    aggs={
+                        f'{method}.{status}': {
+                            'filter': {
+                                'bool': {
+                                    'filter': [
+                                        {'type': {'value': method}},
+                                        {'term': {'status': status}},
+                                    ]
+                                }
+                            }
+                        } for method, status in product(SendMethod, MessageStatus)
+                    }
                 )
                 data = await r.json()
                 result = []
-                for k, v in data['aggregations']['_'].items():
-                    if isinstance(v, dict):
-                        method, status = k.split('.', 1)
-                        result.append(dict(
-                            method=method,
-                            status=status,
-                            count=v['doc_count']
-                        ))
+                for k, v in data['aggregations'].items():
+                    method, status = k.split('.', 1)
+                    result.append(dict(
+                        method=method,
+                        status=status,
+                        count=v['doc_count']
+                    ))
                 response_data = ujson.dumps(result).encode()
                 await redis.setex(cache_key, 598, response_data)
         return Response(body=response_data, content_type='application/json')

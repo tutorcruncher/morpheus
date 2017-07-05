@@ -86,7 +86,7 @@ async def test_user_aggregate(cli, settings, send_email):
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
-    buckets = data['aggregations']['_']['_']['buckets']
+    buckets = data['aggregations']['_']['buckets']
     assert len(buckets) == 1
     assert buckets[0]['doc_count'] == 4
     assert buckets[0]['send']['doc_count'] == 4
@@ -94,7 +94,7 @@ async def test_user_aggregate(cli, settings, send_email):
     r = await cli.get(modify_url('/user/email-test/aggregation/', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['aggregations']['_']['_']['buckets'][0]['doc_count'] == 5
+    assert data['aggregations']['_']['buckets'][0]['doc_count'] == 5
 
 
 async def test_user_tags(cli, settings, send_email):

@@ -1,5 +1,7 @@
 import asyncio
 import os
+import uuid
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -75,7 +77,7 @@ async def test_stats_unauthorised(cli):
     assert r.status == 403, await r.text()
 
 
-async def test_stats(cli):
+async def test_request_stats(cli):
     async with await cli.server.app['sender'].get_redis_conn() as redis:
         await redis.delete(cli.server.app['stats_list_key'])
         await redis.delete(cli.server.app['stats_start_key'])
@@ -106,9 +108,7 @@ async def test_stats(cli):
     assert len(data) == 2
 
 
-async def test_stats_reset(cli):
-    async with await cli.server.app['sender'].get_redis_conn() as redis:
-        await redis.delete(cli.server.app['stats_list_key'])
+async def test_request_stats_reset(cli):
     for _ in range(30):
         await cli.get('/')
     r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
@@ -116,3 +116,49 @@ async def test_stats_reset(cli):
     data = await r.json()
     assert len(data) == 1
     assert data[0]['request_count'] < 10
+
+
+async def test_message_stats(cli, send_email):
+    await cli.server.app['es'].create_indices(True)
+    for i in range(5):
+        await send_email(uid=str(uuid.uuid4()), recipients=[{'address': f'{i}@t.com'}])
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    # import json
+    # print(json.dumps(data, indent=2))
+    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'send')['count'] == 5
+    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'open')['count'] == 0
+    assert next(d for d in data if d['method'] == 'email-mandrill' and d['status'] == 'send')['count'] == 0
+
+    await send_email()
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    data2 = await r.json()
+    assert data2 == data  # last message has no effect due to caching
+
+
+async def test_message_stats_old(cli, send_email):
+    es = cli.server.app['es']
+    await es.create_indices(True)
+    expected_msg_ids = []
+    for i in range(5):
+        uid = str(uuid.uuid4())
+        await send_email(uid=uid, company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
+        expected_msg_ids.append(f'{uid}-{i}tcom')
+
+    old = datetime.utcnow() - timedelta(minutes=20)
+    await es.post(f'messages/email-test/{expected_msg_ids[0]}/_update', doc={'send_ts': old, 'update_ts': old})
+    await es.post(f'messages/email-test/{expected_msg_ids[1]}/_update', doc={'send_ts': old, 'status': 'open'})
+
+    await es.get('messages/_refresh')
+
+    r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'send')['count'] == 3
+    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'open')['count'] == 1

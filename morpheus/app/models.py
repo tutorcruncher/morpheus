@@ -50,7 +50,7 @@ class MessageBirdMessageStatus(str, Enum):
     https://developers.messagebird.com/docs/messaging#messaging-dlr
     """
     scheduled = 'scheduled'
-    sent = 'sent'
+    send = 'send'
     buffered = 'buffered'
     delivered = 'delivered'
     expired = 'expired'
@@ -75,7 +75,7 @@ class MessageStatus(str, Enum):
 
     # used for sms
     scheduled = 'scheduled'
-    sent = 'sent'
+    # send = 'send'  # above
     buffered = 'buffered'
     delivered = 'delivered'
     expired = 'expired'
