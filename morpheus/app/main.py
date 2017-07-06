@@ -10,9 +10,10 @@ from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
 from .settings import Settings
 from .utils import Mandrill, MorpheusUserApi
-from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, EmailSendView, MandrillWebhookView,
-                    MessageBirdWebhookView, MessageStatsView, RequestStatsView, SmsSendView, SmsValidateView,
-                    TestWebhookView, UserAggregationView, UserMessagePreviewView, UserMessageView, index)
+from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, CreateSubaccountView, EmailSendView,
+                    MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView, SmsSendView,
+                    SmsValidateView, TestWebhookView, UserAggregationView, UserMessagePreviewView, UserMessageView,
+                    index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -20,10 +21,10 @@ logger = logging.getLogger('morpheus.main')
 async def get_mandrill_webhook_key(app):
     try:
         settings, mandrill_webhook_url = app['settings'], app['mandrill_webhook_url']
-        if not (settings.mandrill_key and settings.host_name):
+        if not (settings.mandrill_key and settings.host_name not in (None, 'localhost')):
             return
 
-        mandrill = Mandrill(settings=settings, loop=app.loop)
+        mandrill = app['mandrill']
         webhook_auth_key = None
 
         r = await mandrill.get('webhooks/list.json')
@@ -53,7 +54,6 @@ async def get_mandrill_webhook_key(app):
             data = await r.json()
             webhook_auth_key = data['auth_key']
             logger.info('created new mandrill webhook "%s", key %s', data['description'], webhook_auth_key)
-        mandrill.close()
         app['webhook_auth_key'] = webhook_auth_key.encode()
     except Exception as e:
         logger.exception('error in get_mandrill_webhook_key, %s: %s', e.__class__.__name__, e)
@@ -75,6 +75,7 @@ async def app_cleanup(app):
     await app['sender'].close()
     app['es'].close()
     app['morpheus_api'].close()
+    app['mandrill'].close()
 
 
 def create_app(loop, settings: Settings=None):
@@ -90,6 +91,7 @@ def create_app(loop, settings: Settings=None):
         sender=settings.sender_cls(settings=settings, loop=loop),
         es=ElasticSearch(settings=settings, loop=loop),
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
+        mandrill=Mandrill(settings=settings, loop=loop),
         webhook_auth_key=None,
         morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
         stats_list_key='request-stats-list',
@@ -105,15 +107,17 @@ def create_app(loop, settings: Settings=None):
     app.router.add_post('/send/sms/', SmsSendView.view(), name='send-smss')
     app.router.add_get('/validate/sms/', SmsValidateView.view(), name='validate-smss')
 
+    methods = '/{method:%s}/' % '|'.join(m.value for m in SendMethod)
+    app.router.add_post('/create-subaccount' + methods, CreateSubaccountView.view(), name='create-subaccount')
+
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
     app.router.add_head('/webhook/mandrill/', index, name='webhook-mandrill-head')
     app.router.add_post('/webhook/mandrill/', MandrillWebhookView.view(), name='webhook-mandrill')
     app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
-    user_prefix = '/user/{method:%s}/' % '|'.join(m.value for m in SendMethod)
-    app.router.add_get(user_prefix, UserMessageView.view(), name='user-messages')
-    app.router.add_get(user_prefix + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
-    app.router.add_get(user_prefix + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')
+    app.router.add_get('/user' + methods, UserMessageView.view(), name='user-messages')
+    app.router.add_get('/user' + methods + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
+    app.router.add_get('/user' + methods + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
     app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')

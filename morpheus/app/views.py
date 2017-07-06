@@ -21,8 +21,8 @@ from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
-                     SmsNumbersModel, SmsSendModel)
-from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, ServiceView, UserView, View
+                     SmsNumbersModel, SmsSendModel, SubaccountModel)
+from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, UserView, View  # noqa
 
 logger = logging.getLogger('morpheus.web')
 
@@ -36,7 +36,7 @@ async def index(request):
 
 class EmailSendView(ServiceView):
     async def call(self, request):
-        m: EmailSendModel = await self.request_data(EmailSendModel)
+        m = await self.request_data(EmailSendModel)
         async with await self.sender.get_redis_conn() as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
@@ -60,7 +60,7 @@ class EmailSendView(ServiceView):
 
 class SmsSendView(ServiceView):
     async def call(self, request):
-        m: SmsSendModel = await self.request_data(SmsSendModel)
+        m = await self.request_data(SmsSendModel)
         spend = None
         async with await self.sender.get_redis_conn() as redis:
             group_key = f'group:{m.uid}'
@@ -94,7 +94,7 @@ class SmsSendView(ServiceView):
 
 class SmsValidateView(ServiceView):
     async def call(self, request):
-        m: SmsNumbersModel = await self.request_data(SmsNumbersModel)
+        m = await self.request_data(SmsNumbersModel)
         result = {str(k): self.to_dict(self.sender.validate_number(n, m.country_code)) for k, n in m.numbers.items()}
         return self.json_response(**result)
 
@@ -109,7 +109,7 @@ class TestWebhookView(View):
     """
 
     async def call(self, request):
-        m: MandrillSingleWebhook = await self.request_data(MandrillSingleWebhook)
+        m = await self.request_data(MandrillSingleWebhook)
         await self.sender.update_message_status('email-test', m)
         return Response(text='message status updated\n')
 
@@ -153,6 +153,42 @@ class MessageBirdWebhookView(View):
         m = MessageBirdWebHook(**request.query)
         await self.sender.update_message_status('sms-messagebird', m)
         return Response(text='message status updated\n')
+
+
+class CreateSubaccountView(View):
+    """
+    Create a new subaccount with mandrill for new sending company
+    """
+    async def call(self, request):
+        method = request.match_info['method']
+        if method != SendMethod.email_mandrill:
+            return Response(text=f'no subaccount creation required for "{method}"\n')
+
+        m = await self.request_data(SubaccountModel)
+        mandrill: Mandrill = self.app['mandrill']
+
+        r = await mandrill.post(
+            'subaccounts/add.json',
+            id=m.company_code,
+            name=m.company_name,
+            allowed_statuses=(200, 500),
+        )
+        data = await r.json()
+        if r.status == 500:
+            if f'A subaccount with id {m.company_code} already exists' in data.get('message', ''):
+                r = await mandrill.get('subaccounts/info.json', id=m.company_code)
+                data = await r.json()
+                total_sent = data['sent_total']
+                if total_sent > 100:
+                    return Response(text=f'subaccount already exists with {total_sent} emails sent, '
+                                         f'reuse of subaccount id not permitted\n', status=409)
+                else:
+                    return Response(text=f'subaccount already exists with only {total_sent} emails sent, '
+                                         f'reuse of subaccount id permitted\n')
+            else:
+                return Response(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
+        else:
+            return Response(text='subaccount created\n', status=201)
 
 
 class UserMessageView(UserView):

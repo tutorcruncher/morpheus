@@ -115,6 +115,11 @@ class EmailSendModel(WebModel):
     recipients: List[EmailRecipientModel] = ...
 
 
+class SubaccountModel(WebModel):
+    company_code: str = ...
+    company_name: str = None
+
+
 class SmsRecipientModel(BaseModel):
     number: str = ...
     tags: List[str] = []

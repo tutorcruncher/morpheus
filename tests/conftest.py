@@ -32,6 +32,33 @@ async def mandrill_send_view(request):
     ])
 
 
+async def mandrill_sub_account_add(request):
+    data = await request.json()
+    if data['key'] != 'good-mandrill-testing-key':
+        return json_response({'auth': 'failed'}, status=403)
+    sa_id = data['id']
+    if sa_id == 'broken':
+        return json_response({'error': 'snap something unknown went wrong'}, status=500)
+    elif sa_id in request.app['mandrill_subaccounts']:
+        return json_response({'message': f'A subaccount with id {sa_id} already exists'}, status=500)
+    else:
+        request.app['mandrill_subaccounts'][sa_id] = data
+        return json_response({'message': "subaccount created (this isn't the same response as mandrill)"})
+
+
+async def mandrill_sub_account_info(request):
+    data = await request.json()
+    if data['key'] != 'good-mandrill-testing-key':
+        return json_response({'auth': 'failed'}, status=403)
+    sa_id = data['id']
+    sa_info = request.app['mandrill_subaccounts'].get(sa_id)
+    if sa_info:
+        return json_response({
+            'subaccount_info': sa_info,
+            'sent_total': 200 if sa_id == 'lots-sent' else 42,
+        })
+
+
 async def messagebird_hlr_post(request):
     assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
     return Response(status=201)
@@ -97,14 +124,21 @@ async def logging_middleware(app, handler):
 @pytest.fixture
 def mock_external(loop, test_server):
     app = Application(middlewares=[logging_middleware])
+
     app.router.add_post('/mandrill/messages/send.json', mandrill_send_view)
+    app.router.add_post('/mandrill/subaccounts/add.json', mandrill_sub_account_add)
+    app.router.add_get('/mandrill/subaccounts/info.json', mandrill_sub_account_info)
+
     app.router.add_post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post)
     app.router.add_get('/messagebird/lookup/{number}', messagebird_lookup)
     app.router.add_post('/messagebird/messages', messagebird_send)
+
     app.router.add_get('/messagebird-pricing', messagebird_pricing)
+
     app.router.add_route('*', '/generate.pdf', generate_pdf)
     app.update(
         request_log=[],
+        mandrill_subaccounts={}
     )
     server = loop.run_until_complete(test_server(app))
     app['server_name'] = f'http://localhost:{server.port}'
