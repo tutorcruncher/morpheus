@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import re
 import uuid
 from datetime import datetime
 from urllib.parse import urlencode
@@ -145,6 +146,39 @@ async def test_user_tags(cli, settings, send_email):
     print(json.dumps(data, indent=2))
     assert data['hits']['total'] == 1
     assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
+
+
+async def test_message_details(cli, settings, send_email):
+    msg_id = await send_email(company_code='test-details')
+
+    data = {
+        'ts': int(1e10),
+        'event': 'open',
+        '_id': msg_id,
+        'user_agent': 'testincalls'
+    }
+    r = await cli.post('/webhook/test/', json=data)
+    assert r.status == 200, await r.text()
+
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    spaceless = re.sub('\n +', '\n', text)
+    # print(spaceless)
+    assert '<label>Subject:</label>\n<span>test message</span>' in spaceless
+    assert '<label>To:</label>\n<span>&lt;foobar@testing.com&gt;</span>' in spaceless
+
+    assert 'open &bull;' in text
+    assert '"user_agent": "testincalls",' in text
+
+
+async def test_message_details_missing(cli, settings):
+    r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
+    assert r.status == 404, await r.text()
+    text = await r.text()
+    assert 'message not found' == text
 
 
 async def test_message_preview(cli, settings, send_email):

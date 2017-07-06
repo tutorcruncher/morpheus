@@ -192,11 +192,8 @@ class CreateSubaccountView(View):
             return Response(text='subaccount created\n', status=201)
 
 
-class UserMessageView(UserView):
-    """
-    List or search of messages for an authenticated user
-    """
-    async def call(self, request):
+class _UserMessagesView(UserView):
+    async def query(self, *, message_id=None, tags=None, query=None):
         es_query = {
             'query': {
                 'bool': {
@@ -210,9 +207,6 @@ class UserMessageView(UserView):
             'from': self.get_arg_int('from', 0),
             'size': self.get_arg_int('size', 10),
         }
-        message_id = request.query.get('message_id')
-        tags = request.query.getall('tags', None)
-        query = request.query.get('q')
         if message_id:
             es_query['query']['bool']['filter'].append({'term': {'_id': message_id}})
         elif query:
@@ -231,10 +225,70 @@ class UserMessageView(UserView):
                 {'send_ts': 'desc'},
             ]
 
-        r = await self.app['es'].get(
-            'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), **es_query
+        return await self.app['es'].get(
+            f'messages/{self.request.match_info["method"]}/_search?filter_path=hits', **es_query
+        )
+
+
+class UserMessagesJsonView(_UserMessagesView):
+    async def call(self, request):
+        r = await self.query(
+            message_id=request.query.get('message_id'),
+            tags=request.query.getall('tags', None),
+            query=request.query.get('q')
         )
         return Response(body=await r.text(), content_type='application/json')
+
+
+class UserMessageHtmlView(TemplateView, _UserMessagesView):
+    template = 'message-details.jinja'
+
+    async def call(self, request):
+        msg_id = self.request.match_info['id']
+        r = await self.query(message_id=msg_id)
+        data = await r.json()
+        if data['hits']['total'] == 0:
+            raise HTTPNotFound(text='message not found')
+        data = data['hits']['hits'][0]
+
+        preview_uri = self.app.router['user-preview'].url_for(**self.request.match_info)
+        return dict(
+            base_template='message-details-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
+            id=data['_id'],
+            method=data['_type'],
+            details=self._details(data),
+            events=list(self._events(data)),
+            preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}?{self.request.query_string}',
+            attachments=data['_source'].get('attachments', []),
+        )
+
+    def _details(self, data):
+        yield 'ID', data['_id']
+        source = data['_source']
+        yield 'Status', source['status']  # TODO pretty
+        if data['_type'].startswith('email'):
+            yield (
+                'To',
+                f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
+            )
+        else:
+            yield 'To', source['to_last_name']
+        yield 'Subject', source.get('subject')
+        yield 'Send Time', self._strftime(source['send_ts'])
+        yield 'Last Updated', self._strftime(source['update_ts'])
+
+    @classmethod
+    def _strftime(cls, ts):
+        # TODO: custom formats
+        return from_unix_ms(ts).strftime('%a %Y-%m-%d %H:%M')
+
+    def _events(self, data):
+        for event in data['_source'].get('events', []):
+            yield dict(
+                status=event['status'],
+                datetime=self._strftime(event['ts']),
+                details=Markup(json.dumps(event['extra'], indent=2)),
+            )
 
 
 class UserMessagePreviewView(TemplateView, UserView):
@@ -423,9 +477,11 @@ class AdminGetView(AdminView):
         data = re.sub('14\d{8,11}', self.replace_data, data)
 
         preview_uri = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
+        details_uri = morpheus_api.modify_url(self.app.router['user-message-get'].url_for(method=method, id=message_id))
         return dict(
             sub_heading=f'Message {message_id}',
             preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}',
+            details_url=f'{self.request.scheme}://{self.request.host}{details_uri}',
             json_display=highlight(data, JsonLexer(), HtmlFormatter()),
         )
 

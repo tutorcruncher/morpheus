@@ -14,8 +14,8 @@ from .settings import Settings
 from .utils import THIS_DIR, Mandrill, MorpheusUserApi
 from .views import (AdminAggregatedView, AdminGetView, AdminListView, CreateSubaccountView, EmailSendView,
                     MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView, SmsSendView,
-                    SmsValidateView, TestWebhookView, UserAggregationView, UserMessagePreviewView, UserMessageView,
-                    index)
+                    SmsValidateView, TestWebhookView, UserAggregationView, UserMessageHtmlView, UserMessagePreviewView,
+                    UserMessagesJsonView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -87,7 +87,11 @@ def create_app(loop, settings: Settings=None):
         client_max_size=1024**2*100,
         middlewares=(stats_middleware, ErrorLoggingMiddleware())
     )
-    aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(str(THIS_DIR / 'templates')))
+    aiohttp_jinja2.setup(
+        app,
+        loader=jinja2.FileSystemLoader(str(THIS_DIR / 'templates')),
+        autoescape=jinja2.select_autoescape(['html', 'xml', 'jinja']),
+    )
 
     app.update(
         settings=settings,
@@ -118,7 +122,9 @@ def create_app(loop, settings: Settings=None):
     app.router.add_post('/webhook/mandrill/', MandrillWebhookView.view(), name='webhook-mandrill')
     app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
-    app.router.add_get('/user' + methods + 'messages.json', UserMessageView.view(), name='user-messages')
+    app.router.add_get('/user' + methods + 'messages.json', UserMessagesJsonView.view(), name='user-messages')
+    app.router.add_get('/user' + methods + 'message/{id}.html', UserMessageHtmlView.view(), name='user-message-get')
+
     app.router.add_get('/user' + methods + 'aggregation.json', UserAggregationView.view(), name='user-aggregation')
     app.router.add_get('/user' + methods + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')

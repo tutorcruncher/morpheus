@@ -1,59 +1,62 @@
+{% extends base_template %}
+
+{% block main %}
 <div class="morpheus-msg">
   <div class="details row">
-    {% for name, help_text, value in details %}
+    {% for name, value in details %}
       <span class="col-md-6 item">
         <label>{{ name }}:</label>
         <span>
-          {% if value %}
+          {%- if value -%}
             {{ value }}
-          {% else %}
+          {%- else -%}
             &mdash;
-          {% endif %}
-          {% if help_text %}
-            <span class="fa fa-info-circle" data-toggle="tooltip" data-placement="top"
-                  data-container="body" title="{{ help_text }}"></span>
-          {% endif %}
-        </span>
+          {%- endif -%}
+        </span>{# TODO could add help text here #}
       </span>
     {% endfor %}
   </div>
 
-  <h3>Preview</h3>
   <iframe class="morpheus-msg-preview" src="{{ preview_url }}"></iframe>
 
   <h3>Attachments</h3>
-  <div class="attachments">
-    <ul>
-      {% for a in attachments %}
-      <li>
-        {{ a }}
-        {# TODO add link to original document #}
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
+  {% if attachments %}
+    <div class="attachments">
+      <ul>
+        {% for a in attachments %}
+        <li>
+          {{ a }}
+          {# TODO add link to original document #}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% else %}
+    <div>&mdash;</div>
+  {% endif %}
 
   <h3>Events</h3>
-  <div class="panel-group events" id="morpheus-accordion">
-    {% for event in events %}
-      <div class="panel panel-default">
-        <div class="panel-heading">
-          <h4 class="panel-title">
-            <a role="button" data-toggle="collapse" data-parent="#morpheus-accordion" href="#morpheus-accordion-{{ loop.index }}">
-              {{ event.status }} at {{ event.datetime }}
-            </a>
-          </h4>
-        </div>
-        <div id="morpheus-accordion-{{ loop.index }}" class="panel-collapse collapse">
-          <div class="panel-body">
-            <pre class="display-json">
-              <code class="JSON">
-                {{ event.details }}
-              </code>
-            </pre>
+  {% if events %}
+    <div class="panel-group events" id="morpheus-accordion">
+      {% for event in events %}
+        <div class="panel panel-default">
+          <div class="panel-heading">
+            <h4 class="panel-title">
+              <a role="button" data-toggle="collapse" data-parent="#morpheus-accordion" href="#m-event-{{ loop.index }}">
+                {{ event.status }} &bull; {{ event.datetime }}
+              </a>
+            </h4>
+          </div>
+          <div id="m-event-{{ loop.index }}" class="panel-collapse collapse">
+            <div class="panel-body">
+              <pre><code class="JSON">{{ event.details }}</code></pre>
+            </div>
           </div>
         </div>
-      </div>
-    {% endfor %}
-  </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div>&mdash;</div>
+  {% endif %}
 </div>
+{% endblock %}
