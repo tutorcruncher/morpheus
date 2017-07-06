@@ -14,8 +14,8 @@ from .settings import Settings
 from .utils import THIS_DIR, Mandrill, MorpheusUserApi
 from .views import (AdminAggregatedView, AdminGetView, AdminListView, CreateSubaccountView, EmailSendView,
                     MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView, SmsSendView,
-                    SmsValidateView, TestWebhookView, UserAggregationView, UserMessageHtmlView, UserMessagePreviewView,
-                    UserMessagesJsonView, index)
+                    SmsValidateView, TestWebhookView, UserAggregationView, UserMessageDetailView, UserMessageListView,
+                    UserMessagePreviewView, UserMessagesJsonView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -123,7 +123,8 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
     app.router.add_get('/user' + methods + 'messages.json', UserMessagesJsonView.view(), name='user-messages')
-    app.router.add_get('/user' + methods + 'message/{id}.html', UserMessageHtmlView.view(), name='user-message-get')
+    app.router.add_get('/user' + methods + 'message/{id}.html', UserMessageDetailView.view(), name='user-message-get')
+    app.router.add_get('/user' + methods + 'messages.html', UserMessageListView.view(), name='user-message-list')
 
     app.router.add_get('/user' + methods + 'aggregation.json', UserAggregationView.view(), name='user-aggregation')
     app.router.add_get('/user' + methods + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')

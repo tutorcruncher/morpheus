@@ -14,7 +14,7 @@ import msgpack
 import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
 from aiohttp_jinja2 import template
-from arq.utils import from_unix_ms
+from arq.utils import from_unix_ms, truncate
 from markupsafe import Markup
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
@@ -193,6 +193,11 @@ class CreateSubaccountView(View):
 
 
 class _UserMessagesView(UserView):
+    @classmethod
+    def _strftime(cls, ts):
+        # TODO: custom formats
+        return from_unix_ms(ts).strftime('%a %Y-%m-%d %H:%M')
+
     async def query(self, *, message_id=None, tags=None, query=None):
         es_query = {
             'query': {
@@ -205,7 +210,7 @@ class _UserMessagesView(UserView):
                 }
             },
             'from': self.get_arg_int('from', 0),
-            'size': self.get_arg_int('size', 10),
+            'size': 100,
         }
         if message_id:
             es_query['query']['bool']['filter'].append({'term': {'_id': message_id}})
@@ -240,8 +245,8 @@ class UserMessagesJsonView(_UserMessagesView):
         return Response(body=await r.text(), content_type='application/json')
 
 
-class UserMessageHtmlView(TemplateView, _UserMessagesView):
-    template = 'message-details.jinja'
+class UserMessageDetailView(TemplateView, _UserMessagesView):
+    template = 'user/details.jinja'
 
     async def call(self, request):
         msg_id = self.request.match_info['id']
@@ -253,12 +258,13 @@ class UserMessageHtmlView(TemplateView, _UserMessagesView):
 
         preview_uri = self.app.router['user-preview'].url_for(**self.request.match_info)
         return dict(
-            base_template='message-details-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
+            base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
+            title='{_type} - {_id}'.format(**data),
             id=data['_id'],
             method=data['_type'],
             details=self._details(data),
             events=list(self._events(data)),
-            preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}?{self.request.query_string}',
+            preview_url=f'{self.root_url()}{preview_uri}?{self.request.query_string}',
             attachments=data['_source'].get('attachments', []),
         )
 
@@ -277,11 +283,6 @@ class UserMessageHtmlView(TemplateView, _UserMessagesView):
         yield 'Send Time', self._strftime(source['send_ts'])
         yield 'Last Updated', self._strftime(source['update_ts'])
 
-    @classmethod
-    def _strftime(cls, ts):
-        # TODO: custom formats
-        return from_unix_ms(ts).strftime('%a %Y-%m-%d %H:%M')
-
     def _events(self, data):
         for event in reversed(data['_source'].get('events', [])):
             yield dict(
@@ -291,11 +292,72 @@ class UserMessageHtmlView(TemplateView, _UserMessagesView):
             )
 
 
+class UserMessageListView(TemplateView, _UserMessagesView):
+    template = 'user/list.jinja'
+
+    async def call(self, request):
+        r = await self.query(
+            tags=request.query.getall('tags', None),
+            query=request.query.get('q', None)
+        )
+        data = await r.json()
+        hits = data['hits']['hits']
+
+        headings = ['To', 'Send Time', 'Status', 'Subject']
+        total = data['hits']['total']
+        size = 100
+        offset = self.get_arg_int('from', 0)
+        pagination = {}
+        if len(hits) == size:
+            next_offset = offset + size
+            query = dict(self.request.query)
+            query['from'] = next_offset
+            uri = self.request.rel_url.with_query(query)
+            pagination['next'] = dict(
+                href=f'{self.root_url()}{uri}',
+                text=f'{next_offset + 1} - {min(next_offset + size, total)}'
+            )
+        if offset:
+            previous_offset = offset - size
+            query = dict(self.request.query)
+            query['from'] = previous_offset
+            uri = self.request.rel_url.with_query(query)
+            pagination['previous'] = dict(
+                href=f'{self.root_url()}{uri}',
+                text=f'{previous_offset + 1} - {max(offset, 0)}'
+            )
+
+        return dict(
+            base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
+            title=f'{self.request.match_info["method"]} - {total}',
+            total=total,
+            table_headings=headings,
+            table_body=self._table_body(hits),
+            pagination=pagination,
+        )
+
+    def _table_body(self, hits):
+        method = self.request.match_info['method']
+        for msg in hits:
+            msg_source = msg['_source']
+            url = self.app.router['user-message-get'].url_for(method=method, id=msg['_id'])
+            subject = msg_source.get('subject') or msg_source.get('body', '')
+            yield [
+                {
+                    'href': f'{url}?{self.request.query_string}',
+                    'text': msg_source['to_address'],  # TODO prettier
+                },
+                self._strftime((msg_source['send_ts'])),
+                msg_source['status'],  # TODO
+                truncate(subject, 40)
+            ]
+
+
 class UserMessagePreviewView(TemplateView, UserView):
     """
     preview a message
     """
-    template = 'message-preview.jinja'
+    template = 'user/preview.jinja'
 
     async def call(self, request):
         es_query = {
@@ -447,6 +509,7 @@ class AdminListView(AdminView):
             )
         else:
             next_page = None
+        user_list_uri = morpheus_api.modify_url(self.app.router['user-message-list'].url_for(method=method))
         return dict(
             total=data['hits']['total'],
             table_headings=headings,
@@ -454,6 +517,7 @@ class AdminListView(AdminView):
             sub_heading=f'List {method} messages',
             search=search,
             next_page=next_page,
+            user_list_url=f'{self.root_url()}{user_list_uri}',
         )
 
 
@@ -480,8 +544,8 @@ class AdminGetView(AdminView):
         details_uri = morpheus_api.modify_url(self.app.router['user-message-get'].url_for(method=method, id=message_id))
         return dict(
             sub_heading=f'Message {message_id}',
-            preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}',
-            details_url=f'{self.request.scheme}://{self.request.host}{details_uri}',
+            preview_url=f'{self.root_url()}{preview_uri}',
+            details_url=f'{self.root_url()}{details_uri}',
             json_display=highlight(data, JsonLexer(), HtmlFormatter()),
             form_action=self.app.router['admin-list'].url_for(),
         )

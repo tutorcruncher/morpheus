@@ -1,0 +1,51 @@
+{% extends base_template %}
+
+{% block main %}
+  <table class="table">
+    <caption>Results: {{ total }}</caption>
+    <thead>
+      <tr>
+        {% for t in table_headings %}
+          <th>{{ t }}</th>
+        {%- endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in table_body %}
+        <tr>
+          {% for col in row %}
+            <td>
+              {%- if col.href -%}
+                <a href="{{ col.href }}">{{ col.text }}</a>
+              {%- else -%}
+                {{ col }}
+              {%- endif -%}
+            </td>
+          {%- endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <nav>
+    <ul class="pager">
+      {% if pagination.previous %}
+        <li class="previous">
+          <a href="{{ pagination.previous.href }}">
+            <span>&larr;</span>
+            {{ pagination.previous.text }}
+          </a>
+        </li>
+      {% endif %}
+
+      {% if pagination.next %}
+        <li class="next">
+          <a href="{{ pagination.next.href }}">
+            {{ pagination.next.text }}
+            <span>&rarr;</span>
+          </a>
+        </li>
+      {% endif %}
+    </ul>
+  </nav>
+{% endblock %}

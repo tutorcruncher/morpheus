@@ -49,6 +49,12 @@ async def test_user_list(cli, settings, send_email):
     data = await r.json()
     assert data['hits']['total'] == 6
 
+    r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert '<caption>Results: 6</caption>' in text
+    assert text.count('.com</a>') == 6
+
 
 async def test_user_search(cli, settings, send_email):
     msgs = {}
@@ -214,3 +220,26 @@ async def test_user_sms(cli, settings, send_sms):
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 2
+
+
+async def test_user_list_lots(cli, settings, send_email):
+    for i in range(110):
+        await send_email(uid=str(uuid.uuid4()), company_code='list-lots', recipients=[{'address': f'{i}@t.com'}])
+
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    m = re.search('<caption>Results: (\d+)</caption>', text)
+    results = int(m.groups()[0])
+    assert results >= 110
+    assert f'1 - 100' not in text
+    assert f'101 - {min(results, 150)}' in text
+
+    url = modify_url(f'/user/email-test/messages.html', settings, '__all__')
+    r = await cli.get(url + '&from=100')
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert f'1 - 100' in text
+    assert f'101 - {min(results, 150)}' not in text

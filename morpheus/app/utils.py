@@ -50,6 +50,9 @@ class View:
         self.session: Optional[Session] = None
         self.sender: Sender = request.app['sender']
 
+    def root_url(self):
+        return f'{self.request.scheme}://{self.request.host}'
+
     @classmethod
     def view(cls):
         async def view(request):
