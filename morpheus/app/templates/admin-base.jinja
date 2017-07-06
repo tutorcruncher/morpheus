@@ -10,19 +10,17 @@
 <body class="admin">
   <h1>Morpheus Admin</h1>
   <ul>
-    <li><a href="/">home</a></li>
-    <li><a target="_blank" href="/nginx-stats">nginx stats</a></li>
-    <li><a target="_blank" href="/glances">glances</a></li>
-    <li><a href="/admin/">admin - aggregated</a></li>
-    <li><a href="/admin/list/">admin - list</a></li>
+    <li><a href="{{ url('index') }}">index</a></li>
+    <li><a href="{{ url('admin') }}?method={{ method }}">admin - aggregated</a></li>
+    <li><a href="{{ url('admin-list') }}?method={{ method }}">admin - list</a></li>
   </ul>
-  <form action="." method="get">
+  <form action="{{ form_action or '.' }}" method="get">
     <div class="form-group">
       <label for="method">Send Method:</label>
       <select name="method" id="method">
-        {% for method in methods %}
-        <option value="{{ method.value }}"{% if method.selected %} selected="selected"{% endif %}>
-          {{ method.value }}
+        {% for method_ in methods %}
+        <option value="{{ method_ }}"{% if method_ == method %} selected="selected"{% endif %}>
+          {{ method_ }}
         </option>
         {% endfor %}
       </select>

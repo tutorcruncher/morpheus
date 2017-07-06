@@ -189,8 +189,13 @@ class AdminView(TemplateView, BasicAuthView):
 
     async def call(self, request):
         morpheus_api = self.app['morpheus_api']
-        method = self.request.query.get('method', SendMethod.email_mandrill)
-        ctx = dict(methods=[{'value': m.value, 'selected': m == method} for m in SendMethod])
+        ctx = dict(
+            methods=[m.value for m in SendMethod],
+            method=self.request.match_info.get(
+                'method',
+                self.request.query.get('method', SendMethod.email_mandrill.value)
+            ),
+        )
         try:
             ctx.update(await self.get_context(morpheus_api))
         except ApiError as e:

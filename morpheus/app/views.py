@@ -283,7 +283,7 @@ class UserMessageHtmlView(TemplateView, _UserMessagesView):
         return from_unix_ms(ts).strftime('%a %Y-%m-%d %H:%M')
 
     def _events(self, data):
-        for event in data['_source'].get('events', []):
+        for event in reversed(data['_source'].get('events', [])):
             yield dict(
                 status=event['status'],
                 datetime=self._strftime(event['ts']),
@@ -483,6 +483,7 @@ class AdminGetView(AdminView):
             preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}',
             details_url=f'{self.request.scheme}://{self.request.host}{details_uri}',
             json_display=highlight(data, JsonLexer(), HtmlFormatter()),
+            form_action=self.app.router['admin-list'].url_for(),
         )
 
 
