@@ -14,6 +14,7 @@ import chevron
 import msgpack
 import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
+from aiohttp_jinja2 import template
 from arq.utils import from_unix_ms
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
@@ -22,16 +23,16 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
                      SmsNumbersModel, SmsSendModel, SubaccountModel)
-from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, UserView, View  # noqa
+from .utils import (THIS_DIR, ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, TemplateView, UserView,
+                    View)  # noqa
 
 logger = logging.getLogger('morpheus.web')
 
 
+@template('index.jinja')
 async def index(request):
-    template = (THIS_DIR / 'extra/index.html').read_text()
     settings = request.app['settings']
-    ctx = {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
-    return Response(text=chevron.render(template, data=ctx), content_type='text/html')
+    return {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
 
 
 class EmailSendView(ServiceView):
@@ -236,10 +237,12 @@ class UserMessageView(UserView):
         return Response(body=await r.text(), content_type='application/json')
 
 
-class UserMessagePreviewView(UserView):
+class UserMessagePreviewView(TemplateView, UserView):
     """
     preview a message
     """
+    template = 'sms-display-preview.jinja'
+
     async def call(self, request):
         es_query = {
             'bool': {
@@ -263,16 +266,14 @@ class UserMessagePreviewView(UserView):
         body = source['body']
         if method.startswith('sms'):
             # need to render the sms so it makes sense to users
-            body = chevron.render(
-                (THIS_DIR / 'extra/sms-display-preview.html').read_text(),
-                data={
-                    'from': source['from_name'],
-                    'to': source['to_last_name'],
-                    'status': source['status'],
-                    'message': body,
-                }
-            )
-        return Response(body=body, content_type='text/html')
+            return {
+                'from': source['from_name'],
+                'to': source['to_last_name'],
+                'status': source['status'],
+                'message': body,
+            }
+        else:
+            return {'raw': body}
 
 
 class UserAggregationView(UserView):
@@ -315,8 +316,8 @@ class UserAggregationView(UserView):
         return Response(body=await r.text(), content_type='application/json')
 
 
-class AdminView(BasicAuthView):
-    template = 'extra/admin.html'
+class AdminView(TemplateView, BasicAuthView):
+    template = 'admin.jinja'
 
     async def get_context(self, morpheus_api):
         raise NotImplementedError()
@@ -329,8 +330,7 @@ class AdminView(BasicAuthView):
             ctx.update(await self.get_context(morpheus_api))
         except ApiError as e:
             raise HTTPBadRequest(text=str(e))
-        template = (THIS_DIR / self.template).read_text()
-        return Response(text=chevron.render(template, data=ctx), content_type='text/html')
+        return ctx
 
 
 class AdminAggregatedView(AdminView):
@@ -345,7 +345,7 @@ class AdminAggregatedView(AdminView):
         headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
-        for period in reversed(data['_']['buckets']):
+        for period in reversed(data['buckets']):
             row = [datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
             row += [period[h]['doc_count'] or '0' for h in headings[1:-1]]
             was_sent = sum(period[h]['doc_count'] or 0 for h in was_sent_statuses)
@@ -356,7 +356,7 @@ class AdminAggregatedView(AdminView):
                 row.append(f'{0:0.2f}%')
             table_body.append(row)
         return dict(
-            total=data['doc_count'],
+            total=data.get('doc_count', 0),
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'Aggregated {method} data',
@@ -438,7 +438,7 @@ class AdminGetView(AdminView):
         return dict(
             sub_heading=f'Message {message_id}',
             extra=f"""
-                <iframe src="{self.settings.public_local_api_url}{preview_uri}"></iframe>
+                <iframe src="{self.request.scheme}://{self.request.host}{preview_uri}"></iframe>
                 {highlight(data, JsonLexer(), HtmlFormatter())}""",
         )
 
