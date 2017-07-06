@@ -12,6 +12,7 @@ import msgpack
 import phonenumbers
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
+from arq.utils import truncate
 from chevron import ChevronError
 from phonenumbers import parse as parse_number
 from phonenumbers import NumberParseException, PhoneNumberType, format_number, is_valid_number, number_type
@@ -163,7 +164,7 @@ class Sender(Actor):
         if not email_info:
             return
         main_logger.info('send to "%s" subject="%s" body=%d attachments=[%s]',
-                         j.address, email_info.subject, len(email_info.html_body),
+                         j.address, truncate(email_info.subject, 40), len(email_info.html_body),
                          ', '.join(f'{a["name"]}:{len(a["html"])}' for a in j.pdf_attachments))
         data = {
             'async': True,

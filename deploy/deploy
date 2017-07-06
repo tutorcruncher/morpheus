@@ -3,7 +3,7 @@ set -e
 THIS_DIR=$(dirname "$0")
 
 echo "building morpheus image..."
-docker build ${THIS_DIR}/../morpheus -t morpheus -q
+docker build ${THIS_DIR}/../morpheus -t morpheus
 
 sed "s/{{HOST_NAME}}/${APP_HOST_NAME}/g" nginx/nginx.conf > ${THIS_DIR}/../nginx/_build.nginx.conf
 echo "building nginx image..."

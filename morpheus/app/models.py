@@ -97,6 +97,9 @@ class EmailRecipientModel(BaseModel):
     headers: dict = {}
     pdf_attachments: List[AttachmentModel] = []
 
+    class Config:
+        max_anystr_length = int(1e7)
+
 
 class EmailSendModel(WebModel):
     uid: constr(min_length=20, max_length=40) = ...
