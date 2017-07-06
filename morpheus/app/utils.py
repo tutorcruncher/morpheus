@@ -18,6 +18,7 @@ import ujson
 from aiohttp import ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
+from aiohttp_jinja2 import template
 from arq.utils import to_unix_ms
 from pydantic import BaseModel, ValidationError
 
@@ -177,6 +178,15 @@ class BasicAuthView(View):
 
         if not secrets.compare_digest(password, self.settings.admin_basic_auth_password):
             raise HTTPUnauthorized(text='Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
+
+
+class TemplateView(View):
+    template = None
+
+    @classmethod
+    def view(cls):
+        view = super().view()
+        return template(cls.template)(view)
 
 
 class ApiError(RuntimeError):

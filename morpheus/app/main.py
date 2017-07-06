@@ -1,7 +1,9 @@
 import asyncio
 import logging
 
+import aiohttp_jinja2
 import async_timeout
+import jinja2
 from aiohttp.web import Application
 
 from .es import ElasticSearch
@@ -9,8 +11,8 @@ from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
 from .settings import Settings
-from .utils import Mandrill, MorpheusUserApi
-from .views import (THIS_DIR, AdminAggregatedView, AdminGetView, AdminListView, CreateSubaccountView, EmailSendView,
+from .utils import THIS_DIR, Mandrill, MorpheusUserApi
+from .views import (AdminAggregatedView, AdminGetView, AdminListView, CreateSubaccountView, EmailSendView,
                     MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView, SmsSendView,
                     SmsValidateView, TestWebhookView, UserAggregationView, UserMessagePreviewView, UserMessageView,
                     index)
@@ -85,6 +87,7 @@ def create_app(loop, settings: Settings=None):
         client_max_size=1024**2*100,
         middlewares=(stats_middleware, ErrorLoggingMiddleware())
     )
+    aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(str(THIS_DIR / 'templates')))
 
     app.update(
         settings=settings,

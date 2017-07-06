@@ -1,3 +1,6 @@
+{%- if raw -%}
+  {{ raw|safe }}
+{%- else -%}
 <!DOCTYPE HTML>
 <html lang="en">
 <head>
@@ -59,3 +62,4 @@
   </div>
 </body>
 </html>
+{%- endif -%}
