@@ -282,7 +282,7 @@ class UserAggregationView(UserView):
     async def call(self, request):
         # TODO allow more filtering here, filter to last X days.
         r = await self.app['es'].get(
-            'messages/{[method]}/_search?size=0&filter_path=aggregations'.format(request.match_info),
+            'messages/{[method]}/_search?size=0&filter_path=hits.total,aggregations'.format(request.match_info),
             query={
                 'bool': {
                     'filter': [
@@ -340,12 +340,12 @@ class AdminAggregatedView(AdminView):
 
         r = await morpheus_api.get(url)
         data = await r.json()
-        data = data['aggregations']['_']
+        bucket_data = data['aggregations']['_']['buckets']
         # ignore "click" and "unsub"
         headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
-        for period in reversed(data['_']['buckets']):
+        for period in reversed(bucket_data):
             row = [datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
             row += [period[h]['doc_count'] or '0' for h in headings[1:-1]]
             was_sent = sum(period[h]['doc_count'] or 0 for h in was_sent_statuses)
@@ -356,7 +356,7 @@ class AdminAggregatedView(AdminView):
                 row.append(f'{0:0.2f}%')
             table_body.append(row)
         return dict(
-            total=data['doc_count'],
+            total=data['hits']['total'],
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'Aggregated {method} data',

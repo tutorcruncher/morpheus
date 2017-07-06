@@ -184,7 +184,9 @@ def cli(loop, test_client, settings, setup_elastic_search):
     app = create_app(loop, settings=settings)
     app.on_startup.append(modify_startup)
     app.on_shutdown.append(shutdown)
-    return loop.run_until_complete(test_client(app))
+    cli_ = loop.run_until_complete(test_client(app))
+    cli_.server.app['morpheus_api'].root = f'http://localhost:{cli_.server.port}/'
+    return cli_
 
 
 @pytest.fixture
