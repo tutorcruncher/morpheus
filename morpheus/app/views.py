@@ -252,11 +252,12 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         msg_id = self.request.match_info['id']
         r = await self.query(message_id=msg_id)
         data = await r.json()
-        if data['hits']['total'] == 0:
+        print(data)
+        if len(data['hits']['hits']) == 0:
             raise HTTPNotFound(text='message not found')
         data = data['hits']['hits'][0]
 
-        preview_uri = self.app.router['user-preview'].url_for(**self.request.match_info)
+        preview_path = self.app.router['user-preview'].url_for(**self.request.match_info)
         return dict(
             base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
             title='{_type} - {_id}'.format(**data),
@@ -264,7 +265,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             method=data['_type'],
             details=self._details(data),
             events=list(self._events(data)),
-            preview_url=f'{self.root_url()}{preview_uri}?{self.request.query_string}',
+            preview_url=self.full_url(f'{preview_path}?{self.request.query_string}'),
             attachments=data['_source'].get('attachments', []),
         )
 
@@ -312,18 +313,18 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             next_offset = offset + size
             query = dict(self.request.query)
             query['from'] = next_offset
-            uri = self.request.rel_url.with_query(query)
+            path = self.request.rel_url.with_query(query)
             pagination['next'] = dict(
-                href=f'{self.root_url()}{uri}',
+                href=self.full_url(path),
                 text=f'{next_offset + 1} - {min(next_offset + size, total)}'
             )
         if offset:
             previous_offset = offset - size
             query = dict(self.request.query)
             query['from'] = previous_offset
-            uri = self.request.rel_url.with_query(query)
+            path = self.request.rel_url.with_query(query)
             pagination['previous'] = dict(
-                href=f'{self.root_url()}{uri}',
+                href=self.full_url(path),
                 text=f'{previous_offset + 1} - {max(offset, 0)}'
             )
 
@@ -338,13 +339,16 @@ class UserMessageListView(TemplateView, _UserMessagesView):
 
     def _table_body(self, hits):
         method = self.request.match_info['method']
+        query = dict(self.request.query)
+        query.pop('from', None)
+        route = self.app.router['user-message-get']
         for msg in hits:
             msg_source = msg['_source']
-            url = self.app.router['user-message-get'].url_for(method=method, id=msg['_id'])
+            path = route.url_for(method=method, id=msg['_id']).with_query(query)
             subject = msg_source.get('subject') or msg_source.get('body', '')
             yield [
                 {
-                    'href': f'{url}?{self.request.query_string}',
+                    'href': self.full_url(path),
                     'text': msg_source['to_address'],  # TODO prettier
                 },
                 self._strftime((msg_source['send_ts'])),
@@ -509,7 +513,7 @@ class AdminListView(AdminView):
             )
         else:
             next_page = None
-        user_list_uri = morpheus_api.modify_url(self.app.router['user-message-list'].url_for(method=method))
+        user_list_path = morpheus_api.modify_url(self.app.router['user-message-list'].url_for(method=method))
         return dict(
             total=data['hits']['total'],
             table_headings=headings,
@@ -517,7 +521,7 @@ class AdminListView(AdminView):
             sub_heading=f'List {method} messages',
             search=search,
             next_page=next_page,
-            user_list_url=f'{self.root_url()}{user_list_uri}',
+            user_list_url=self.full_url(user_list_path),
         )
 
 
@@ -540,12 +544,12 @@ class AdminGetView(AdminView):
         data = json.dumps(data, indent=2)
         data = re.sub('14\d{8,11}', self.replace_data, data)
 
-        preview_uri = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
-        details_uri = morpheus_api.modify_url(self.app.router['user-message-get'].url_for(method=method, id=message_id))
+        preview_path = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
+        deets_path = morpheus_api.modify_url(self.app.router['user-message-get'].url_for(method=method, id=message_id))
         return dict(
             sub_heading=f'Message {message_id}',
-            preview_url=f'{self.root_url()}{preview_uri}',
-            details_url=f'{self.root_url()}{details_uri}',
+            preview_url=self.full_url(preview_path),
+            details_url=self.full_url(deets_path),
             json_display=highlight(data, JsonLexer(), HtmlFormatter()),
             form_action=self.app.router['admin-list'].url_for(),
         )
