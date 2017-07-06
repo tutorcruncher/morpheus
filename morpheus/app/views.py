@@ -22,7 +22,7 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
                      SmsNumbersModel, SmsSendModel, SubaccountModel)
-from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, ServiceView, UserView, View, Mandrill
+from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, UserView, View  # noqa
 
 logger = logging.getLogger('morpheus.web')
 
@@ -160,6 +160,10 @@ class CreateSubaccountView(View):
     Create a new subaccount with mandrill for new sending company
     """
     async def call(self, request):
+        method = request.match_info['method']
+        if method != SendMethod.email_mandrill:
+            return Response(text=f'no subaccount creation required for "{method}"\n')
+
         m = await self.request_data(SubaccountModel)
         mandrill: Mandrill = self.app['mandrill']
 
@@ -171,16 +175,20 @@ class CreateSubaccountView(View):
         )
         data = await r.json()
         if r.status == 500:
-            if f'A subaccount with id {m.company_code} already exists' in data['message']:
-                if not m.reusable:
-                    r = await mandrill.get('subaccounts/info.json', id=m.company_code)
-                    data = await r.json()
-                    if data['sent_total'] > 100:
-                        return Response(text='subaccount already exists\n', status=409)
+            if f'A subaccount with id {m.company_code} already exists' in data.get('message', ''):
+                r = await mandrill.get('subaccounts/info.json', id=m.company_code)
+                data = await r.json()
+                total_sent = data['sent_total']
+                if total_sent > 100:
+                    return Response(text=f'subaccount already exists with {total_sent} emails sent, '
+                                         f'reuse of subaccount id not permitted\n', status=409)
+                else:
+                    return Response(text=f'subaccount already exists with only {total_sent} emails sent, '
+                                         f'reuse of subaccount id permitted\n')
             else:
                 return Response(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
-
-        return Response(text='subaccount created\n')
+        else:
+            return Response(text='subaccount created\n', status=201)
 
 
 class UserMessageView(UserView):

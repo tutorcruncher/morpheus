@@ -118,7 +118,6 @@ class EmailSendModel(WebModel):
 class SubaccountModel(WebModel):
     company_code: str = ...
     company_name: str = None
-    reusable: bool = False
 
 
 class SmsRecipientModel(BaseModel):

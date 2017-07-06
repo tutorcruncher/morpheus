@@ -174,3 +174,57 @@ async def test_message_stats_old(cli, send_email):
         count=1,
         age=1200,
     )
+
+
+async def test_create_sub_account_new_few_sent(cli, mock_external):
+    data = {
+        'company_code': 'foobar'
+    }
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'test-token'})
+    assert r.status == 201, await r.text()
+    assert 'subaccount created\n' == await r.text()
+    assert mock_external.app['request_log'] == ['POST /mandrill/subaccounts/add.json > 200']
+
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    assert 'subaccount already exists with only 42 emails sent, reuse of subaccount id permitted\n' == await r.text()
+    assert mock_external.app['request_log'] == [
+        'POST /mandrill/subaccounts/add.json > 200',
+        'POST /mandrill/subaccounts/add.json > 500',
+        'GET /mandrill/subaccounts/info.json > 200',
+    ]
+
+
+async def test_create_sub_account_lots(cli, mock_external):
+    data = {
+        'company_code': 'lots-sent'
+    }
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'test-token'})
+    assert r.status == 201, await r.text()
+
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'test-token'})
+    assert r.status == 409, await r.text()
+    assert 'subaccount already exists with 200 emails sent, reuse of subaccount id not permitted\n' == await r.text()
+    assert mock_external.app['request_log'] == [
+        'POST /mandrill/subaccounts/add.json > 200',
+        'POST /mandrill/subaccounts/add.json > 500',
+        'GET /mandrill/subaccounts/info.json > 200',
+    ]
+
+
+async def test_create_sub_account_wrong_response(cli, mock_external):
+    data = {
+        'company_code': 'broken'
+    }
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'test-token'})
+    assert r.status == 400, await r.text()
+
+    assert mock_external.app['request_log'] == ['POST /mandrill/subaccounts/add.json > 500']
+
+
+async def test_create_sub_account_other_method(cli, mock_external):
+    r = await cli.post('/create-subaccount/email-test/', headers={'Authorization': 'test-token'})
+    assert r.status == 200, await r.text()
+    assert 'no subaccount creation required for "email-test"\n' == await r.text()
+
+    assert mock_external.app['request_log'] == []

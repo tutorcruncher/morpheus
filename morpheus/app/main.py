@@ -21,7 +21,7 @@ logger = logging.getLogger('morpheus.main')
 async def get_mandrill_webhook_key(app):
     try:
         settings, mandrill_webhook_url = app['settings'], app['mandrill_webhook_url']
-        if not (settings.mandrill_key and settings.host_name):
+        if not (settings.mandrill_key and settings.host_name not in (None, 'localhost')):
             return
 
         mandrill = app['mandrill']
@@ -107,18 +107,17 @@ def create_app(loop, settings: Settings=None):
     app.router.add_post('/send/sms/', SmsSendView.view(), name='send-smss')
     app.router.add_get('/validate/sms/', SmsValidateView.view(), name='validate-smss')
 
-    # TODO add method here.
-    app.router.add_post('/create-subaccount/', CreateSubaccountView.view(), name='create-subaccount')
+    methods = '/{method:%s}/' % '|'.join(m.value for m in SendMethod)
+    app.router.add_post('/create-subaccount' + methods, CreateSubaccountView.view(), name='create-subaccount')
 
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
     app.router.add_head('/webhook/mandrill/', index, name='webhook-mandrill-head')
     app.router.add_post('/webhook/mandrill/', MandrillWebhookView.view(), name='webhook-mandrill')
     app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
-    user_prefix = '/user/{method:%s}/' % '|'.join(m.value for m in SendMethod)
-    app.router.add_get(user_prefix, UserMessageView.view(), name='user-messages')
-    app.router.add_get(user_prefix + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
-    app.router.add_get(user_prefix + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')
+    app.router.add_get('/user' + methods, UserMessageView.view(), name='user-messages')
+    app.router.add_get('/user' + methods + 'aggregation/', UserAggregationView.view(), name='user-aggregation')
+    app.router.add_get('/user' + methods + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
     app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')
