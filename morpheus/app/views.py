@@ -360,13 +360,16 @@ class AdminListView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
 
-        headings = ['Score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
+        headings = ['score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
         for i, message in enumerate(data['hits']['hits']):
-            score, source = message['_score'], message['_source']
+            score, source, id = message['_score'], message['_source'], message['_id']
             table_body.append([
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
-                f'<a href="/admin/get/{method}/{message["_id"]}/" class="short">{message["_id"]}</a>',
+                {
+                    'href': self.app.router['admin-get'].url_for(method=method, id=id),
+                    'text': id,
+                },
                 source['company'],
                 source['to_address'],
                 source['status'],
@@ -382,10 +385,9 @@ class AdminListView(AdminView):
                 'search': search or '',
                 'offset': next_offset,
             }
-            next_page = (
-                f'<a href="{self.app.router["admin-list"].url_for().with_query(query)}" class="pull-right">'
-                f'Next: {next_offset} - {next_offset + 100}'
-                f'</a>'
+            next_page = dict(
+                href=self.app.router['admin-list'].url_for().with_query(query),
+                text=f'Next: {next_offset} - {next_offset + 100}'
             )
         else:
             next_page = None
@@ -400,6 +402,8 @@ class AdminListView(AdminView):
 
 
 class AdminGetView(AdminView):
+    template = 'admin-get.jinja'
+
     @staticmethod
     def replace_data(m):
         dt = parse_datetime(m.group())
@@ -419,9 +423,8 @@ class AdminGetView(AdminView):
         preview_uri = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
         return dict(
             sub_heading=f'Message {message_id}',
-            extra=f"""
-                <iframe src="{self.request.scheme}://{self.request.host}{preview_uri}"></iframe>
-                {highlight(data, JsonLexer(), HtmlFormatter())}""",
+            preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}',
+            json_display=highlight(data, JsonLexer(), HtmlFormatter()),
         )
 
 

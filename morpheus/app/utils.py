@@ -182,7 +182,7 @@ class TemplateView(View):
 
 
 class AdminView(TemplateView, BasicAuthView):
-    template = 'admin.jinja'
+    template = 'admin-list.jinja'
 
     async def get_context(self, morpheus_api):
         raise NotImplementedError()

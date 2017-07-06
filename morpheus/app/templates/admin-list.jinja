@@ -1,0 +1,34 @@
+{% extends 'admin-base.jinja' %}
+
+{% block main %}
+  <h3>Total: {{ total }}</h3>
+  <table class="table">
+    <thead>
+      <tr>
+        {% for t in table_headings %}
+          <th>{{ t }}</th>
+        {%- endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in table_body %}
+        <tr>
+          {% for col in row %}
+            <td>
+              {%- if col.href -%}
+                <a href="{{ col.href }}">{{ col.text }}</a>
+              {%- else -%}
+                {{ col }}
+              {%- endif -%}
+            </td>
+          {%- endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="pull-right">
+    {% if next_page %}
+      <a href="{{ next_page.href }}" class="pull-right">{{ next_page.text }}</a>
+    {% endif %}
+  </div>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends 'admin-base.jinja' %}
+
+{% block main %}
+  <iframe src="{{ preview_url }}"></iframe>
+
+  {{ json_display|safe }}
+{% endblock %}
