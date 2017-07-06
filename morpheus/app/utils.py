@@ -20,8 +20,8 @@ from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
 from aiohttp_jinja2 import template
 from arq.utils import to_unix_ms
-from pydantic import BaseModel, ValidationError
 
+from .models import SendMethod, WebModel
 from .settings import Settings
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -31,14 +31,6 @@ api_logger = logging.getLogger('morpheus.external')
 class ContentType(str, Enum):
     JSON = 'application/json'
     MSGPACK = 'application/msgpack'
-
-
-class WebModel(BaseModel):
-    def _process_values(self, values):
-        try:
-            return super()._process_values(values)
-        except ValidationError as e:
-            raise HTTPBadRequest(text=e.display_errors)
 
 
 class Session(WebModel):
@@ -187,6 +179,23 @@ class TemplateView(View):
     def view(cls):
         view = super().view()
         return template(cls.template)(view)
+
+
+class AdminView(TemplateView, BasicAuthView):
+    template = 'admin.jinja'
+
+    async def get_context(self, morpheus_api):
+        raise NotImplementedError()
+
+    async def call(self, request):
+        morpheus_api = self.app['morpheus_api']
+        method = self.request.query.get('method', SendMethod.email_mandrill)
+        ctx = dict(methods=[{'value': m.value, 'selected': m == method} for m in SendMethod])
+        try:
+            ctx.update(await self.get_context(morpheus_api))
+        except ApiError as e:
+            raise HTTPBadRequest(text=str(e))
+        return ctx
 
 
 class ApiError(RuntimeError):

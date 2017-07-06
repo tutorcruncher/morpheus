@@ -22,7 +22,8 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
                      SmsNumbersModel, SmsSendModel, SubaccountModel)
-from .utils import ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, TemplateView, UserView, View  # noqa
+from .utils import Mandrill  # noqa
+from .utils import AdminView, AuthView, ServiceView, TemplateView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
 
@@ -239,7 +240,7 @@ class UserMessagePreviewView(TemplateView, UserView):
     """
     preview a message
     """
-    template = 'sms-display-preview.jinja'
+    template = 'message-preview.jinja'
 
     async def call(self, request):
         es_query = {
@@ -312,23 +313,6 @@ class UserAggregationView(UserView):
             }
         )
         return Response(body=await r.text(), content_type='application/json')
-
-
-class AdminView(TemplateView, BasicAuthView):
-    template = 'admin.jinja'
-
-    async def get_context(self, morpheus_api):
-        raise NotImplementedError()
-
-    async def call(self, request):
-        morpheus_api = self.app['morpheus_api']
-        method = self.request.query.get('method', SendMethod.email_mandrill)
-        ctx = dict(methods=[{'value': m.value, 'selected': m == method} for m in SendMethod])
-        try:
-            ctx.update(await self.get_context(morpheus_api))
-        except ApiError as e:
-            raise HTTPBadRequest(text=str(e))
-        return ctx
 
 
 class AdminAggregatedView(AdminView):
