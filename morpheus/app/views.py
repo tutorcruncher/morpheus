@@ -15,6 +15,7 @@ import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
 from aiohttp_jinja2 import template
 from arq.utils import from_unix_ms
+from markupsafe import Markup
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
@@ -364,6 +365,7 @@ class AdminListView(AdminView):
         table_body = []
         for i, message in enumerate(data['hits']['hits']):
             score, source, id = message['_score'], message['_source'], message['_id']
+            subject = source.get('subject') or source.get('body', '')[:50]
             table_body.append([
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
                 {
@@ -375,7 +377,7 @@ class AdminListView(AdminView):
                 source['status'],
                 from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
                 from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
-                source.get('subject') or source.get('body', '')[:50],
+                Markup(f'<span class="subject">{subject}</span>'),
             ])
 
         if len(data['hits']['hits']) == 100:

@@ -16,7 +16,7 @@
           {% for col in row %}
             <td>
               {%- if col.href -%}
-                <a href="{{ col.href }}">{{ col.text }}</a>
+                <a href="{{ col.href }}" class="short">{{ col.text }}</a>
               {%- else -%}
                 {{ col }}
               {%- endif -%}

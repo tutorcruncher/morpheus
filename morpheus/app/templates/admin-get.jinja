@@ -4,4 +4,10 @@
   <iframe src="{{ preview_url }}"></iframe>
 
   {{ json_display|safe }}
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+  <script>
+    var url = '{{ details_url }}'
+  </script>
+
 {% endblock %}
