@@ -10,7 +10,6 @@ from itertools import product
 from statistics import mean, stdev
 from time import time
 
-import chevron
 import msgpack
 import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
@@ -23,8 +22,7 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
                      SmsNumbersModel, SmsSendModel, SubaccountModel)
-from .utils import (THIS_DIR, ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, TemplateView, UserView,
-                    View)  # noqa
+from .utils import ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, TemplateView, UserView, View  # noqa
 
 logger = logging.getLogger('morpheus.web')
 
