@@ -10,11 +10,12 @@ from itertools import product
 from statistics import mean, stdev
 from time import time
 
-import chevron
 import msgpack
 import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
+from aiohttp_jinja2 import template
 from arq.utils import from_unix_ms
+from markupsafe import Markup
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
@@ -22,16 +23,16 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
                      SmsNumbersModel, SmsSendModel, SubaccountModel)
-from .utils import THIS_DIR, ApiError, AuthView, BasicAuthView, Mandrill, ServiceView, UserView, View  # noqa
+from .utils import Mandrill  # noqa
+from .utils import AdminView, AuthView, ServiceView, TemplateView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
 
 
+@template('index.jinja')
 async def index(request):
-    template = (THIS_DIR / 'extra/index.html').read_text()
     settings = request.app['settings']
-    ctx = {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
-    return Response(text=chevron.render(template, data=ctx), content_type='text/html')
+    return {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
 
 
 class EmailSendView(ServiceView):
@@ -191,11 +192,8 @@ class CreateSubaccountView(View):
             return Response(text='subaccount created\n', status=201)
 
 
-class UserMessageView(UserView):
-    """
-    List or search of messages for an authenticated user
-    """
-    async def call(self, request):
+class _UserMessagesView(UserView):
+    async def query(self, *, message_id=None, tags=None, query=None):
         es_query = {
             'query': {
                 'bool': {
@@ -209,9 +207,6 @@ class UserMessageView(UserView):
             'from': self.get_arg_int('from', 0),
             'size': self.get_arg_int('size', 10),
         }
-        message_id = request.query.get('message_id')
-        tags = request.query.getall('tags', None)
-        query = request.query.get('q')
         if message_id:
             es_query['query']['bool']['filter'].append({'term': {'_id': message_id}})
         elif query:
@@ -230,16 +225,78 @@ class UserMessageView(UserView):
                 {'send_ts': 'desc'},
             ]
 
-        r = await self.app['es'].get(
-            'messages/{[method]}/_search?filter_path=hits'.format(request.match_info), **es_query
+        return await self.app['es'].get(
+            f'messages/{self.request.match_info["method"]}/_search?filter_path=hits', **es_query
+        )
+
+
+class UserMessagesJsonView(_UserMessagesView):
+    async def call(self, request):
+        r = await self.query(
+            message_id=request.query.get('message_id'),
+            tags=request.query.getall('tags', None),
+            query=request.query.get('q')
         )
         return Response(body=await r.text(), content_type='application/json')
 
 
-class UserMessagePreviewView(UserView):
+class UserMessageHtmlView(TemplateView, _UserMessagesView):
+    template = 'message-details.jinja'
+
+    async def call(self, request):
+        msg_id = self.request.match_info['id']
+        r = await self.query(message_id=msg_id)
+        data = await r.json()
+        if data['hits']['total'] == 0:
+            raise HTTPNotFound(text='message not found')
+        data = data['hits']['hits'][0]
+
+        preview_uri = self.app.router['user-preview'].url_for(**self.request.match_info)
+        return dict(
+            base_template='message-details-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
+            id=data['_id'],
+            method=data['_type'],
+            details=self._details(data),
+            events=list(self._events(data)),
+            preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}?{self.request.query_string}',
+            attachments=data['_source'].get('attachments', []),
+        )
+
+    def _details(self, data):
+        yield 'ID', data['_id']
+        source = data['_source']
+        yield 'Status', source['status']  # TODO pretty
+        if data['_type'].startswith('email'):
+            yield (
+                'To',
+                f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
+            )
+        else:
+            yield 'To', source['to_last_name']
+        yield 'Subject', source.get('subject')
+        yield 'Send Time', self._strftime(source['send_ts'])
+        yield 'Last Updated', self._strftime(source['update_ts'])
+
+    @classmethod
+    def _strftime(cls, ts):
+        # TODO: custom formats
+        return from_unix_ms(ts).strftime('%a %Y-%m-%d %H:%M')
+
+    def _events(self, data):
+        for event in data['_source'].get('events', []):
+            yield dict(
+                status=event['status'],
+                datetime=self._strftime(event['ts']),
+                details=Markup(json.dumps(event['extra'], indent=2)),
+            )
+
+
+class UserMessagePreviewView(TemplateView, UserView):
     """
     preview a message
     """
+    template = 'message-preview.jinja'
+
     async def call(self, request):
         es_query = {
             'bool': {
@@ -263,16 +320,14 @@ class UserMessagePreviewView(UserView):
         body = source['body']
         if method.startswith('sms'):
             # need to render the sms so it makes sense to users
-            body = chevron.render(
-                (THIS_DIR / 'extra/sms-display-preview.html').read_text(),
-                data={
-                    'from': source['from_name'],
-                    'to': source['to_last_name'],
-                    'status': source['status'],
-                    'message': body,
-                }
-            )
-        return Response(body=body, content_type='text/html')
+            return {
+                'from': source['from_name'],
+                'to': source['to_last_name'],
+                'status': source['status'],
+                'message': body,
+            }
+        else:
+            return {'raw': body}
 
 
 class UserAggregationView(UserView):
@@ -313,24 +368,6 @@ class UserAggregationView(UserView):
             }
         )
         return Response(body=await r.text(), content_type='application/json')
-
-
-class AdminView(BasicAuthView):
-    template = 'extra/admin.html'
-
-    async def get_context(self, morpheus_api):
-        raise NotImplementedError()
-
-    async def call(self, request):
-        morpheus_api = self.app['morpheus_api']
-        method = self.request.query.get('method', SendMethod.email_mandrill)
-        ctx = dict(methods=[{'value': m.value, 'selected': m == method} for m in SendMethod])
-        try:
-            ctx.update(await self.get_context(morpheus_api))
-        except ApiError as e:
-            raise HTTPBadRequest(text=str(e))
-        template = (THIS_DIR / self.template).read_text()
-        return Response(text=chevron.render(template, data=ctx), content_type='text/html')
 
 
 class AdminAggregatedView(AdminView):
@@ -378,19 +415,23 @@ class AdminListView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
 
-        headings = ['Score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
+        headings = ['score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
         for i, message in enumerate(data['hits']['hits']):
-            score, source = message['_score'], message['_source']
+            score, source, id = message['_score'], message['_source'], message['_id']
+            subject = source.get('subject') or source.get('body', '')[:50]
             table_body.append([
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
-                f'<a href="/admin/get/{method}/{message["_id"]}/" class="short">{message["_id"]}</a>',
+                {
+                    'href': self.app.router['admin-get'].url_for(method=method, id=id),
+                    'text': id,
+                },
                 source['company'],
                 source['to_address'],
                 source['status'],
                 from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
                 from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
-                source.get('subject') or source.get('body', '')[:50],
+                Markup(f'<span class="subject">{subject}</span>'),
             ])
 
         if len(data['hits']['hits']) == 100:
@@ -400,10 +441,9 @@ class AdminListView(AdminView):
                 'search': search or '',
                 'offset': next_offset,
             }
-            next_page = (
-                f'<a href="{self.app.router["admin-list"].url_for().with_query(query)}" class="pull-right">'
-                f'Next: {next_offset} - {next_offset + 100}'
-                f'</a>'
+            next_page = dict(
+                href=self.app.router['admin-list'].url_for().with_query(query),
+                text=f'Next: {next_offset} - {next_offset + 100}'
             )
         else:
             next_page = None
@@ -418,6 +458,8 @@ class AdminListView(AdminView):
 
 
 class AdminGetView(AdminView):
+    template = 'admin-get.jinja'
+
     @staticmethod
     def replace_data(m):
         dt = parse_datetime(m.group())
@@ -435,11 +477,12 @@ class AdminGetView(AdminView):
         data = re.sub('14\d{8,11}', self.replace_data, data)
 
         preview_uri = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
+        details_uri = morpheus_api.modify_url(self.app.router['user-message-get'].url_for(method=method, id=message_id))
         return dict(
             sub_heading=f'Message {message_id}',
-            extra=f"""
-                <iframe src="{self.settings.public_local_api_url}{preview_uri}"></iframe>
-                {highlight(data, JsonLexer(), HtmlFormatter())}""",
+            preview_url=f'{self.request.scheme}://{self.request.host}{preview_uri}',
+            details_url=f'{self.request.scheme}://{self.request.host}{details_uri}',
+            json_display=highlight(data, JsonLexer(), HtmlFormatter()),
         )
 
 

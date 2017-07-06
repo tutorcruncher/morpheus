@@ -510,7 +510,7 @@ class Sender(Actor):
             update_ts=send_ts,
             status=MessageStatus.send,
             group_id=j.group_id,
-            to_last_name=number.number_formatted,
+            to_last_name=number.number_formatted,  # TODO add first and last name
             to_address=number.number,
             from_name=j.from_name,
             tags=j.tags,

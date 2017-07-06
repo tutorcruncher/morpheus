@@ -20,9 +20,11 @@
     <div class="form-group">
       <label for="method">Send Method:</label>
       <select name="method" id="method">
-        {{#methods}}
-        <option value="{{ value }}"{{#selected}} selected="selected"{{/selected}}>{{ value }}</option>
-        {{/methods}}
+        {% for method in methods %}
+        <option value="{{ method.value }}"{% if method.selected %} selected="selected"{% endif %}>
+          {{ method.value }}
+        </option>
+        {% endfor %}
       </select>
     </div>
 
@@ -44,32 +46,7 @@
   </form>
 
   <h2>{{ sub_heading }}</h2>
-  {{^extra}}
-    <h3>Total: {{ total }}</h3>
-    <table class="table">
-      <thead>
-        <tr>
-          {{#table_headings}}
-            <th>{{ . }}</th>
-          {{/table_headings}}
-        </tr>
-      </thead>
-      <tbody>
-        {{#table_body}}
-          <tr>
-            {{#.}}
-            <td>{{{ . }}}</td>
-            {{/.}}
-          </tr>
-        {{/table_body}}
-      </tbody>
-    </table>
-    <div class="pull-right">
-      {{{ next_page }}}
-    </div>
-  {{/extra}}
-  <div>
-    {{{ extra }}}
-  </div>
+  {% block main %}{% endblock %}
+
 </body>
 </html>

@@ -1,0 +1,62 @@
+{% extends base_template %}
+
+{% block main %}
+<div class="morpheus-msg">
+  <div class="details row">
+    {% for name, value in details %}
+      <span class="col-md-6 item">
+        <label>{{ name }}:</label>
+        <span>
+          {%- if value -%}
+            {{ value }}
+          {%- else -%}
+            &mdash;
+          {%- endif -%}
+        </span>{# TODO could add help text here #}
+      </span>
+    {% endfor %}
+  </div>
+
+  <iframe class="morpheus-msg-preview" src="{{ preview_url }}"></iframe>
+
+  <h3>Attachments</h3>
+  {% if attachments %}
+    <div class="attachments">
+      <ul>
+        {% for a in attachments %}
+        <li>
+          {{ a }}
+          {# TODO add link to original document #}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% else %}
+    <div>&mdash;</div>
+  {% endif %}
+
+  <h3>Events</h3>
+  {% if events %}
+    <div class="panel-group events" id="morpheus-accordion">
+      {% for event in events %}
+        <div class="panel panel-default">
+          <div class="panel-heading">
+            <h4 class="panel-title">
+              <a role="button" data-toggle="collapse" data-parent="#morpheus-accordion" href="#m-event-{{ loop.index }}">
+                {{ event.status }} &bull; {{ event.datetime }}
+              </a>
+            </h4>
+          </div>
+          <div id="m-event-{{ loop.index }}" class="panel-collapse collapse">
+            <div class="panel-body">
+              <pre><code class="JSON">{{ event.details }}</code></pre>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div>&mdash;</div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import re
 import uuid
 from datetime import datetime
 from urllib.parse import urlencode
@@ -30,7 +31,7 @@ async def test_user_list(cli, settings, send_email):
     await send_email(uid=str(uuid.uuid4()), company_code='different1')
     await send_email(uid=str(uuid.uuid4()), company_code='different2')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url('/user/email-test/', settings, 'whoever'))
+    r = await cli.get(modify_url('/user/email-test/messages.json', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
@@ -43,7 +44,7 @@ async def test_user_list(cli, settings, send_email):
     assert hit['_source']['company'] == 'whoever'
     assert hit['_source']['status'] == 'send'
 
-    r = await cli.get(modify_url('/user/email-test/', settings, '__all__'))
+    r = await cli.get(modify_url('/user/email-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 6
@@ -59,7 +60,7 @@ async def test_user_search(cli, settings, send_email):
 
     await send_email(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url('/user/email-test/?q=cherry', settings, 'whoever'))
+    r = await cli.get(modify_url('/user/email-test/messages.json?q=cherry', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 1
@@ -67,7 +68,7 @@ async def test_user_search(cli, settings, send_email):
     assert hit['_id'] == msgs['cherry']
     assert hit['_index'] == 'messages'
     assert hit['_source']['subject'] == 'cherry'
-    r = await cli.get(modify_url('/user/email-test/?q=eggplant', settings, 'whoever'))
+    r = await cli.get(modify_url('/user/email-test/messages.json?q=eggplant', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
@@ -82,7 +83,7 @@ async def test_user_aggregate(cli, settings, send_email):
 
     await send_email(uid=str(uuid.uuid4()), company_code='different')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url('/user/email-test/aggregation/', settings, 'whoever'))
+    r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
@@ -91,7 +92,7 @@ async def test_user_aggregate(cli, settings, send_email):
     assert buckets[0]['doc_count'] == 4
     assert buckets[0]['send']['doc_count'] == 4
     assert buckets[0]['open']['doc_count'] == 0
-    r = await cli.get(modify_url('/user/email-test/aggregation/', settings, '__all__'))
+    r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['aggregations']['_']['buckets'][0]['doc_count'] == 5
@@ -147,6 +148,39 @@ async def test_user_tags(cli, settings, send_email):
     assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
 
 
+async def test_message_details(cli, settings, send_email):
+    msg_id = await send_email(company_code='test-details')
+
+    data = {
+        'ts': int(1e10),
+        'event': 'open',
+        '_id': msg_id,
+        'user_agent': 'testincalls'
+    }
+    r = await cli.post('/webhook/test/', json=data)
+    assert r.status == 200, await r.text()
+
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    spaceless = re.sub('\n +', '\n', text)
+    # print(spaceless)
+    assert '<label>Subject:</label>\n<span>test message</span>' in spaceless
+    assert '<label>To:</label>\n<span>&lt;foobar@testing.com&gt;</span>' in spaceless
+
+    assert 'open &bull;' in text
+    assert '"user_agent": "testincalls",' in text
+
+
+async def test_message_details_missing(cli, settings):
+    r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
+    assert r.status == 404, await r.text()
+    text = await r.text()
+    assert 'message not found' == text
+
+
 async def test_message_preview(cli, settings, send_email):
     msg_id = await send_email(company_code='preview')
     await cli.server.app['es'].get('messages/_refresh')
@@ -161,7 +195,7 @@ async def test_user_sms(cli, settings, send_sms):
 
     await send_sms(uid=str(uuid.uuid4()), company_code='flip')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url('/user/sms-test/', settings, 'snapcrap'))
+    r = await cli.get(modify_url('/user/sms-test/messages.json', settings, 'snapcrap'))
     assert r.status == 200, await r.text()
     data = await r.json()
     print(json.dumps(data, indent=2))
@@ -176,7 +210,7 @@ async def test_user_sms(cli, settings, send_sms):
     assert hit['_source']['cost'] == 0.012
     assert hit['_source']['events'] == []
 
-    r = await cli.get(modify_url('/user/sms-test/', settings, '__all__'))
+    r = await cli.get(modify_url('/user/sms-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 2

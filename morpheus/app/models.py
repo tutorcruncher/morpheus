@@ -3,11 +3,18 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List
 
-from pydantic import BaseModel, NameEmail, constr
-
-from .utils import WebModel
+from aiohttp.web_exceptions import HTTPBadRequest
+from pydantic import BaseModel, NameEmail, ValidationError, constr
 
 THIS_DIR = Path(__file__).parent.resolve()
+
+
+class WebModel(BaseModel):
+    def _process_values(self, values):
+        try:
+            return super()._process_values(values)
+        except ValidationError as e:
+            raise HTTPBadRequest(text=e.display_errors)
 
 
 class SendMethod(str, Enum):

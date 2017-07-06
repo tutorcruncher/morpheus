@@ -21,7 +21,7 @@ from pygments.lexers.html import HtmlLexer
 from requests.auth import HTTPBasicAuth
 
 hostname = os.getenv('APP_HOST_NAME', 'morpheus.example.com')
-root_url = f'https://{hostname}'
+root_url = os.getenv('MORPHEUS_URL', f'https://{hostname}')
 
 
 def sizeof_fmt(num):

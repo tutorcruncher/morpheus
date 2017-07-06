@@ -66,6 +66,14 @@ table, th, td {
   padding: 5px 10px;
 }
 
+table .subject {
+  display: inline-block;
+  width: 30ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .short {
   display: inline-block;
   width: 12ch;
