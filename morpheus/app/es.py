@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from time import time
 
 from .settings import Settings
 from .utils import THIS_DIR, ApiSession
@@ -96,6 +97,25 @@ class ElasticSearch(ApiSession):  # pragma: no cover
             f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true'
         )
         main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
+
+    async def restore_list(self):
+        r = await self.get(f'/_snapshot/{self.settings.snapshot_repo_name}/_all')
+        main_logger.info(json.dumps(await r.json(), indent=2))
+
+    async def restore_snapshot(self, snapshot_name):
+        for index_name in MAPPINGS.keys():
+            await self.post(f'{index_name}/_close')
+
+        main_logger.info('indices closed. Restoring backup %s, this may take some time...', snapshot_name)
+        start = time()
+        r = await self.post(
+            f'/_snapshot/{self.settings.snapshot_repo_name}/{snapshot_name}/_restore?wait_for_completion=true'
+        )
+        main_logger.info(json.dumps(await r.json(), indent=2))
+
+        main_logger.info('restore complete in %0.2fs, opening indices...', time() - start)
+        for index_name in MAPPINGS.keys():
+            await self.post(f'{index_name}/_open')
 
     async def _patch_update_mappings(self):
         for index_name, mapping_properties in MAPPINGS.items():

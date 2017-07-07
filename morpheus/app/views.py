@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 from html import escape
 from itertools import product
+from operator import itemgetter
 from statistics import mean, stdev
 from time import time
 
@@ -274,7 +275,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         yield 'Status', source['status']  # TODO pretty
 
         dst = f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
-        link = source['to_user_link']
+        link = source.get('to_user_link')
         if link:
             yield 'To', dict(
                 href=link,
@@ -299,7 +300,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
                 yield f'/attachment-doc/{doc_id}/', name
 
     def _events(self, data):
-        for event in reversed(data['_source'].get('events', [])):
+        for event in sorted(data['_source'].get('events', []), key=itemgetter('ts'), reverse=True):
             yield dict(
                 status=event['status'],
                 datetime=self._strftime(event['ts']),

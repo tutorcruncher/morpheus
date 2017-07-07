@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
@@ -12,7 +12,7 @@ import msgpack
 import phonenumbers
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
-from arq.utils import truncate
+from arq.utils import from_unix_ms, truncate
 from chevron import ChevronError
 from phonenumbers import parse as parse_number
 from phonenumbers import NumberParseException, PhoneNumberType, format_number, is_valid_number, number_type
@@ -567,20 +567,23 @@ class Sender(Actor):
             await self.update_message_status('email-mandrill', m, log_each=False)
 
     async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
+        try:
+            r = await self.es.get(f'messages/{es_type}/{m.message_id}')
+        except ApiError as e:
+            if e.status == 404:
+                return
+            else:  # pragma: no cover
+                raise
+        data = await r.json()
+
+        old_updat_ts = from_unix_ms(data['_source']['update_ts'])
+        if m.ts.tzinfo:
+            old_updat_ts = old_updat_ts.replace(tzinfo=timezone.utc)
         update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=10'
         try:
-            await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
-        except ApiError as e:  # pragma: no cover
-            # no error here if we know the problem to avoid mandrill repeatedly trying to send the event
-            if e.status == 409:
-                main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-                return
-            elif e.status == 404:
-                return
-            else:
-                raise
-        log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-        try:
+            if m.ts >= old_updat_ts:
+                await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
+            log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
             await self.es.post(
                 update_uri,
                 script={
@@ -595,6 +598,7 @@ class Sender(Actor):
                 }
             )
         except ApiError as e:  # pragma: no cover
+            # no error here if we know the problem to avoid mandrill repeatedly trying to send the event
             if e.status == 409:
                 main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
                 return

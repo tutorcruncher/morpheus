@@ -119,16 +119,27 @@ def elasticsearch_setup(force_create_index, force_create_repo, patch):
 
 
 @cli.command()
-def elasticsearch_snapshot():
+@click.argument('action', type=click.Choice(['create', 'list', 'restore']))
+@click.argument('snapshot-name', required=False)
+def elasticsearch_snapshot(action, snapshot_name):
     """
     create an elastic search snapshot
     """
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    es = ElasticSearch(settings=settings)
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(es.create_snapshot())
-    es.close()
+    es = ElasticSearch(settings=settings)
+    try:
+        if action == 'create':
+            f = es.create_snapshot()
+        elif action == 'list':
+            f = es.restore_list()
+        else:
+            assert snapshot_name, 'snapshot-name may not be None'
+            f = es.restore_snapshot(snapshot_name)
+        loop.run_until_complete(f)
+    finally:
+        es.close()
 
 
 EXEC_LINES = [
