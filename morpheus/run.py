@@ -92,7 +92,7 @@ def worker(wait):
     RunWorkerProcess('app/worker.py', 'Worker')
 
 
-def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False, patch=None):
+def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False):
     """
     setup elastic search db: create indexes and snapshot repo
     """
@@ -101,21 +101,31 @@ def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=F
     loop.run_until_complete(es.set_license())
     loop.run_until_complete(es.create_indices(delete_existing=force_create_index))
     loop.run_until_complete(es.create_snapshot_repo(delete_existing=force_create_repo))
-    if patch:
-        patch_func = getattr(es, '_patch_' + patch)
-        logger.info('running patch %s', patch_func.__name__)
-        loop.run_until_complete(patch_func())
     es.close()
 
 
 @cli.command()
 @click.option('--force-create-index', is_flag=True)
 @click.option('--force-create-repo', is_flag=True)
-@click.option('--patch')
-def elasticsearch_setup(force_create_index, force_create_repo, patch):
+def elasticsearch_setup(force_create_index, force_create_repo):
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    _elasticsearch_setup(settings, force_create_index, force_create_repo, patch)
+    _elasticsearch_setup(settings, force_create_index, force_create_repo)
+
+
+@cli.command()
+@click.argument('patch')
+def elasticsearch_patch(patch):
+    settings = Settings(sender_cls='app.worker.Sender')
+    setup_logging(settings)
+    loop = asyncio.get_event_loop()
+    es = ElasticSearch(settings=settings)
+    try:
+        patch_func = getattr(es, '_patch_' + patch)
+        logger.info('running patch %s...', patch_func.__name__)
+        loop.run_until_complete(patch_func())
+    finally:
+        es.close()
 
 
 @cli.command()

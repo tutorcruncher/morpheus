@@ -119,11 +119,18 @@ class ElasticSearch(ApiSession):  # pragma: no cover
 
     async def _patch_update_mappings(self):
         for index_name, mapping_properties in MAPPINGS.items():
-            main_logger.info('updating mapping for "%s"...', index_name)
-            await self.put(f'{index_name}/_mapping/_default_', properties=mapping_properties)
-            r = await self.get(f'/{index_name}/_mapping/_default_')
-            data = await r.json()
-            main_logger.info('new mapping: %s', json.dumps(data, indent=2))
+
+            r = await self.get(f'{index_name}/_mapping')
+            all_mappings = await r.json()
+            types = list(all_mappings[index_name]['mappings'].keys())
+
+            await self.post(f'{index_name}/_close')
+            for t in types:
+                main_logger.info('updating mapping for "%s/%s"...', index_name, t)
+                await self.put(f'{index_name}/_mapping/{t}', properties=mapping_properties)
+
+            main_logger.info('%d types updated for %s, re-opening index', len(types), index_name)
+            await self.post(f'{index_name}/_open')
 
 
 KEYWORD = {'type': 'keyword'}
