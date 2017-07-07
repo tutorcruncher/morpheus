@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import uuid
 
 
@@ -21,7 +22,9 @@ async def test_send_email(cli, tmpdir):
             {
                 'first_name': 'foo',
                 'last_name': f'bar',
-                'address': f'foobar@example.com',
+                'user_link': '/user/profile/42/',
+                'address': 'foobar@example.com',
+                'tags': ['foobar'],
             }
         ]
     }
@@ -32,9 +35,12 @@ async def test_send_email(cli, tmpdir):
     print(msg_file)
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
-    assert '"from_email": "s@muelcolvin.com",\n' in msg_file
-    assert '"to_address": "foobar@example.com",\n' in msg_file
-    assert '\n  "attachments": []\n' in msg_file
+    data = json.loads(re.search('data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
+    assert data['from_email'] == 's@muelcolvin.com'
+    assert data['to_address'] == 'foobar@example.com'
+    assert data['to_user_link'] == '/user/profile/42/'
+    assert data['attachments'] == []
+    assert set(data['tags']) == {'xxxxxxxxxxxxxxxxxxxx', 'foobar'}
 
 
 async def test_webhook(cli, send_email):
@@ -46,7 +52,7 @@ async def test_webhook(cli, send_email):
     assert data['_source']['send_ts'] == first_update_ts
     assert len(data['_source']['events']) == 0
     data = {
-        'ts': int(1e10),
+        'ts': int(2e9),
         'event': 'open',
         '_id': message_id,
         'foobar': ['hello', 'world']
@@ -60,14 +66,32 @@ async def test_webhook(cli, send_email):
     assert data['_source']['update_ts'] > first_update_ts
 
 
-async def test_webhook_missing(cli, send_email):
-    await send_email(uid='x' * 20)
-    r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
+async def test_webhook_old(cli, send_email):
+    msg_id = await send_email()
+    r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
     data = await r.json()
     assert data['_source']['status'] == 'send'
     first_update_ts = data['_source']['update_ts']
     assert data['_source']['send_ts'] == first_update_ts
     assert len(data['_source']['events']) == 0
+    data = {
+        'ts': int(1.4e9),
+        'event': 'open',
+        '_id': msg_id,
+    }
+    r = await cli.post('/webhook/test/', json=data)
+    assert r.status == 200, await r.text()
+
+    r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
+    data = await r.json()
+    assert data['_source']['status'] == 'send'
+    assert len(data['_source']['events']) == 1
+    assert data['_source']['update_ts'] == first_update_ts
+
+
+async def test_webhook_missing(cli, send_email):
+    msg_id = await send_email()
+
     data = {
         'ts': int(1e10),
         'event': 'open',
@@ -76,7 +100,7 @@ async def test_webhook_missing(cli, send_email):
     }
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
-    r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
+    r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
     data = await r.json()
     assert data['_source']['status'] == 'send'
     assert len(data['_source']['events']) == 0
@@ -468,6 +492,11 @@ async def test_send_with_pdf(send_email, tmpdir, cli):
                     {
                         'name': 'testing.pdf',
                         'html': '<h1>testing</h1>',
+                        'id': 123,
+                    },
+                    {
+                        'name': 'different.pdf',
+                        'html': '<h1>different</h1>',
                     }
                 ]
             }
@@ -476,9 +505,10 @@ async def test_send_with_pdf(send_email, tmpdir, cli):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
-    assert ('\n  "attachments": [\n'
-            '    "testing.pdf:<h1>testing</h1>"\n'
-            '  ]\n') in msg_file
+    assert '<h1>testing</h1>"' in msg_file
+    r = await cli.server.app['es'].get(f'messages/email-test/{message_id}')
+    data = await r.json()
+    assert set(data['_source']['attachments']) == {'123::testing.pdf', '::different.pdf'}
 
 
 async def test_pdf_empty(send_email, tmpdir):

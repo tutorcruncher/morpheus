@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 from html import escape
 from itertools import product
+from operator import itemgetter
 from statistics import mean, stdev
 from time import time
 
@@ -252,7 +253,6 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         msg_id = self.request.match_info['id']
         r = await self.query(message_id=msg_id)
         data = await r.json()
-        print(data)
         if len(data['hits']['hits']) == 0:
             raise HTTPNotFound(text='message not found')
         data = data['hits']['hits'][0]
@@ -266,26 +266,41 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             details=self._details(data),
             events=list(self._events(data)),
             preview_url=self.full_url(f'{preview_path}?{self.request.query_string}'),
-            attachments=data['_source'].get('attachments', []),
+            attachments=list(self._attachments(data)),
         )
 
     def _details(self, data):
         yield 'ID', data['_id']
         source = data['_source']
         yield 'Status', source['status']  # TODO pretty
-        if data['_type'].startswith('email'):
-            yield (
-                'To',
-                f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
+
+        dst = f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
+        link = source.get('to_user_link')
+        if link:
+            yield 'To', dict(
+                href=link,
+                value=dst,
             )
         else:
-            yield 'To', source['to_last_name']
+            yield 'To', dst
+
         yield 'Subject', source.get('subject')
         yield 'Send Time', self._strftime(source['send_ts'])
         yield 'Last Updated', self._strftime(source['update_ts'])
 
+    def _attachments(self, data):
+        for a in data['_source'].get('attachments', []):
+            name = None
+            try:
+                doc_id, name = a.split('::')
+                doc_id = int(doc_id)
+            except ValueError:
+                yield '#', name or a
+            else:
+                yield f'/attachment-doc/{doc_id}/', name
+
     def _events(self, data):
-        for event in reversed(data['_source'].get('events', [])):
+        for event in sorted(data['_source'].get('events', []), key=itemgetter('ts'), reverse=True):
             yield dict(
                 status=event['status'],
                 datetime=self._strftime(event['ts']),

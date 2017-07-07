@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
@@ -12,7 +12,7 @@ import msgpack
 import phonenumbers
 from aiohttp import ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
-from arq.utils import truncate
+from arq.utils import from_unix_ms, truncate
 from chevron import ChevronError
 from phonenumbers import parse as parse_number
 from phonenumbers import NumberParseException, PhoneNumberType, format_number, is_valid_number, number_type
@@ -36,6 +36,7 @@ class EmailJob(NamedTuple):
     send_method: str
     first_name: str
     last_name: str
+    user_link: int
     address: str
     tags: List[str]
     pdf_attachments: List[dict]
@@ -55,6 +56,9 @@ class EmailJob(NamedTuple):
 class SmsJob(NamedTuple):
     group_id: str
     send_method: str
+    first_name: str
+    last_name: str
+    user_link: int
     number: str
     tags: List[str]
     main_template: str
@@ -212,6 +216,7 @@ class Sender(Actor):
             headers=email_info.headers,
             to_address=j.address,
             to_name=email_info.full_name,
+            to_user_link=j.user_link,
             tags=j.tags,
             important=j.important,
             attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode():.40}'
@@ -248,6 +253,7 @@ class Sender(Actor):
                 group_id=j.group_id,
                 to_first_name=j.first_name,
                 to_last_name=j.last_name,
+                to_user_link=j.user_link,
                 to_address=j.address,
                 from_email=j.from_email,
                 from_name=j.from_name,
@@ -286,13 +292,14 @@ class Sender(Actor):
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
+            to_user_link=j.user_link,
             to_address=j.address,
             from_email=j.from_email,
             from_name=j.from_name,
             tags=j.tags,
             subject=email_info.subject,
             body=email_info.html_body,
-            attachments=[a['name'] for a in j.pdf_attachments],
+            attachments=[f'{a["id"] or ""}::{a["name"]}' for a in j.pdf_attachments],
             events=[]
         )
 
@@ -382,23 +389,31 @@ class Sender(Actor):
 
     async def _sms_get_number_message(self, j: SmsJob):
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
+        msg, error = None, None
         if not number_info or not number_info.is_mobile:
+            error = f'invalid mobile number "{j.number}"'
             main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
-            return None, None
+        else:
+            try:
+                msg = chevron.render(j.main_template, data=j.context)
+            except ChevronError as e:
+                error = f'Error rendering SMS: {e}'
 
-        try:
-            msg = chevron.render(j.main_template, data=j.context)
-        except ChevronError as e:
+        if error:
             await self.es.post(
                 f'messages/{j.send_method}',
                 company=j.company_code,
                 send_ts=datetime.utcnow(),
                 update_ts=datetime.utcnow(),
                 status=MessageStatus.render_failed,
+                to_first_name=j.first_name,
+                to_last_name=j.last_name,
+                to_user_link=j.user_link,
+                to_address=number_info.number_formatted if number_info else j.number,
                 group_id=j.group_id,
                 from_name=j.from_name,
                 tags=j.tags,
-                body=f'Error rendering SMS: {e}',
+                body=error,
             )
             return None, None
         else:
@@ -510,8 +525,10 @@ class Sender(Actor):
             update_ts=send_ts,
             status=MessageStatus.send,
             group_id=j.group_id,
-            to_last_name=number.number_formatted,  # TODO add first and last name
-            to_address=number.number,
+            to_first_name=j.first_name,
+            to_last_name=j.last_name,
+            to_user_link=j.user_link,
+            to_address=number.number_formatted,
             from_name=j.from_name,
             tags=j.tags,
             body=message,
@@ -550,20 +567,23 @@ class Sender(Actor):
             await self.update_message_status('email-mandrill', m, log_each=False)
 
     async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
+        try:
+            r = await self.es.get(f'messages/{es_type}/{m.message_id}')
+        except ApiError as e:
+            if e.status == 404:
+                return
+            else:  # pragma: no cover
+                raise
+        data = await r.json()
+
+        old_updat_ts = from_unix_ms(data['_source']['update_ts'])
+        if m.ts.tzinfo:
+            old_updat_ts = old_updat_ts.replace(tzinfo=timezone.utc)
         update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=10'
         try:
-            await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
-        except ApiError as e:  # pragma: no cover
-            # no error here if we know the problem to avoid mandrill repeatedly trying to send the event
-            if e.status == 409:
-                main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-                return
-            elif e.status == 404:
-                return
-            else:
-                raise
-        log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-        try:
+            if m.ts >= old_updat_ts:
+                await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
+            log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
             await self.es.post(
                 update_uri,
                 script={
@@ -578,6 +598,7 @@ class Sender(Actor):
                 }
             )
         except ApiError as e:  # pragma: no cover
+            # no error here if we know the problem to avoid mandrill repeatedly trying to send the event
             if e.status == 409:
                 main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
                 return

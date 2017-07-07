@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from time import time
 
 from .settings import Settings
 from .utils import THIS_DIR, ApiSession
@@ -9,7 +10,7 @@ from .utils import THIS_DIR, ApiSession
 main_logger = logging.getLogger('morpheus.elastic')
 
 
-class ElasticSearch(ApiSession):
+class ElasticSearch(ApiSession):  # pragma: no cover
     def __init__(self, settings: Settings, loop=None):
         self.settings = settings
         super().__init__(settings.elastic_url, settings, loop)
@@ -37,7 +38,7 @@ class ElasticSearch(ApiSession):
                 break
             await asyncio.sleep(0.1, loop=self.loop)
 
-        for index_name, mapping in MAPPINGS.items():
+        for index_name, mapping_properties in MAPPINGS.items():
             r = await self.get(index_name, allowed_statuses=(200, 404))
             if r.status != 404:
                 if delete_existing:
@@ -50,7 +51,7 @@ class ElasticSearch(ApiSession):
             await self.put(index_name, mappings={
                 '_default_': {
                         'dynamic': 'strict',
-                        'properties': mapping,
+                        'properties': mapping_properties,
                     }
                 }
             )
@@ -97,6 +98,33 @@ class ElasticSearch(ApiSession):
         )
         main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
 
+    async def restore_list(self):
+        r = await self.get(f'/_snapshot/{self.settings.snapshot_repo_name}/_all')
+        main_logger.info(json.dumps(await r.json(), indent=2))
+
+    async def restore_snapshot(self, snapshot_name):
+        for index_name in MAPPINGS.keys():
+            await self.post(f'{index_name}/_close')
+
+        main_logger.info('indices closed. Restoring backup %s, this may take some time...', snapshot_name)
+        start = time()
+        r = await self.post(
+            f'/_snapshot/{self.settings.snapshot_repo_name}/{snapshot_name}/_restore?wait_for_completion=true'
+        )
+        main_logger.info(json.dumps(await r.json(), indent=2))
+
+        main_logger.info('restore complete in %0.2fs, opening indices...', time() - start)
+        for index_name in MAPPINGS.keys():
+            await self.post(f'{index_name}/_open')
+
+    async def _patch_update_mappings(self):
+        for index_name, mapping_properties in MAPPINGS.items():
+            main_logger.info('updating mapping for "%s"...', index_name)
+            await self.put(f'{index_name}/_mapping/_default_', properties=mapping_properties)
+            r = await self.get(f'/{index_name}/_mapping/_default_')
+            data = await r.json()
+            main_logger.info('new mapping: %s', json.dumps(data, indent=2))
+
 
 KEYWORD = {'type': 'keyword'}
 DATE = {'type': 'date'}
@@ -111,6 +139,7 @@ MAPPINGS = {
         'status': KEYWORD,
         'to_first_name': KEYWORD,
         'to_last_name': KEYWORD,
+        'to_user_link': KEYWORD,
         'to_address': KEYWORD,
         'from_email': KEYWORD,
         'from_name': KEYWORD,

@@ -181,7 +181,14 @@ async def test_messagebird_webhook(cli, mock_external):
         'company_code': 'webhook-test',
         'method': 'sms-messagebird',
         'main_template': 'this is a message',
-        'recipients': [{'number': '07801234567'}]
+        'recipients': [
+            {
+                'first_name': 'John',
+                'last_name': 'Doe',
+                'user_link': 4321,
+                'number': '07801234567'
+            }
+        ]
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -194,11 +201,14 @@ async def test_messagebird_webhook(cli, mock_external):
     assert response_data['hits']['total'] == 1
     source = response_data['hits']['hits'][0]['_source']
     assert source['status'] == 'send'
-    assert source['to_last_name'] == '+44 7801 234567'
-    assert source['to_address'] == '447801234567'
+    assert source['to_first_name'] == 'John'
+    assert source['to_last_name'] == 'Doe'
+    assert source['to_user_link'] == '4321'
+    assert source['to_address'] == '+44 7801 234567'
     assert source['from_name'] == 'Morpheus'
     assert source['body'] == 'this is a message'
     assert source['cost'] == 0.02
+    assert len(source['tags']) == 1  # just group_id
     assert source['events'] == []
 
     url_args = {
@@ -206,7 +216,7 @@ async def test_messagebird_webhook(cli, mock_external):
         'reference': 'morpheus',
         'recipient': '447801234567',
         'status': 'delivered',
-        'statusDatetime': '2017-06-06T12:00:00',
+        'statusDatetime': '2032-06-06T12:00:00',
     }
     r = await cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
     assert r.status == 200, await r.text()

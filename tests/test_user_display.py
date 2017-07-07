@@ -180,6 +180,42 @@ async def test_message_details(cli, settings, send_email):
     assert '"user_agent": "testincalls",' in text
 
 
+async def test_message_details_link(cli, settings, send_email):
+    msg_id = await send_email(
+        company_code='test-details',
+        recipients=[
+            {
+                'first_name': 'Foo',
+                'last_name': 'Bar',
+                'user_link': '/whatever/123/',
+                'address': 'foobar@testing.com',
+                'pdf_attachments': [
+                    {'name': 'testing.pdf', 'html': '<h1>testing</h1>', 'id': 123},
+                    {'name': 'different.pdf', 'html': '<h1>different</h1>'},
+                ]
+            }
+        ]
+    )
+
+    data = {
+        'ts': int(1e10),
+        'event': 'open',
+        '_id': msg_id,
+        'user_agent': 'testincalls'
+    }
+    r = await cli.post('/webhook/test/', json=data)
+    assert r.status == 200, await r.text()
+
+    await cli.server.app['es'].get('messages/_refresh')
+
+    r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
+    assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
+    assert '<a href="#">different.pdf</a>' in text
+
+
 async def test_message_details_missing(cli, settings):
     r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
     assert r.status == 404, await r.text()

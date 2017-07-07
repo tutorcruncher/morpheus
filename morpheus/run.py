@@ -92,7 +92,7 @@ def worker(wait):
     RunWorkerProcess('app/worker.py', 'Worker')
 
 
-def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False):
+def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False, patch=None):
     """
     setup elastic search db: create indexes and snapshot repo
     """
@@ -101,29 +101,45 @@ def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=F
     loop.run_until_complete(es.set_license())
     loop.run_until_complete(es.create_indices(delete_existing=force_create_index))
     loop.run_until_complete(es.create_snapshot_repo(delete_existing=force_create_repo))
+    if patch:
+        patch_func = getattr(es, '_patch_' + patch)
+        logger.info('running patch %s', patch_func.__name__)
+        loop.run_until_complete(patch_func())
     es.close()
 
 
 @cli.command()
 @click.option('--force-create-index', is_flag=True)
 @click.option('--force-create-repo', is_flag=True)
-def elasticsearch_setup(force_create_index, force_create_repo):
+@click.option('--patch')
+def elasticsearch_setup(force_create_index, force_create_repo, patch):
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    _elasticsearch_setup(settings, force_create_index, force_create_repo)
+    _elasticsearch_setup(settings, force_create_index, force_create_repo, patch)
 
 
 @cli.command()
-def elasticsearch_snapshot():
+@click.argument('action', type=click.Choice(['create', 'list', 'restore']))
+@click.argument('snapshot-name', required=False)
+def elasticsearch_snapshot(action, snapshot_name):
     """
     create an elastic search snapshot
     """
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    es = ElasticSearch(settings=settings)
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(es.create_snapshot())
-    es.close()
+    es = ElasticSearch(settings=settings)
+    try:
+        if action == 'create':
+            f = es.create_snapshot()
+        elif action == 'list':
+            f = es.restore_list()
+        else:
+            assert snapshot_name, 'snapshot-name may not be None'
+            f = es.restore_snapshot(snapshot_name)
+        loop.run_until_complete(f)
+    finally:
+        es.close()
 
 
 EXEC_LINES = [

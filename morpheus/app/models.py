@@ -92,12 +92,13 @@ class MessageStatus(str, Enum):
 class AttachmentModel(BaseModel):
     name: str = ...
     html: str = ...
+    id: int = None
 
 
 class EmailRecipientModel(BaseModel):
-    # TODO prepend to_ to first_name, last_name, address
     first_name: str = None
     last_name: str = None
+    user_link: str = None
     address: str = ...
     tags: List[str] = []
     context: dict = {}
@@ -131,6 +132,9 @@ class SubaccountModel(WebModel):
 
 
 class SmsRecipientModel(BaseModel):
+    first_name: str = None
+    last_name: str = None
+    user_link: str = None
     number: str = ...
     tags: List[str] = []
     context: dict = {}

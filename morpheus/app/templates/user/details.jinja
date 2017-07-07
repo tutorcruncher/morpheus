@@ -7,7 +7,9 @@
       <span class="col-md-6 item">
         <label>{{ name }}:</label>
         <span>
-          {%- if value -%}
+          {%- if value.href -%}
+              <a href="{{ value.href|safe }}">{{ value.value }}</a>
+          {%- elif value -%}
             {{ value }}
           {%- else -%}
             &mdash;
@@ -22,14 +24,9 @@
   <h3>Attachments</h3>
   {% if attachments %}
     <div class="attachments">
-      <ul>
-        {% for a in attachments %}
-        <li>
-          {{ a }}
-          {# TODO add link to original document #}
-        </li>
+        {% for href, value in attachments %}
+          <a href="{{ href }}">{{ value }}</a>
         {% endfor %}
-      </ul>
     </div>
   {% else %}
     <div>&mdash;</div>
