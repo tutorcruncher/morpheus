@@ -291,7 +291,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         for a in data['_source'].get('attachments', []):
             name = None
             try:
-                doc_id, name = a
+                doc_id, name = a.split('::')
                 doc_id = int(doc_id)
             except ValueError:
                 yield '#', name or a

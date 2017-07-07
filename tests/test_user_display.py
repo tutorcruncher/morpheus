@@ -212,6 +212,8 @@ async def test_message_details_link(cli, settings, send_email):
     assert r.status == 200, await r.text()
     text = await r.text()
     assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
+    assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
+    assert '<a href="#">different.pdf</a>' in text
 
 
 async def test_message_details_missing(cli, settings):
