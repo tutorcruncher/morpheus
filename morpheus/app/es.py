@@ -105,10 +105,10 @@ class ElasticSearch(ApiSession):
             data = await r.json()
             main_logger.info('new mapping: %s', json.dumps(data, indent=2))
 
+
 KEYWORD = {'type': 'keyword'}
 DATE = {'type': 'date'}
 TEXT = {'type': 'text'}
-INT_LONG = {'type': 'long'}
 MAPPINGS = {
     'messages': {
         'group_id': KEYWORD,
@@ -119,7 +119,7 @@ MAPPINGS = {
         'status': KEYWORD,
         'to_first_name': KEYWORD,
         'to_last_name': KEYWORD,
-        'to_user_id': INT_LONG,
+        'to_user_link': KEYWORD,
         'to_address': KEYWORD,
         'from_email': KEYWORD,
         'from_name': KEYWORD,

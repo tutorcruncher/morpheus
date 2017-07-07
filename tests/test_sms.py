@@ -185,7 +185,7 @@ async def test_messagebird_webhook(cli, mock_external):
             {
                 'first_name': 'John',
                 'last_name': 'Doe',
-                'user_id': 4321,
+                'user_link': 4321,
                 'number': '07801234567'
             }
         ]
@@ -203,12 +203,12 @@ async def test_messagebird_webhook(cli, mock_external):
     assert source['status'] == 'send'
     assert source['to_first_name'] == 'John'
     assert source['to_last_name'] == 'Doe'
-    assert source['to_user_id'] == 4321
+    assert source['to_user_link'] == '4321'
     assert source['to_address'] == '+44 7801 234567'
     assert source['from_name'] == 'Morpheus'
     assert source['body'] == 'this is a message'
     assert source['cost'] == 0.02
-    assert 'user:4321' in source['tags']
+    assert len(source['tags']) == 1  # just group_id
     assert source['events'] == []
 
     url_args = {

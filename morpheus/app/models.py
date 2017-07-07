@@ -98,7 +98,7 @@ class AttachmentModel(BaseModel):
 class EmailRecipientModel(BaseModel):
     first_name: str = None
     last_name: str = None
-    user_id: int = None
+    user_link: str = None
     address: str = ...
     tags: List[str] = []
     context: dict = {}
@@ -134,7 +134,7 @@ class SubaccountModel(WebModel):
 class SmsRecipientModel(BaseModel):
     first_name: str = None
     last_name: str = None
-    user_id: int = None
+    user_link: str = None
     number: str = ...
     tags: List[str] = []
     context: dict = {}

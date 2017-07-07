@@ -252,7 +252,6 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         msg_id = self.request.match_info['id']
         r = await self.query(message_id=msg_id)
         data = await r.json()
-        print(data)
         if len(data['hits']['hits']) == 0:
             raise HTTPNotFound(text='message not found')
         data = data['hits']['hits'][0]
@@ -273,13 +272,17 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         yield 'ID', data['_id']
         source = data['_source']
         yield 'Status', source['status']  # TODO pretty
-        if data['_type'].startswith('email'):
-            yield (
-                'To',
-                f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
+
+        dst = f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
+        link = source['to_user_link']
+        if link:
+            yield 'To', dict(
+                href=link,
+                value=dst,
             )
         else:
-            yield 'To', source['to_last_name']
+            yield 'To', dst
+
         yield 'Subject', source.get('subject')
         yield 'Send Time', self._strftime(source['send_ts'])
         yield 'Last Updated', self._strftime(source['update_ts'])

@@ -22,7 +22,7 @@ async def test_send_email(cli, tmpdir):
             {
                 'first_name': 'foo',
                 'last_name': f'bar',
-                'user_id': 42,
+                'user_link': '/user/profile/42/',
                 'address': 'foobar@example.com',
                 'tags': ['foobar'],
             }
@@ -38,8 +38,9 @@ async def test_send_email(cli, tmpdir):
     data = json.loads(re.search('data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
     assert data['from_email'] == 's@muelcolvin.com'
     assert data['to_address'] == 'foobar@example.com'
+    assert data['to_user_link'] == '/user/profile/42/'
     assert data['attachments'] == []
-    assert set(data['tags']) == {'xxxxxxxxxxxxxxxxxxxx', 'user:42', 'foobar'}
+    assert set(data['tags']) == {'xxxxxxxxxxxxxxxxxxxx', 'foobar'}
 
 
 async def test_webhook(cli, send_email):

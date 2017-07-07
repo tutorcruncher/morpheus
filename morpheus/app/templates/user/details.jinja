@@ -7,7 +7,9 @@
       <span class="col-md-6 item">
         <label>{{ name }}:</label>
         <span>
-          {%- if value -%}
+          {%- if value.href -%}
+              <a href="{{ value.href|safe }}">{{ value.value }}</a>
+          {%- elif value -%}
             {{ value }}
           {%- else -%}
             &mdash;

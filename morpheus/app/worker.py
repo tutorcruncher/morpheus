@@ -36,7 +36,7 @@ class EmailJob(NamedTuple):
     send_method: str
     first_name: str
     last_name: str
-    user_id: int
+    user_link: int
     address: str
     tags: List[str]
     pdf_attachments: List[dict]
@@ -58,7 +58,7 @@ class SmsJob(NamedTuple):
     send_method: str
     first_name: str
     last_name: str
-    user_id: int
+    user_link: int
     number: str
     tags: List[str]
     main_template: str
@@ -151,11 +151,10 @@ class Sender(Actor):
                     break
 
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
-                tags_ = tags + [f'user:{msg_data["user_id"] or "-"}']
                 data = dict(
                     context=dict(context, **msg_data.pop('context')),
                     headers=dict(headers, **msg_data.pop('headers')),
-                    tags=list(set(tags_ + msg_data.pop('tags'))),
+                    tags=list(set(tags + msg_data.pop('tags'))),
                     **base_kwargs,
                     **msg_data,
                 )
@@ -217,6 +216,7 @@ class Sender(Actor):
             headers=email_info.headers,
             to_address=j.address,
             to_name=email_info.full_name,
+            to_user_link=j.user_link,
             tags=j.tags,
             important=j.important,
             attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode():.40}'
@@ -253,7 +253,7 @@ class Sender(Actor):
                 group_id=j.group_id,
                 to_first_name=j.first_name,
                 to_last_name=j.last_name,
-                to_user_id=j.user_id,
+                to_user_link=j.user_link,
                 to_address=j.address,
                 from_email=j.from_email,
                 from_name=j.from_name,
@@ -292,7 +292,7 @@ class Sender(Actor):
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
-            to_user_id=j.user_id,
+            to_user_link=j.user_link,
             to_address=j.address,
             from_email=j.from_email,
             from_name=j.from_name,
@@ -376,10 +376,9 @@ class Sender(Actor):
                         main_logger.warning('cost limit exceeded %0.2f >= %0.2f, %s', spend, cost_limit, company_code)
                         break
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
-                tags_ = tags + [f'user:{msg_data["user_id"] or "-"}']
                 data = dict(
                     context=dict(context, **msg_data.pop('context')),
-                    tags=list(set(tags_ + msg_data.pop('tags'))),
+                    tags=list(set(tags + msg_data.pop('tags'))),
                     **base_kwargs,
                     **msg_data,
                 )
@@ -409,7 +408,7 @@ class Sender(Actor):
                 status=MessageStatus.render_failed,
                 to_first_name=j.first_name,
                 to_last_name=j.last_name,
-                to_user_id=j.user_id,
+                to_user_link=j.user_link,
                 to_address=number_info.number_formatted if number_info else j.number,
                 group_id=j.group_id,
                 from_name=j.from_name,
@@ -528,7 +527,7 @@ class Sender(Actor):
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
-            to_user_id=j.user_id,
+            to_user_link=j.user_link,
             to_address=number.number_formatted,
             from_name=j.from_name,
             tags=j.tags,
