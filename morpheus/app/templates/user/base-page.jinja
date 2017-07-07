@@ -57,6 +57,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.7/js/bootstrap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/json.min.js"></script>
-    <script>hljs.initHighlightingOnLoad();</script>
+    <script>
+      hljs.initHighlightingOnLoad();
+      $('table').find('a').on('click', function (e) {
+        e.preventDefault()
+        window.location = window.location.href.replace('messages.html', 'message/' + $(this).attr('href') + '.html')
+      })
+    </script>
   </body>
 </html>

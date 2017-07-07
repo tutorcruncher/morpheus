@@ -194,6 +194,8 @@ class CreateSubaccountView(ServiceView):
 
 
 class _UserMessagesView(UserView):
+    es_from = True
+
     @classmethod
     def _strftime(cls, ts):
         # TODO: custom formats
@@ -210,7 +212,7 @@ class _UserMessagesView(UserView):
                     ]
                 }
             },
-            'from': self.get_arg_int('from', 0),
+            'from': self.get_arg_int('from', 0) if self.es_from else 0,
             'size': 100,
         }
         if message_id:
@@ -248,6 +250,7 @@ class UserMessagesJsonView(_UserMessagesView):
 
 class UserMessageDetailView(TemplateView, _UserMessagesView):
     template = 'user/details.jinja'
+    es_from = False
 
     async def call(self, request):
         msg_id = self.request.match_info['id']
@@ -353,17 +356,12 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         )
 
     def _table_body(self, hits):
-        method = self.request.match_info['method']
-        query = dict(self.request.query)
-        query.pop('from', None)
-        route = self.app.router['user-message-get']
         for msg in hits:
             msg_source = msg['_source']
-            path = route.url_for(method=method, id=msg['_id']).with_query(query)
             subject = msg_source.get('subject') or msg_source.get('body', '')
             yield [
                 {
-                    'href': self.full_url(path),
+                    'href': msg['_id'],
                     'text': msg_source['to_address'],  # TODO prettier
                 },
                 self._strftime((msg_source['send_ts'])),
