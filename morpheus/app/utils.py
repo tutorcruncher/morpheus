@@ -20,6 +20,7 @@ from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
 from aiohttp_jinja2 import template
 from arq.utils import to_unix_ms
+from markupsafe import Markup
 
 from .models import SendMethod, WebModel
 from .settings import Settings
@@ -49,6 +50,9 @@ class View:
         self.settings: Settings = self.app['settings']
         self.session: Optional[Session] = None
         self.sender: Sender = request.app['sender']
+
+    def full_url(self, path=''):
+        return Markup(f'{self.request.scheme}://{self.request.host}{path}')
 
     @classmethod
     def view(cls):
