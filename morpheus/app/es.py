@@ -9,7 +9,7 @@ from .utils import THIS_DIR, ApiSession
 main_logger = logging.getLogger('morpheus.elastic')
 
 
-class ElasticSearch(ApiSession):
+class ElasticSearch(ApiSession):  # pragma: no cover
     def __init__(self, settings: Settings, loop=None):
         self.settings = settings
         super().__init__(settings.elastic_url, settings, loop)
@@ -101,7 +101,7 @@ class ElasticSearch(ApiSession):
         for index_name, mapping_properties in MAPPINGS.items():
             main_logger.info('updating mapping for "%s"...', index_name)
             await self.put(f'{index_name}/_mapping/_default_', properties=mapping_properties)
-            r = await self.get('/messages/_mapping/_default_')
+            r = await self.get(f'/{index_name}/_mapping/_default_')
             data = await r.json()
             main_logger.info('new mapping: %s', json.dumps(data, indent=2))
 

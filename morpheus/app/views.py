@@ -265,7 +265,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             details=self._details(data),
             events=list(self._events(data)),
             preview_url=self.full_url(f'{preview_path}?{self.request.query_string}'),
-            attachments=data['_source'].get('attachments', []),
+            attachments=list(self._attachments(data)),
         )
 
     def _details(self, data):
@@ -286,6 +286,17 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         yield 'Subject', source.get('subject')
         yield 'Send Time', self._strftime(source['send_ts'])
         yield 'Last Updated', self._strftime(source['update_ts'])
+
+    def _attachments(self, data):
+        for a in data['_source'].get('attachments', []):
+            name = None
+            try:
+                doc_id, name = a
+                doc_id = int(doc_id)
+            except ValueError:
+                yield '#', name or a
+            else:
+                yield f'/attachment-doc/{doc_id}/', name
 
     def _events(self, data):
         for event in reversed(data['_source'].get('events', [])):

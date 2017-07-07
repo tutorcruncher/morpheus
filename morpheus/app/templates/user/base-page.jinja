@@ -29,11 +29,7 @@
       pre code {
         background-color: #f5f5f5 !important;
       }
-      ul {
-        list-style-type: none;
-        padding: 0;
-      }
-      .attachments li {
+      .attachments a {
         display: inline-block;
         width: 150px;
         border: 1px solid #ccc;
@@ -43,6 +39,11 @@
         margin-right: 5px;
         text-align: center;
         color: #444;
+        text-decoration: none;
+        transition: all 0.2s linear;
+      }
+      .attachments a:hover {
+        background-color: #eaeaff;
       }
     </style>
   </head>

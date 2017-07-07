@@ -189,6 +189,10 @@ async def test_message_details_link(cli, settings, send_email):
                 'last_name': 'Bar',
                 'user_link': '/whatever/123/',
                 'address': 'foobar@testing.com',
+                'pdf_attachments': [
+                    {'name': 'testing.pdf', 'html': '<h1>testing</h1>', 'id': 123},
+                    {'name': 'different.pdf', 'html': '<h1>different</h1>'},
+                ]
             }
         ]
     )
