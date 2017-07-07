@@ -157,7 +157,7 @@ class MessageBirdWebhookView(View):
         return Response(text='message status updated\n')
 
 
-class CreateSubaccountView(View):
+class CreateSubaccountView(ServiceView):
     """
     Create a new subaccount with mandrill for new sending company
     """

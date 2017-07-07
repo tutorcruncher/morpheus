@@ -18,7 +18,7 @@ import ujson
 from aiohttp import ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
-from aiohttp_jinja2 import template
+from aiohttp_jinja2 import render_template
 from arq.utils import to_unix_ms
 from markupsafe import Markup
 
@@ -43,6 +43,8 @@ AWebModel = NewType('AWebModel', WebModel)
 
 
 class View:
+    headers = None
+
     def __init__(self, request):
         from .worker import Sender  # noqa
         self.request: Request = request
@@ -59,7 +61,7 @@ class View:
         async def view(request):
             self = cls(request)
             await self.authenticate(request)
-            return await self.call(request)
+            return cls._modify_response(request, await self.call(request))
 
         view.view_class = cls
 
@@ -69,6 +71,12 @@ class View:
         # and possible attributes set by decorators
         update_wrapper(view, cls.call, assigned=())
         return view
+
+    @classmethod
+    def _modify_response(cls, request, response):
+        if cls.headers:
+            response.headers.update(cls.headers)
+        return response
 
     async def authenticate(self, request):
         pass
@@ -144,6 +152,8 @@ class UserView(View):
     """
     Views used by users via ajax
     """
+    headers = {'Access-Control-Allow-Origin': '*'}
+
     async def authenticate(self, request):
         company = request.query.get('company', None)
         expires = request.query.get('expires', None)
@@ -180,9 +190,9 @@ class TemplateView(View):
     template = None
 
     @classmethod
-    def view(cls):
-        view = super().view()
-        return template(cls.template)(view)
+    def _modify_response(cls, request, context):
+        response = render_template(cls.template, request, context)
+        return super()._modify_response(request, response)
 
 
 class AdminView(TemplateView, BasicAuthView):

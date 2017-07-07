@@ -33,6 +33,7 @@ async def test_user_list(cli, settings, send_email):
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/messages.json', settings, 'whoever'))
     assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
     print(json.dumps(data, indent=2))
     assert data['hits']['total'] == 4
@@ -91,6 +92,7 @@ async def test_user_aggregate(cli, settings, send_email):
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'whoever'))
     assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
     print(json.dumps(data, indent=2))
     buckets = data['aggregations']['_']['buckets']
@@ -170,6 +172,7 @@ async def test_message_details(cli, settings, send_email):
 
     r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
     assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
     text = await r.text()
     spaceless = re.sub('\n +', '\n', text)
     # print(spaceless)
@@ -266,6 +269,7 @@ async def test_user_list_lots(cli, settings, send_email):
 
     r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
     text = await r.text()
     m = re.search('<caption>Results: (\d+)</caption>', text)
     results = int(m.groups()[0])
