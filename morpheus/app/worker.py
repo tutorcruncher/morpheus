@@ -299,7 +299,7 @@ class Sender(Actor):
             tags=j.tags,
             subject=email_info.subject,
             body=email_info.html_body,
-            attachments=[a['name'] for a in j.pdf_attachments],
+            attachments=[f'{a["id"] or ""}::{a["name"]}' for a in j.pdf_attachments],
             events=[]
         )
 

@@ -473,6 +473,11 @@ async def test_send_with_pdf(send_email, tmpdir, cli):
                     {
                         'name': 'testing.pdf',
                         'html': '<h1>testing</h1>',
+                        'id': 123,
+                    },
+                    {
+                        'name': 'different.pdf',
+                        'html': '<h1>different</h1>',
                     }
                 ]
             }
@@ -481,9 +486,10 @@ async def test_send_with_pdf(send_email, tmpdir, cli):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
-    assert ('\n  "attachments": [\n'
-            '    "testing.pdf:<h1>testing</h1>"\n'
-            '  ]\n') in msg_file
+    assert '<h1>testing</h1>"' in msg_file
+    r = await cli.server.app['es'].get(f'messages/email-test/{message_id}')
+    data = await r.json()
+    assert set(data['_source']['attachments']) == {'123::testing.pdf', '::different.pdf'}
 
 
 async def test_pdf_empty(send_email, tmpdir):
