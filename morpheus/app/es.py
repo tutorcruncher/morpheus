@@ -37,7 +37,7 @@ class ElasticSearch(ApiSession):
                 break
             await asyncio.sleep(0.1, loop=self.loop)
 
-        for index_name, mapping in MAPPINGS.items():
+        for index_name, mapping_properties in MAPPINGS.items():
             r = await self.get(index_name, allowed_statuses=(200, 404))
             if r.status != 404:
                 if delete_existing:
@@ -50,7 +50,7 @@ class ElasticSearch(ApiSession):
             await self.put(index_name, mappings={
                 '_default_': {
                         'dynamic': 'strict',
-                        'properties': mapping,
+                        'properties': mapping_properties,
                     }
                 }
             )
@@ -97,10 +97,18 @@ class ElasticSearch(ApiSession):
         )
         main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
 
+    async def _patch_update_mappings(self):
+        for index_name, mapping_properties in MAPPINGS.items():
+            main_logger.info('updating mapping for "%s"...', index_name)
+            await self.put(f'{index_name}/_mapping/_default_', properties=mapping_properties)
+            r = await self.get('/messages/_mapping/_default_')
+            data = await r.json()
+            main_logger.info('new mapping: %s', json.dumps(data, indent=2))
 
 KEYWORD = {'type': 'keyword'}
 DATE = {'type': 'date'}
 TEXT = {'type': 'text'}
+INT_LONG = {'type': 'long'}
 MAPPINGS = {
     'messages': {
         'group_id': KEYWORD,
@@ -111,6 +119,7 @@ MAPPINGS = {
         'status': KEYWORD,
         'to_first_name': KEYWORD,
         'to_last_name': KEYWORD,
+        'to_user_id': INT_LONG,
         'to_address': KEYWORD,
         'from_email': KEYWORD,
         'from_name': KEYWORD,

@@ -36,6 +36,7 @@ class EmailJob(NamedTuple):
     send_method: str
     first_name: str
     last_name: str
+    user_id: int
     address: str
     tags: List[str]
     pdf_attachments: List[dict]
@@ -55,6 +56,9 @@ class EmailJob(NamedTuple):
 class SmsJob(NamedTuple):
     group_id: str
     send_method: str
+    first_name: str
+    last_name: str
+    user_id: int
     number: str
     tags: List[str]
     main_template: str
@@ -147,10 +151,11 @@ class Sender(Actor):
                     break
 
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
+                tags_ = tags + [f'user:{msg_data["user_id"] or "-"}']
                 data = dict(
                     context=dict(context, **msg_data.pop('context')),
                     headers=dict(headers, **msg_data.pop('headers')),
-                    tags=list(set(tags + msg_data.pop('tags'))),
+                    tags=list(set(tags_ + msg_data.pop('tags'))),
                     **base_kwargs,
                     **msg_data,
                 )
@@ -248,6 +253,7 @@ class Sender(Actor):
                 group_id=j.group_id,
                 to_first_name=j.first_name,
                 to_last_name=j.last_name,
+                to_user_id=j.user_id,
                 to_address=j.address,
                 from_email=j.from_email,
                 from_name=j.from_name,
@@ -286,6 +292,7 @@ class Sender(Actor):
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,
+            to_user_id=j.user_id,
             to_address=j.address,
             from_email=j.from_email,
             from_name=j.from_name,
@@ -369,9 +376,10 @@ class Sender(Actor):
                         main_logger.warning('cost limit exceeded %0.2f >= %0.2f, %s', spend, cost_limit, company_code)
                         break
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
+                tags_ = tags + [f'user:{msg_data["user_id"] or "-"}']
                 data = dict(
                     context=dict(context, **msg_data.pop('context')),
-                    tags=list(set(tags + msg_data.pop('tags'))),
+                    tags=list(set(tags_ + msg_data.pop('tags'))),
                     **base_kwargs,
                     **msg_data,
                 )
@@ -382,23 +390,31 @@ class Sender(Actor):
 
     async def _sms_get_number_message(self, j: SmsJob):
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
+        msg, error = None, None
         if not number_info or not number_info.is_mobile:
+            error = f'invalid mobile number "{j.number}"'
             main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
-            return None, None
+        else:
+            try:
+                msg = chevron.render(j.main_template, data=j.context)
+            except ChevronError as e:
+                error = f'Error rendering SMS: {e}'
 
-        try:
-            msg = chevron.render(j.main_template, data=j.context)
-        except ChevronError as e:
+        if error:
             await self.es.post(
                 f'messages/{j.send_method}',
                 company=j.company_code,
                 send_ts=datetime.utcnow(),
                 update_ts=datetime.utcnow(),
                 status=MessageStatus.render_failed,
+                to_first_name=j.first_name,
+                to_last_name=j.last_name,
+                to_user_id=j.user_id,
+                to_address=number_info.number_formatted if number_info else j.number,
                 group_id=j.group_id,
                 from_name=j.from_name,
                 tags=j.tags,
-                body=f'Error rendering SMS: {e}',
+                body=error,
             )
             return None, None
         else:
@@ -510,8 +526,10 @@ class Sender(Actor):
             update_ts=send_ts,
             status=MessageStatus.send,
             group_id=j.group_id,
-            to_last_name=number.number_formatted,  # TODO add first and last name
-            to_address=number.number,
+            to_first_name=j.first_name,
+            to_last_name=j.last_name,
+            to_user_id=j.user_id,
+            to_address=number.number_formatted,
             from_name=j.from_name,
             tags=j.tags,
             body=message,

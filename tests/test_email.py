@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import uuid
 
 
@@ -21,7 +22,9 @@ async def test_send_email(cli, tmpdir):
             {
                 'first_name': 'foo',
                 'last_name': f'bar',
-                'address': f'foobar@example.com',
+                'user_id': 42,
+                'address': 'foobar@example.com',
+                'tags': ['foobar'],
             }
         ]
     }
@@ -32,9 +35,11 @@ async def test_send_email(cli, tmpdir):
     print(msg_file)
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
-    assert '"from_email": "s@muelcolvin.com",\n' in msg_file
-    assert '"to_address": "foobar@example.com",\n' in msg_file
-    assert '\n  "attachments": []\n' in msg_file
+    data = json.loads(re.search('data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
+    assert data['from_email'] == 's@muelcolvin.com'
+    assert data['to_address'] == 'foobar@example.com'
+    assert data['attachments'] == []
+    assert set(data['tags']) == {'xxxxxxxxxxxxxxxxxxxx', 'user:42', 'foobar'}
 
 
 async def test_webhook(cli, send_email):
