@@ -63,6 +63,14 @@
         e.preventDefault()
         window.location = window.location.href.replace('messages.html', 'message/' + $(this).attr('href') + '.html')
       })
+      $('.pager').find('a').on('click', function (e) {
+        e.preventDefault()
+        if (window.location.href.includes('from=')) {
+          window.location = window.location.href.replace(/(from=)\d+/, '$1' + $(this).data('from'))
+        } else {
+          window.location = window.location.href + '&from=' + $(this).data('from')
+        }
+      })
     </script>
   </body>
 </html>

@@ -31,7 +31,7 @@
     <ul class="pager">
       {% if pagination.previous %}
         <li class="previous">
-          <a href="{{ pagination.previous.href }}">
+          <a href="{{ pagination.previous.href }}" data-from="{{ pagination.previous.pfrom }}">
             <span>&larr;</span>
             {{ pagination.previous.text }}
           </a>
@@ -40,7 +40,7 @@
 
       {% if pagination.next %}
         <li class="next">
-          <a href="{{ pagination.next.href }}">
+          <a href="{{ pagination.next.href }}" data-from="{{ pagination.next.pfrom }}">
             {{ pagination.next.text }}
             <span>&rarr;</span>
           </a>

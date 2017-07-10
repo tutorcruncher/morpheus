@@ -329,20 +329,16 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         pagination = {}
         if len(hits) == size:
             next_offset = offset + size
-            query = dict(self.request.query)
-            query['from'] = next_offset
-            path = self.request.rel_url.with_query(query)
             pagination['next'] = dict(
-                href=self.full_url(path),
+                href=f'?from={next_offset}',
+                pfrom=next_offset,
                 text=f'{next_offset + 1} - {min(next_offset + size, total)}'
             )
         if offset:
             previous_offset = offset - size
-            query = dict(self.request.query)
-            query['from'] = previous_offset
-            path = self.request.rel_url.with_query(query)
             pagination['previous'] = dict(
-                href=self.full_url(path),
+                href=f'?from={previous_offset}',
+                pfrom=previous_offset,
                 text=f'{previous_offset + 1} - {max(offset, 0)}'
             )
 
