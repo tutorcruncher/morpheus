@@ -10,7 +10,7 @@ from typing import Dict, List, NamedTuple
 import chevron
 import msgpack
 import phonenumbers
-from aiohttp import ClientSession
+from aiohttp import ClientError, ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
 from arq.utils import from_unix_ms, truncate
 from chevron import ChevronError
@@ -197,7 +197,13 @@ class Sender(Actor):
             ),
         }
         send_ts = datetime.utcnow()
-        r = await self.mandrill.post('messages/send.json', **data)
+        try:
+            r = await self.mandrill.post('messages/send.json', **data)
+        except ClientError as e:
+            main_logger.exception('error while posting to mandrill, %s: %s', e.__class__.__name__, e)
+            await self._store_email_failed(j, f'Error sending email: {e.__class__.__name__}')
+            return
+
         data = await r.json()
         assert len(data) == 1, data
         data = data[0]
@@ -244,23 +250,7 @@ class Sender(Actor):
         try:
             return render_email(j)
         except ChevronError as e:
-            await self.es.post(
-                f'messages/{j.send_method}',
-                company=j.company_code,
-                send_ts=datetime.utcnow(),
-                update_ts=datetime.utcnow(),
-                status=MessageStatus.render_failed,
-                group_id=j.group_id,
-                to_first_name=j.first_name,
-                to_last_name=j.last_name,
-                to_user_link=j.user_link,
-                to_address=j.address,
-                from_email=j.from_email,
-                from_name=j.from_name,
-                tags=j.tags,
-                body=f'Error rendering email: {e}',
-                attachments=[a['name'] for a in j.pdf_attachments]
-            )
+            await self._store_email_failed(j, f'Error rendering email: {e}')
 
     async def _generate_base64_pdf(self, pdf_attachments):
         headers = dict(
@@ -301,6 +291,25 @@ class Sender(Actor):
             body=email_info.html_body,
             attachments=[f'{a["id"] or ""}::{a["name"]}' for a in j.pdf_attachments],
             events=[]
+        )
+
+    async def _store_email_failed(self, j: EmailJob, error_msg):
+        await self.es.post(
+            f'messages/{j.send_method}',
+            company=j.company_code,
+            send_ts=datetime.utcnow(),
+            update_ts=datetime.utcnow(),
+            status=MessageStatus.render_failed,
+            group_id=j.group_id,
+            to_first_name=j.first_name,
+            to_last_name=j.last_name,
+            to_user_link=j.user_link,
+            to_address=j.address,
+            from_email=j.from_email,
+            from_name=j.from_name,
+            tags=j.tags,
+            body=error_msg,
+            attachments=[a['name'] for a in j.pdf_attachments]
         )
 
     @classmethod
