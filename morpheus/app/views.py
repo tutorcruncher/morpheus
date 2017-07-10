@@ -461,7 +461,7 @@ class AdminAggregatedView(AdminView):
             row = [datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
             row += [period[h]['doc_count'] or '0' for h in headings[1:-1]]
             was_sent = sum(period[h]['doc_count'] or 0 for h in was_sent_statuses)
-            opened = period["open"]["doc_count"]
+            opened = period['open']['doc_count']
             if was_sent > 0:
                 row.append(f'{opened / was_sent * 100:0.2f}%')
             else:

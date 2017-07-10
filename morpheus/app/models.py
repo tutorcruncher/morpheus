@@ -94,6 +94,9 @@ class AttachmentModel(BaseModel):
     html: str = ...
     id: int = None
 
+    class Config:
+        max_anystr_length = int(1e7)
+
 
 class EmailRecipientModel(BaseModel):
     first_name: str = None
