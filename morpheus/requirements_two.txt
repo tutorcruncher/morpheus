@@ -9,6 +9,6 @@ jinja2==2.9.6
 misaka==2.1.0
 msgpack-python==0.4.8
 phonenumbers==8.6.0
-pydantic==0.3
+pydantic==0.4
 raven==6.1.0
 ujson==1.35
