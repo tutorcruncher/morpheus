@@ -201,7 +201,8 @@ class Sender(Actor):
             r = await self.mandrill.post('messages/send.json', **data)
         except ClientError as e:
             main_logger.exception('error while posting to mandrill, %s: %s', e.__class__.__name__, e)
-            await self._store_email_failed(j, f'Error sending email: {e.__class__.__name__}')
+            await self._store_email_failed(MessageStatus.send_request_failed, j,
+                                           f'Error sending email: {e.__class__.__name__}')
             return
 
         data = await r.json()
@@ -250,7 +251,7 @@ class Sender(Actor):
         try:
             return render_email(j)
         except ChevronError as e:
-            await self._store_email_failed(j, f'Error rendering email: {e}')
+            await self._store_email_failed(MessageStatus.render_failed, j, f'Error rendering email: {e}')
 
     async def _generate_base64_pdf(self, pdf_attachments):
         headers = dict(
@@ -293,13 +294,13 @@ class Sender(Actor):
             events=[]
         )
 
-    async def _store_email_failed(self, j: EmailJob, error_msg):
+    async def _store_email_failed(self, status: MessageStatus, j: EmailJob, error_msg):
         await self.es.post(
             f'messages/{j.send_method}',
             company=j.company_code,
             send_ts=datetime.utcnow(),
             update_ts=datetime.utcnow(),
-            status=MessageStatus.render_failed,
+            status=status,
             group_id=j.group_id,
             to_first_name=j.first_name,
             to_last_name=j.last_name,

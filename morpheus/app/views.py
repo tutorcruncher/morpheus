@@ -419,13 +419,13 @@ class UserAggregationView(UserView):
                         {'match_all': {}} if self.session.company == '__all__' else
                         {'term': {'company': self.session.company}},
                         {
-                            'range': {'send_ts': {'gte': 'now-90d/d'}}
+                            'range': {'send_ts': {'gte': 'now-90d'}}
                         }
                     ]
                 }
             },
             aggs={
-                '_': {
+                'histogram': {
                     'date_histogram': {
                         'field': 'send_ts',
                         'interval': 'day'
@@ -439,6 +439,53 @@ class UserAggregationView(UserView):
                             }
                         } for status in MessageStatus
                     },
+                },
+                'all_opened': {
+                    'filter': {
+                        'bool': {
+                            'filter': [
+                                {'term': {'status': MessageStatus.open}}
+                            ]
+                        }
+                    }
+                },
+                '7_days_all': {
+                    'filter': {
+                        'bool': {
+                            'filter': [
+                                {'range': {'send_ts': {'gte': 'now-7d'}}}
+                            ]
+                        }
+                    }
+                },
+                '7_days_opened': {
+                    'filter': {
+                        'bool': {
+                            'filter': [
+                                {'range': {'send_ts': {'gte': 'now-7d'}}},
+                                {'term': {'status': MessageStatus.open}}
+                            ]
+                        }
+                    }
+                },
+                '28_days_all': {
+                    'filter': {
+                        'bool': {
+                            'filter': [
+                                {'range': {'send_ts': {'gte': 'now-28d'}}}
+                            ]
+                        }
+                    }
+                },
+                '28_days_opened': {
+                    'filter': {
+                        'bool': {
+                            'filter': [
+                                {'range': {'send_ts': {'gte': 'now-28d'}}},
+                                {'term': {'status': MessageStatus.open}}
+                            ]
+                        }
+                    }
                 }
             }
         )
@@ -452,7 +499,7 @@ class AdminAggregatedView(AdminView):
 
         r = await morpheus_api.get(url)
         data = await r.json()
-        bucket_data = data['aggregations']['_']['buckets']
+        bucket_data = data['aggregations']['histogram']['buckets']
         # ignore "click" and "unsub"
         headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'

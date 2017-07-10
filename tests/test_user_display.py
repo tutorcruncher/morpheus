@@ -86,24 +86,40 @@ async def test_user_aggregate(cli, settings, send_email):
     await cli.server.app['es'].create_indices(True)
 
     for i in range(4):
-        await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
+        await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
+    msg_id = await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
+
+    data = {
+        'ts': int(2e10),
+        'event': 'open',
+        '_id': msg_id,
+        'user_agent': 'testincalls'
+    }
+    await cli.post('/webhook/test/', json=data)
 
     await send_email(uid=str(uuid.uuid4()), company_code='different')
     await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'whoever'))
+    r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'user-aggs'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
     print(json.dumps(data, indent=2))
-    buckets = data['aggregations']['_']['buckets']
+    buckets = data['aggregations']['histogram']['buckets']
     assert len(buckets) == 1
-    assert buckets[0]['doc_count'] == 4
+    assert buckets[0]['doc_count'] == 5
     assert buckets[0]['send']['doc_count'] == 4
-    assert buckets[0]['open']['doc_count'] == 0
+    assert buckets[0]['open']['doc_count'] == 1
+    assert buckets[0]['render_failed']['doc_count'] == 0
+    assert data['aggregations']['all_opened']['doc_count'] == 1
+    assert data['aggregations']['7_days_all']['doc_count'] == 5
+    assert data['aggregations']['7_days_opened']['doc_count'] == 1
+    assert data['aggregations']['28_days_all']['doc_count'] == 5
+    assert data['aggregations']['28_days_opened']['doc_count'] == 1
+
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['aggregations']['_']['buckets'][0]['doc_count'] == 5
+    assert data['aggregations']['histogram']['buckets'][0]['doc_count'] == 6
 
 
 async def test_user_tags(cli, settings, send_email):

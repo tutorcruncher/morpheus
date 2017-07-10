@@ -208,7 +208,10 @@ def send_email(cli, **extra):
         data.update(**extra)
         r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
-        return data['uid'] + '-foobartestingcom'
+        if len(data['recipients']) != 1:
+            return NotImplemented
+        else:
+            return re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
     return _send_message
 
 
