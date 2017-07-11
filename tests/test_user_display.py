@@ -195,7 +195,7 @@ async def test_message_details(cli, settings, send_email):
     assert '<label>Subject:</label>\n<span>test message</span>' in spaceless
     assert '<label>To:</label>\n<span>&lt;foobar@testing.com&gt;</span>' in spaceless
 
-    assert 'open &bull;' in text
+    assert 'Open &bull;' in text
     assert '"user_agent": "testincalls",' in text
 
 
@@ -227,18 +227,58 @@ async def test_message_details_link(cli, settings, send_email):
 
     await cli.server.app['es'].get('messages/_refresh')
 
-    r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
+    url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
+    r = await cli.get(url)
     assert r.status == 200, await r.text()
     text = await r.text()
     assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
     assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
     assert '<a href="#">different.pdf</a>' in text
+    assert 'Open &bull; Sat 2286-11-20 17:46' in text
+    assert 'extra values not shown' not in text
+
+    url += '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z'})
+    r = await cli.get(url)
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert 'Open &bull; 20/11/2286 17:46' in text
+
+
+async def test_many_events(cli, settings, send_email):
+    msg_id = await send_email(
+        company_code='test-details',
+        recipients=[
+            {
+                'first_name': 'Foo',
+                'address': 'foobar@testing.com',
+            }
+        ]
+    )
+    events = [
+        {
+            'ts': 1499786845,
+            'status': f'testing_{i}',
+            'extra': {}
+        }
+        for i in range(55)
+    ]
+    await cli.server.app['es'].post(f'messages/email-test/{msg_id}/_update', doc={'events': events})
+
+    await cli.server.app['es'].get('messages/_refresh')
+
+    url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
+    r = await cli.get(url)
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert text.count('#morpheus-accordion') == 51
+    assert '5 more &bull; ...' in text
 
 
 async def test_message_details_missing(cli, settings):
     r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
     text = await r.text()
+    assert 'message not found' == text
     assert 'message not found' == text
 
 

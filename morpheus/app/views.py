@@ -196,10 +196,9 @@ class CreateSubaccountView(ServiceView):
 class _UserMessagesView(UserView):
     es_from = True
 
-    @classmethod
-    def _strftime(cls, ts):
-        # TODO: custom formats
-        return from_unix_ms(ts).strftime('%a %Y-%m-%d %H:%M')
+    def _strftime(self, ts):
+        dt_fmt = self.request.query.get('dtfmt') or '%a %Y-%m-%d %H:%M'
+        return from_unix_ms(ts).strftime(dt_fmt)
 
     async def query(self, *, message_id=None, tags=None, query=None):
         es_query = {
@@ -275,7 +274,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
     def _details(self, data):
         yield 'ID', data['_id']
         source = data['_source']
-        yield 'Status', source['status']  # TODO pretty
+        yield 'Status', source['status'].title()
 
         dst = f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
         link = source.get('to_user_link')
@@ -303,11 +302,18 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
                 yield f'/attachment-doc/{doc_id}/', name
 
     def _events(self, data):
-        for event in sorted(data['_source'].get('events', []), key=itemgetter('ts'), reverse=True):
+        events = sorted(data['_source'].get('events', []), key=itemgetter('ts'), reverse=True)
+        for event in events[:50]:
             yield dict(
-                status=event['status'],
+                status=event['status'].title(),
                 datetime=self._strftime(event['ts']),
                 details=Markup(json.dumps(event['extra'], indent=2)),
+            )
+        if len(events) > 50:
+            yield dict(
+                status=f'{len(events) - 50} more',
+                datetime='...',
+                details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2))
             )
 
 
@@ -358,11 +364,11 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             yield [
                 {
                     'href': msg['_id'],
-                    'text': msg_source['to_address'],  # TODO prettier
+                    'text': msg_source['to_address'],
                 },
                 self._strftime((msg_source['send_ts'])),
-                msg_source['status'],  # TODO
-                truncate(subject, 40)
+                msg_source['status'].title(),
+                truncate(subject, 40),
             ]
 
 
