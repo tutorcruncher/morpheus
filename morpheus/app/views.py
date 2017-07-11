@@ -533,11 +533,15 @@ class AdminListView(AdminView):
         method = self.request.query.get('method', SendMethod.email_mandrill)
         offset = int(self.request.query.get('offset', '0'))
         search = self.request.query.get('search', '')
+        tags = self.request.query.get('tags', '')
         query = {
             'size': 100,
             'from': offset,
             'q': search,
         }
+        # tags is a list so has to be processed separately
+        if tags:
+            query['tags'] = tags
         url = self.app.router['user-messages'].url_for(method=method).with_query(query)
 
         r = await morpheus_api.get(url)
@@ -566,7 +570,8 @@ class AdminListView(AdminView):
             next_offset = offset + 100
             query = {
                 'method': method,
-                'search': search or '',
+                'search': search,
+                'tags': tags,
                 'offset': next_offset,
             }
             next_page = dict(
@@ -582,6 +587,7 @@ class AdminListView(AdminView):
             table_body=table_body,
             sub_heading=f'List {method} messages',
             search=search,
+            tags=tags,
             next_page=next_page,
             user_list_url=self.full_url(user_list_path),
         )

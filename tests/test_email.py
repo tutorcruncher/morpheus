@@ -89,6 +89,37 @@ async def test_webhook_old(cli, send_email):
     assert data['_source']['update_ts'] == first_update_ts
 
 
+async def test_webhook_repeat(cli, send_email):
+    msg_id = await send_email()
+    r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
+    data = await r.json()
+    assert data['_source']['status'] == 'send'
+    first_update_ts = data['_source']['update_ts']
+    assert data['_source']['send_ts'] == first_update_ts
+    assert len(data['_source']['events']) == 0
+    data = {
+        'ts': '2032-06-06T12:10',
+        'event': 'open',
+        '_id': msg_id,
+    }
+    for _ in range(3):
+        r = await cli.post('/webhook/test/', json=data)
+        assert r.status == 200, await r.text()
+    data = {
+        'ts': '2032-06-06T12:10',
+        'event': 'open',
+        '_id': msg_id,
+        'user_agent': 'xx',
+    }
+    r = await cli.post('/webhook/test/', json=data)
+    assert r.status == 200, await r.text()
+
+    r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
+    data = await r.json()
+    assert data['_source']['status'] == 'open'
+    assert len(data['_source']['events']) == 2
+
+
 async def test_webhook_missing(cli, send_email):
     msg_id = await send_email()
 
