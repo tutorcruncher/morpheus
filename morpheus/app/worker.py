@@ -577,7 +577,7 @@ class Sender(Actor):
             await self.update_message_status('email-mandrill', m, log_each=False)
 
     async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
-        r = await self.es.get(f'messages/{es_type}/{m.message_id}', allow_statuses=(200, 404))
+        r = await self.es.get(f'messages/{es_type}/{m.message_id}', allowed_statuses=(200, 404))
         if r.status == 404:
             return
         data = await r.json()
