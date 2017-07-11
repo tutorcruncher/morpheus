@@ -51,7 +51,8 @@ You'll need elastic search and redis installed.
 
 ### To prepare for deploy
 
-Get ssl `cert.pem and `key.pem` and put htem in `./nginx/prod/keys`, generate a password file for glances
+Get ssl `cert.pem` and `key.pem` and put them in `./nginx/prod/keys`, generate a password file for endpoints
+requiring basic auth.
 
     sudo apt install apache2-utils
     sudo htpasswd -c nginx/prod/pword <username>

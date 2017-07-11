@@ -16,19 +16,6 @@ services:
     - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: always
 
-  glances:
-    image: nicolargo/glances:stable
-    pid: host
-    environment:
-      GLANCES_OPT: '-w'
-    hostname: morpheus
-    ports:
-    - 61208-61209:61208-61209
-    volumes:
-    - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on:
-    - logs
-
   elastic:
     build: elasticsearch
     environment:

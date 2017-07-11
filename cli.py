@@ -131,54 +131,6 @@ def cli(ctx):
 
 
 @cli.command()
-@click.option('--username', envvar='BASIC_USERNAME')
-@click.option('--password', envvar='BASIC_PASSWORD')
-@click.option('--user-auth-key', envvar='APP_USER_AUTH_KEY')
-@click.option('--company', default='__all__')
-@click.option('--send-method', default='email-mandrill')
-def status(username, password, user_auth_key, company, send_method):
-    r = requests.get(root_url)
-    assert r.status_code == 200, (r.status_code, r.text)
-    print(*re.search('^ *(COMMIT: .+)', r.text, re.M).groups())
-    print(*re.search('^ *(RELEASE DATE: .+)', r.text, re.M).groups())
-
-    auth = HTTPBasicAuth(username, password)
-    r = requests.get(f'{root_url}/glances/api/2/all', auth=auth)
-    if r.status_code == 401:
-        print(f'authentication with username={username}, password={password} failed')
-        exit(1)
-
-    assert r.status_code == 200, (f'{root_url}/glances/api/2/all', r.status_code, r.text)
-    data = get_data(r)
-    print('CPU:      {cpu[total]:0.2f}%'.format(**data))
-    print('Memory:   {mem[percent]:0.2f}% {v}'.format(v=sizeof_fmt(data['mem']['used']), **data))
-    print('Uptime:   {uptime}'.format(**data))
-    print('Docker Containers:')
-    for c in data['docker']['containers']:
-        print('  {name:20} {Status:15} mem: {v:6} CPU: {cpu[total]:0.2f}%'.format(
-            v=sizeof_fmt(c['memory']['usage']), **c))
-    print('File System:')
-    for c in data['fs']:
-        print('  {device_name:10} {mnt_point:20} {fs_type:6} used: {v:6} {percent:0.2f}%'.format(
-            v=sizeof_fmt(c['used']), **c))
-
-    r = requests.get(modify_url(f'{root_url}/user/{send_method}/aggregation/', user_auth_key, company))
-    assert r.status_code == 200, (r.status_code, r.text)
-    data = get_data(r)
-    # print_data(data)
-    data = data['aggregations']['_']
-    print('Total emails send: {doc_count}'.format(**data))
-    for period in data['_']['buckets']:
-        opens = {}
-        for k, v in period.items():
-            if isinstance(v, dict):
-                opens[k] = v.get('doc_count')
-        opens = ' '.join(f'{k}={str(v):5}' for k, v in sorted(opens.items()))
-        dt = datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d')
-        print('{dt:%a %Y-%m-%d}   {opens}'.format(dt=dt, opens=opens))
-
-
-@cli.command()
 @click.argument('recipient_email')
 @click.option('--recipient-first-name', default='John {}')
 @click.option('--recipient-last-name', default='Doe')
