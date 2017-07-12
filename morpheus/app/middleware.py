@@ -82,6 +82,13 @@ class ErrorLoggingMiddleware:
             'data': await self.log_extra_data(request)
         })
 
+    def should_warning(self, r):
+        return (
+            self.should_log_warnings and
+            r.status >= 400 and not
+            (r.status == 401 and 'WWW-Authenticate' in r.headers)
+        )
+
     async def __call__(self, app, handler):
         async def _handler(request):
             try:
@@ -93,14 +100,14 @@ class ErrorLoggingMiddleware:
                 else:
                     r = await handler(request)
             except HTTPException as e:
-                if self.should_log_warnings and e.status >= 400:
+                if self.should_warning(e):
                     await self.log_warning(request, e)
                 raise
             except BaseException as e:
                 await self.log_exception(e, request)
                 raise HTTPInternalServerError()
             else:
-                if self.should_log_warnings and r.status >= 400:
+                if self.should_warning(r):
                     await self.log_warning(request, r)
                 return r
 
