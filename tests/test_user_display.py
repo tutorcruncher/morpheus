@@ -217,7 +217,7 @@ async def test_message_details_link(cli, settings, send_email):
     )
 
     data = {
-        'ts': int(1e10),
+        'ts': int(2e12),
         'event': 'open',
         '_id': msg_id,
         'user_agent': 'testincalls'
@@ -234,14 +234,18 @@ async def test_message_details_link(cli, settings, send_email):
     assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
     assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
     assert '<a href="#">different.pdf</a>' in text
-    assert 'Open &bull; Sat 2286-11-20 17:46' in text
+    assert 'Open &bull; Wed 2033-05-18 03:33' == re.search('Open &bull; .+', text).group()
     assert 'extra values not shown' not in text
 
-    url += '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z'})
-    r = await cli.get(url)
+    r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'Europe/London'}))
     assert r.status == 200, await r.text()
     text = await r.text()
-    assert 'Open &bull; 20/11/2286 17:46' in text
+    assert 'Open &bull; 18/05/2033 04:33 BST' == re.search('Open &bull; .+', text).group()
+
+    r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'snap'}))
+    assert r.status == 400, await r.text()
+    text = await r.text()
+    assert 'unknown timezone: "snap"' == text
 
 
 async def test_many_events(cli, settings, send_email):

@@ -12,6 +12,7 @@ from statistics import mean, stdev
 from time import time
 
 import msgpack
+import pytz
 import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
 from aiohttp_jinja2 import template
@@ -197,8 +198,14 @@ class _UserMessagesView(UserView):
     es_from = True
 
     def _strftime(self, ts):
+        dt_tz = self.request.query.get('dttz') or 'utc'
+        try:
+            dt_tz = pytz.timezone(dt_tz)
+        except pytz.UnknownTimeZoneError:
+            raise HTTPBadRequest(text=f'unknown timezone: "{dt_tz}"')
+
         dt_fmt = self.request.query.get('dtfmt') or '%a %Y-%m-%d %H:%M'
-        return from_unix_ms(ts).strftime(dt_fmt)
+        return from_unix_ms(ts, 0).astimezone(dt_tz).strftime(dt_fmt)
 
     async def query(self, *, message_id=None, tags=None, query=None):
         es_query = {
