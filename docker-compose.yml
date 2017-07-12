@@ -7,6 +7,13 @@ volumes:
   pdf_data: {}
   test_data: {}
 
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+      - subnet: 172.20.0.0/16
+
 services:
   logs:
     image: gliderlabs/logspout
@@ -72,6 +79,9 @@ services:
       APP_STATS_TOKEN: ${APP_STATS_TOKEN}
 #      APP_LOG_LEVEL: DEBUG
     restart: always
+    networks:
+      default:
+        ipv4_address: 172.20.0.101
     depends_on:
     - elastic
     - redis
