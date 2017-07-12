@@ -12,7 +12,7 @@ Okay, chill. We're not normally that astronomically arrogant. Just the obvious m
 platform - "hermes" was already taken by a plethora of terrible nineties mail clients.
 
 What *morpheus* does:
-* sends emails and SMSs fast using mandrill, SES (TODO) and message bird. One http request to send 5000 emails.
+* sends emails and SMSs fast using mandrill, SES (TODO) and messagebird (SMS). One http request to send 5000 emails or SMSs.
 * generate PDFs for attachments given HTML using wkhtmltopdf.
 * provide a searchable history of sent messages and delivery analytics.
 * manage sending quotas as mandrill does when not using mandrill.
