@@ -5,6 +5,8 @@ import json
 import re
 import uuid
 
+from aiohttp import ClientError, ClientOSError
+
 
 async def test_send_email(cli, tmpdir):
     data = {
@@ -560,3 +562,66 @@ async def test_pdf_empty(send_email, tmpdir):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
     assert '\n  "attachments": []\n' in msg_file
+
+
+async def test_mandrill_send_client_error(cli, send_email, mocker):
+    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
+    mock_mandrill_post.side_effect = ClientError('foobar')
+
+    es_url = 'messages/email-mandrill/_search?q=company:mandrill-error-test'
+    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 0
+
+    await send_email(
+        method='email-mandrill',
+        company_code='mandrill-error-test',
+        recipients=[{'address': 'foobar_a@testing.com'}]
+    )
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 1
+    assert data['hits']['hits'][0]['_source']['status'] == 'send_request_failed'
+    assert data['hits']['hits'][0]['_source']['body'] == 'Error sending email: ClientError'
+
+
+async def test_mandrill_send_connection_error_ok(cli, send_email, mocker):
+    request = 0
+
+    async def fake_response(url, **data):
+        nonlocal request
+        request += 1
+        if request == 1:
+            raise ClientOSError('foobar')
+
+        class FakeResponse:
+            async def json(self):
+                return [dict(email='foobar_a@testing.com', _id='abc')]
+        return FakeResponse()
+
+    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
+    mock_mandrill_post.side_effect = fake_response
+
+    es_url = 'messages/email-mandrill/_search?q=company:mandrill-error-ok-test'
+    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 0
+
+    await send_email(
+        method='email-mandrill',
+        company_code='mandrill-error-ok-test',
+        recipients=[{'address': 'foobar_a@testing.com'}]
+    )
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['hits']['total'] == 1
+    assert data['hits']['hits'][0]['_source']['status'] == 'send'
+    assert data['hits']['hits'][0]['_source']['body'] == '<body>\nthis is a test\n</body>'

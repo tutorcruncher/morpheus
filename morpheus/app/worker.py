@@ -10,7 +10,7 @@ from typing import Dict, List, NamedTuple
 import chevron
 import msgpack
 import phonenumbers
-from aiohttp import ClientError, ClientSession
+from aiohttp import ClientConnectionError, ClientError, ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
 from arq.utils import from_unix_ms, to_unix_ms, truncate
 from chevron import ChevronError
@@ -167,8 +167,8 @@ class Sender(Actor):
         email_info = await self._render_email(j)
         if not email_info:
             return
-        main_logger.info('send to "%s" subject="%s" body=%d attachments=[%s]',
-                         j.address, truncate(email_info.subject, 40), len(email_info.html_body),
+        main_logger.info('%s: send to "%s" subject="%s" body=%d attachments=[%s]',
+                         j.group_id, j.address, truncate(email_info.subject, 40), len(email_info.html_body),
                          ', '.join(f'{a["name"]}:{len(a["html"])}' for a in j.pdf_attachments))
         data = {
             'async': True,
@@ -197,15 +197,29 @@ class Sender(Actor):
             ),
         }
         send_ts = datetime.utcnow()
-        try:
-            r = await self.mandrill.post('messages/send.json', **data)
-        except ClientError as e:
-            main_logger.exception('error while posting to mandrill, %s: %s', e.__class__.__name__, e)
-            await self._store_email_failed(MessageStatus.send_request_failed, j,
-                                           f'Error sending email: {e.__class__.__name__}')
+        response, exc = None, None
+        for i in range(3):
+            try:
+                response = await self.mandrill.post('messages/send.json', **data)
+            except ClientConnectionError as e:
+                exc = e
+                main_logger.warning('%s: client connection error, email: "%s", retrying...', j.group_id, j.address)
+                await asyncio.sleep(0.5)
+            except (ClientError, ApiError) as e:
+                exc = e
+                break
+            else:
+                exc = None
+                break
+
+        if exc or response is None:
+            e_name = exc.__class__.__name__
+            main_logger.exception('%s: error while posting to mandrill, email: "%s", %s: %s',
+                                  j.group_id, j.address, e_name, exc)
+            await self._store_email_failed(MessageStatus.send_request_failed, j, f'Error sending email: {e_name}')
             return
 
-        data = await r.json()
+        data = await response.json()
         assert len(data) == 1, data
         data = data[0]
         assert data['email'] == j.address, data
