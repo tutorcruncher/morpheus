@@ -109,6 +109,8 @@ async def generate_pdf(request):
     data = await request.read()
     if not data:
         return Response(text='request was empty', status=400)
+    elif b'binary' in data:
+        return Response(body=b'binary-\xfe', content_type='application/pdf')
     else:
         return Response(body=data, content_type='application/pdf')
 

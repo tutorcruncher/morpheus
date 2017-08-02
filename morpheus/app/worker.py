@@ -244,7 +244,7 @@ class Sender(Actor):
             to_user_link=j.user_link,
             tags=j.tags,
             important=j.important,
-            attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode():.40}'
+            attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode(errors="ignore"):.40}'
                          async for a in self._generate_base64_pdf(j.pdf_attachments)],
         )
         msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_id}-{j.address}')
