@@ -234,3 +234,11 @@ async def test_create_sub_account_invalid_key(cli, mock_external):
     data = {'company_code': 'foobar'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
     assert r.status == 403, await r.text()
+
+
+async def test_missing_link(cli):
+    r = await cli.get('/lxxx')
+    assert r.status == 404, await r.text()
+    text = await r.text()
+    assert (f'<p>404: No redirect could be found for "http://127.0.0.1:{cli.server.port}/lxxx", '
+            f'this link may have expired.</p>') in text

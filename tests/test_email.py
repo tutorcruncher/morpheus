@@ -628,7 +628,7 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker):
 async def test_link_shortening(send_email, tmpdir, cli):
     mid = await send_email(
         main_template='<a href="{{ the_link }}">foobar</a> test message',
-        context={'the_link': 'https://www.whatever.com'},
+        context={'the_link': 'https://www.foobar.com'},
         company_code='test_link_shortening',
     )
     assert len(tmpdir.listdir()) == 1
@@ -636,6 +636,7 @@ async def test_link_shortening(send_email, tmpdir, cli):
     m = re.search('<a href="https://click.example.com/l(.+?)">foobar</a> test message', msg_file)
     assert m, msg_file
     token = m.groups()[0]
+    assert len(token) == 30
 
     await cli.server.app['es'].get('links/_refresh')
     r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening')
@@ -643,9 +644,13 @@ async def test_link_shortening(send_email, tmpdir, cli):
     print(json.dumps(response_data, indent=2))
     assert response_data['hits']['total'] == 1
     v = response_data['hits']['hits'][0]['_source']
-    assert v['url'] == 'https://www.whatever.com'
+    assert v['url'] == 'https://www.foobar.com'
     assert v['token'] == token
     assert v['send_method'] == 'email-test'
+
+    r = await cli.get('/l' + token, allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'https://www.foobar.com'
 
 
 async def test_link_shortening_in_render(send_email, tmpdir, cli):

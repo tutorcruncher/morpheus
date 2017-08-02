@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
@@ -17,6 +17,8 @@ from phonenumbers import parse as parse_number
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
                           number_type)
 from phonenumbers.geocoder import country_name_for_number, description_for_number
+
+from morpheus.app.render.main import apply_short_links
 
 from .es import ElasticSearch
 from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
@@ -84,6 +86,7 @@ class Sender(Actor):
         self.session = self.es = self.mandrill = self.messagebird = None
         self.mandrill_webhook_auth_key = None
         self.email_click_url = f'https://{self.settings.click_host_name}/l'
+        self.sms_click_url = f'{self.settings.click_host_name}/l'
 
     async def startup(self):
         main_logger.info('Sender initialising session and elasticsearch and mandrill...')
@@ -316,6 +319,7 @@ class Sender(Actor):
                 company=j.company_code,
                 send_method=j.send_method,
                 send_message_id=uid,
+                expires_ts=datetime.utcnow() + timedelta(days=365*50)
             )
 
     async def _store_email_failed(self, status: MessageStatus, j: EmailJob, error_msg):
@@ -420,13 +424,14 @@ class Sender(Actor):
                 jobs += 1
         return jobs
 
-    async def _sms_get_number_message(self, j: SmsJob):
+    async def _sms_prep(self, j: SmsJob):
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
-        msg, error = None, None
+        msg, error, shortened_link = None, None, None
         if not number_info or not number_info.is_mobile:
             error = f'invalid mobile number "{j.number}"'
             main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
         else:
+            shortened_link = apply_short_links(j.context, self.sms_click_url, 12)
             try:
                 msg = chevron.render(j.main_template, data=j.context)
             except ChevronError as e:
@@ -448,12 +453,12 @@ class Sender(Actor):
                 tags=j.tags,
                 body=error,
             )
-            return None, None
+            return None, None, None
         else:
-            return number_info, msg
+            return number_info, msg, shortened_link
 
     async def _test_send_sms(self, j: SmsJob):
-        number, message = await self._sms_get_number_message(j)
+        number, message, shortened_link = await self._sms_prep(j)
         if not number:
             return
 
@@ -477,7 +482,7 @@ class Sender(Actor):
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_sms(msg_id, send_ts, j, number, message, cost)
+        await self._store_sms(msg_id, send_ts, j, number, message, cost, shortened_link)
 
     async def _messagebird_get_mcc_cost(self, redis, mcc):
         rates_key = 'messagebird-rates'
@@ -531,7 +536,7 @@ class Sender(Actor):
             return await self._messagebird_get_mcc_cost(redis, mcc)
 
     async def _messagebird_send_sms(self, j: SmsJob):
-        number, message = await self._sms_get_number_message(j)
+        number, message, shortened_link = await self._sms_prep(j)
         if not number:
             return
 
@@ -549,9 +554,10 @@ class Sender(Actor):
         data = await r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
-        await self._store_sms(data['id'], send_ts, j, number, message, cost)
+        await self._store_sms(data['id'], send_ts, j, number, message, cost, shortened_link)
 
-    async def _store_sms(self, uid, send_ts, j: SmsJob, number: Number, message: str, cost: float):
+    async def _store_sms(self, uid, send_ts, j: SmsJob, number: Number,
+                         message: str, cost: float, shortened_link: dict):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -569,6 +575,16 @@ class Sender(Actor):
             cost=cost,
             events=[],
         )
+        for url, token in shortened_link:
+            await self.es.post(
+                'links/c/',
+                token=token,
+                url=url,
+                company=j.company_code,
+                send_method=j.send_method,
+                send_message_id=uid,
+                expires_ts=datetime.utcnow() + timedelta(days=90)
+            )
 
     async def check_sms_limit(self, company_code):
         r = await self.es.get(

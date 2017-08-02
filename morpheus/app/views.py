@@ -47,7 +47,7 @@ class ClickRedirectView(TemplateView):
                 'bool': {
                     'filter': [
                         {'term': {'token': request.match_info['token']}},
-                        {'range': {'expires_ts': {'lte': 'now'}}},
+                        {'range': {'expires_ts': {'gte': 'now'}}},
                     ]
                 }
             },
