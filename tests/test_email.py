@@ -648,9 +648,32 @@ async def test_link_shortening(send_email, tmpdir, cli):
     assert v['token'] == token
     assert v['send_method'] == 'email-test'
 
-    r = await cli.get('/l' + token, allow_redirects=False)
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_link_shortening')
+    response_data = await r.json()
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'send'
+    assert len(source['events']) == 0
+
+    r = await cli.get('/l' + token, allow_redirects=False, headers={
+        'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/59.0.3071.115 Safari/537.36',
+    })
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'https://www.foobar.com'
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_link_shortening')
+    response_data = await r.json()
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'click'
+    assert len(source['events']) == 1
+    assert source['events'][0]['status'] == 'click'
+    assert source['events'][0]['extra']['user_agent'].startswith('Mozilla/5.0')
+    assert source['events'][0]['extra']['user_agent_display'].startswith('Chrome 59 on Linux')
 
 
 async def test_link_shortening_in_render(send_email, tmpdir, cli):

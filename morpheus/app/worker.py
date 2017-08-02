@@ -17,12 +17,12 @@ from phonenumbers import parse as parse_number
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
                           number_type)
 from phonenumbers.geocoder import country_name_for_number, description_for_number
-
-from morpheus.app.render.main import apply_short_links
+from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from .es import ElasticSearch
-from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
+from .models import THIS_DIR, BaseWebhook, ClickInfo, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
+from .render.main import apply_short_links
 from .settings import Settings
 from .utils import ApiError, Mandrill, MessageBird
 
@@ -616,6 +616,30 @@ class Sender(Actor):
         for m in mandrill_webhook.events:
             await self.update_message_status('email-mandrill', m, log_each=False)
 
+    @concurrent
+    async def store_click(self, *, target, ip, ts, user_agent, send_method, send_message_id):
+        extra = {
+            'target': target,
+            'ip': ip,
+            'user_agent': user_agent,
+        }
+        if user_agent:
+            ua_dict = ParseUserAgent(user_agent)
+            platform = ua_dict['device']['family']
+            if platform in {'Other', None}:
+                platform = ua_dict['os']['family']
+            extra['user_agent_display'] = ('{user_agent[family]} {user_agent[major]} on '
+                                           '{platform}').format(platform=platform, **ua_dict).strip(' ')
+
+        # TODO process ip and add geo info
+        m = ClickInfo(
+            ts=ts,
+            status='click',
+            message_id=send_message_id,
+            extra_=extra
+        )
+        await self.update_message_status(send_method, m)
+
     async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
         r = await self.es.get(f'messages/{es_type}/{m.message_id}', allowed_statuses=(200, 404))
         if r.status == 404:
@@ -637,7 +661,8 @@ class Sender(Actor):
 
         update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=10'
         try:
-            if m.ts >= old_update_ts:
+            # give 1 second "lee way" for new event to have happened just before the old event
+            if m.ts >= (old_update_ts - timedelta(seconds=1)):
                 await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
             log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
             await self.es.post(
@@ -654,7 +679,7 @@ class Sender(Actor):
                 }
             )
         except ApiError as e:  # pragma: no cover
-            # no error here if we know the problem to avoid mandrill repeatedly trying to send the event
+            # no error here if we know the problem
             if e.status == 409:
                 main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
                 return
@@ -670,7 +695,7 @@ class AuxActor(Actor):  # pragma: no cover
         self.es = None
 
     async def startup(self):
-        main_logger.info('Sender initialising elasticsearch...')
+        main_logger.info('AuxActor initialising elasticsearch...')
         self.es = ElasticSearch(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):

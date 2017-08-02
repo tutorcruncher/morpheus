@@ -57,7 +57,22 @@ class ClickRedirectView(TemplateView):
         if data['hits']['total']:
             hit = data['hits']['hits'][0]
             source = hit['_source']
-            # TODO start job to record click
+            ip_address = request.headers.get('X-Forwarded-For')
+            if ip_address:
+                ip_address = ip_address.split(',', 1)[0]
+
+            try:
+                ts = float(request.headers.get('X-Request-Start', '.'))
+            except ValueError:
+                ts = request.time_service.time()
+            await self.sender.store_click(
+                target=source['url'],
+                ip=ip_address,
+                user_agent=request.headers.get('User-Agent'),
+                ts=ts,
+                send_method=source['send_method'],
+                send_message_id=source['send_message_id']
+            )
             raise HTTPTemporaryRedirect(location=source['url'])
         else:
             return dict(
