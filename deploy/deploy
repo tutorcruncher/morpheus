@@ -5,7 +5,8 @@ THIS_DIR=$(dirname "$0")
 echo "building morpheus image..."
 docker build ${THIS_DIR}/../morpheus -t morpheus
 
-sed "s/{{HOST_NAME}}/${APP_HOST_NAME}/g" ${THIS_DIR}/../nginx/nginx.conf > ${THIS_DIR}/../nginx/_build.nginx.conf
+sed "s/{{HOST_NAME}}/${APP_HOST_NAME}/g; s/{{CLICK_HOST_NAME}}/${APP_CLICK_HOST_NAME}/g"\
+ ${THIS_DIR}/../nginx/nginx.conf > ${THIS_DIR}/../nginx/_build.nginx.conf
 echo "building nginx image..."
 docker build ${THIS_DIR}/../nginx -t morpheus-nginx -q
 

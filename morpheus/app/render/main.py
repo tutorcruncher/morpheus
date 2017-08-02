@@ -1,5 +1,6 @@
 import logging
 import re
+import secrets
 from typing import Dict, NamedTuple
 
 import chevron
@@ -27,6 +28,7 @@ class EmailInfo(NamedTuple):
     subject: str
     html_body: str
     headers: dict
+    shortened_link: list
 
 
 def _update_context(context, partials, macros):
@@ -66,7 +68,18 @@ def _apply_macros(s, macros):
     return s
 
 
-def render_email(m: MessageDef) -> EmailInfo:
+def apply_short_links(context, click_url, click_random=30):
+    shortened_link = []
+    for k, v in context.items():
+        # TODO deal with unsubscribe links properly
+        if k != 'unsubscribe_link' and isinstance(v, str) and re.match('^https?://', v):
+            r = secrets.token_urlsafe(click_random)[:click_random]
+            context[k] = click_url + r
+            shortened_link.append((v, r))
+    return shortened_link
+
+
+def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
     full_name = f'{m.first_name or ""} {m.last_name or ""}'.strip(' ')
     m.context.setdefault('recipient_name', full_name)
     m.context.setdefault('recipient_first_name', m.first_name or full_name)
@@ -76,6 +89,11 @@ def render_email(m: MessageDef) -> EmailInfo:
     except ChevronError as e:
         logger.warning('invalid subject template: %s', e)
         subject = m.subject_template
+
+    shortened_link = []
+    if click_url:
+        shortened_link = apply_short_links(m.context, click_url, click_random)
+
     m.context.update(
         email_subject=subject,
         **dict(_update_context(m.context, m.mustache_partials, m.macros))
@@ -93,4 +111,5 @@ def render_email(m: MessageDef) -> EmailInfo:
             partials_dict=m.mustache_partials,
         ),
         headers=m.headers,
+        shortened_link=shortened_link,
     )

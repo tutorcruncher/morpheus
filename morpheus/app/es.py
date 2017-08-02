@@ -40,7 +40,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
 
         for index_name, mapping_properties in MAPPINGS.items():
             r = await self.get(index_name, allowed_statuses=(200, 404))
-            if r.status != 404:
+            if r.status == 200:
                 if delete_existing:
                     main_logger.warning('deleting index "%s"', index_name)
                     await self.delete(index_name)
@@ -169,4 +169,12 @@ MAPPINGS = {
             }
         },
     },
+    'links': {
+        'token': KEYWORD,
+        'url': KEYWORD,
+        'company': KEYWORD,
+        'send_method': KEYWORD,
+        'send_message_id': KEYWORD,
+        'expires_ts': DATE,
+    }
 }

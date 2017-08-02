@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, NamedTuple
 
@@ -17,10 +17,12 @@ from phonenumbers import parse as parse_number
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
                           number_type)
 from phonenumbers.geocoder import country_name_for_number, description_for_number
+from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from .es import ElasticSearch
-from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
+from .models import THIS_DIR, BaseWebhook, ClickInfo, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
+from .render.main import apply_short_links
 from .settings import Settings
 from .utils import ApiError, Mandrill, MessageBird
 
@@ -83,6 +85,8 @@ class Sender(Actor):
         super().__init__(**kwargs)
         self.session = self.es = self.mandrill = self.messagebird = None
         self.mandrill_webhook_auth_key = None
+        self.email_click_url = f'https://{self.settings.click_host_name}/l'
+        self.sms_click_url = f'{self.settings.click_host_name}/l'
 
     async def startup(self):
         main_logger.info('Sender initialising session and elasticsearch and mandrill...')
@@ -263,7 +267,7 @@ class Sender(Actor):
 
     async def _render_email(self, j: EmailJob):
         try:
-            return render_email(j)
+            return render_email(j, self.email_click_url)
         except ChevronError as e:
             await self._store_email_failed(MessageStatus.render_failed, j, f'Error rendering email: {e}')
 
@@ -307,6 +311,16 @@ class Sender(Actor):
             attachments=[f'{a["id"] or ""}::{a["name"]}' for a in j.pdf_attachments],
             events=[]
         )
+        for url, token in email_info.shortened_link:
+            await self.es.post(
+                'links/c/',
+                token=token,
+                url=url,
+                company=j.company_code,
+                send_method=j.send_method,
+                send_message_id=uid,
+                expires_ts=datetime.utcnow() + timedelta(days=365*50)
+            )
 
     async def _store_email_failed(self, status: MessageStatus, j: EmailJob, error_msg):
         await self.es.post(
@@ -410,13 +424,14 @@ class Sender(Actor):
                 jobs += 1
         return jobs
 
-    async def _sms_get_number_message(self, j: SmsJob):
+    async def _sms_prep(self, j: SmsJob):
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
-        msg, error = None, None
+        msg, error, shortened_link = None, None, None
         if not number_info or not number_info.is_mobile:
             error = f'invalid mobile number "{j.number}"'
             main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
         else:
+            shortened_link = apply_short_links(j.context, self.sms_click_url, 12)
             try:
                 msg = chevron.render(j.main_template, data=j.context)
             except ChevronError as e:
@@ -438,12 +453,12 @@ class Sender(Actor):
                 tags=j.tags,
                 body=error,
             )
-            return None, None
+            return None, None, None
         else:
-            return number_info, msg
+            return number_info, msg, shortened_link
 
     async def _test_send_sms(self, j: SmsJob):
-        number, message = await self._sms_get_number_message(j)
+        number, message, shortened_link = await self._sms_prep(j)
         if not number:
             return
 
@@ -467,7 +482,7 @@ class Sender(Actor):
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_sms(msg_id, send_ts, j, number, message, cost)
+        await self._store_sms(msg_id, send_ts, j, number, message, cost, shortened_link)
 
     async def _messagebird_get_mcc_cost(self, redis, mcc):
         rates_key = 'messagebird-rates'
@@ -521,7 +536,7 @@ class Sender(Actor):
             return await self._messagebird_get_mcc_cost(redis, mcc)
 
     async def _messagebird_send_sms(self, j: SmsJob):
-        number, message = await self._sms_get_number_message(j)
+        number, message, shortened_link = await self._sms_prep(j)
         if not number:
             return
 
@@ -539,9 +554,10 @@ class Sender(Actor):
         data = await r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
-        await self._store_sms(data['id'], send_ts, j, number, message, cost)
+        await self._store_sms(data['id'], send_ts, j, number, message, cost, shortened_link)
 
-    async def _store_sms(self, uid, send_ts, j: SmsJob, number: Number, message: str, cost: float):
+    async def _store_sms(self, uid, send_ts, j: SmsJob, number: Number,
+                         message: str, cost: float, shortened_link: dict):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -559,6 +575,16 @@ class Sender(Actor):
             cost=cost,
             events=[],
         )
+        for url, token in shortened_link:
+            await self.es.post(
+                'links/c/',
+                token=token,
+                url=url,
+                company=j.company_code,
+                send_method=j.send_method,
+                send_message_id=uid,
+                expires_ts=datetime.utcnow() + timedelta(days=90)
+            )
 
     async def check_sms_limit(self, company_code):
         r = await self.es.get(
@@ -590,6 +616,30 @@ class Sender(Actor):
         for m in mandrill_webhook.events:
             await self.update_message_status('email-mandrill', m, log_each=False)
 
+    @concurrent
+    async def store_click(self, *, target, ip, ts, user_agent, send_method, send_message_id):
+        extra = {
+            'target': target,
+            'ip': ip,
+            'user_agent': user_agent,
+        }
+        if user_agent:
+            ua_dict = ParseUserAgent(user_agent)
+            platform = ua_dict['device']['family']
+            if platform in {'Other', None}:
+                platform = ua_dict['os']['family']
+            extra['user_agent_display'] = ('{user_agent[family]} {user_agent[major]} on '
+                                           '{platform}').format(platform=platform, **ua_dict).strip(' ')
+
+        # TODO process ip and add geo info
+        m = ClickInfo(
+            ts=ts,
+            status='click',
+            message_id=send_message_id,
+            extra_=extra
+        )
+        await self.update_message_status(send_method, m)
+
     async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
         r = await self.es.get(f'messages/{es_type}/{m.message_id}', allowed_statuses=(200, 404))
         if r.status == 404:
@@ -611,7 +661,8 @@ class Sender(Actor):
 
         update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=10'
         try:
-            if m.ts >= old_update_ts:
+            # give 1 second "lee way" for new event to have happened just before the old event
+            if m.ts >= (old_update_ts - timedelta(seconds=1)):
                 await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
             log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
             await self.es.post(
@@ -628,7 +679,7 @@ class Sender(Actor):
                 }
             )
         except ApiError as e:  # pragma: no cover
-            # no error here if we know the problem to avoid mandrill repeatedly trying to send the event
+            # no error here if we know the problem
             if e.status == 409:
                 main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
                 return
@@ -644,7 +695,7 @@ class AuxActor(Actor):  # pragma: no cover
         self.es = None
 
     async def startup(self):
-        main_logger.info('Sender initialising elasticsearch...')
+        main_logger.info('AuxActor initialising elasticsearch...')
         self.es = ElasticSearch(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):

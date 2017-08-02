@@ -224,3 +224,13 @@ class MessageBirdWebHook(BaseWebhook):
             'ts': 'statusDatetime',
             'error_code': 'statusErrorCode',
         }
+
+
+class ClickInfo(BaseWebhook):
+    ts: datetime
+    status: MessageStatus
+    message_id: str
+    extra_: dict
+
+    def extra(self):
+        return self.extra_

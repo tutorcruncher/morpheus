@@ -14,7 +14,7 @@ from time import time
 import msgpack
 import pytz
 import ujson
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect, Response
 from aiohttp_jinja2 import template
 from arq.utils import from_unix_ms, truncate
 from markupsafe import Markup
@@ -35,6 +35,50 @@ logger = logging.getLogger('morpheus.web')
 async def index(request):
     settings = request.app['settings']
     return {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
+
+
+class ClickRedirectView(TemplateView):
+    template = 'not-found.jinja'
+
+    async def call(self, request):
+        r = await self.app['es'].get(
+            f'links/_search?filter_path=hits',
+            query={
+                'bool': {
+                    'filter': [
+                        {'term': {'token': request.match_info['token']}},
+                        {'range': {'expires_ts': {'gte': 'now'}}},
+                    ]
+                }
+            },
+            size=1,
+        )
+        data = await r.json()
+        if data['hits']['total']:
+            hit = data['hits']['hits'][0]
+            source = hit['_source']
+            ip_address = request.headers.get('X-Forwarded-For')
+            if ip_address:
+                ip_address = ip_address.split(',', 1)[0]
+
+            try:
+                ts = float(request.headers.get('X-Request-Start', '.'))
+            except ValueError:
+                ts = request.time_service.time()
+            await self.sender.store_click(
+                target=source['url'],
+                ip=ip_address,
+                user_agent=request.headers.get('User-Agent'),
+                ts=ts,
+                send_method=source['send_method'],
+                send_message_id=source['send_message_id']
+            )
+            raise HTTPTemporaryRedirect(location=source['url'])
+        else:
+            return dict(
+                url=request.url,
+                http_status_=404,
+            )
 
 
 class EmailSendView(ServiceView):

@@ -487,7 +487,6 @@ async def test_invalid_mustache_subject(send_email, tmpdir, cli):
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_invalid_mustache_subject')
     response_data = await r.json()
-    # import json
     # print(json.dumps(response_data, indent=2))
     assert response_data['hits']['total'] == 1
     source = response_data['hits']['hits'][0]['_source']
@@ -506,7 +505,6 @@ async def test_invalid_mustache_body(send_email, tmpdir, cli):
     await cli.server.app['es'].get('messages/_refresh')
     r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_invalid_mustache_body')
     response_data = await r.json()
-    import json
     print(json.dumps(response_data, indent=2))
     assert response_data['hits']['total'] == 1
     source = response_data['hits']['hits'][0]['_source']
@@ -625,3 +623,77 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker):
     assert data['hits']['total'] == 1
     assert data['hits']['hits'][0]['_source']['status'] == 'send'
     assert data['hits']['hits'][0]['_source']['body'] == '<body>\nthis is a test\n</body>'
+
+
+async def test_link_shortening(send_email, tmpdir, cli):
+    mid = await send_email(
+        main_template='<a href="{{ the_link }}">foobar</a> test message',
+        context={'the_link': 'https://www.foobar.com'},
+        company_code='test_link_shortening',
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{mid}.txt').read()
+    m = re.search('<a href="https://click.example.com/l(.+?)">foobar</a> test message', msg_file)
+    assert m, msg_file
+    token = m.groups()[0]
+    assert len(token) == 30
+
+    await cli.server.app['es'].get('links/_refresh')
+    r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening')
+    response_data = await r.json()
+    print(json.dumps(response_data, indent=2))
+    assert response_data['hits']['total'] == 1
+    v = response_data['hits']['hits'][0]['_source']
+    assert v['url'] == 'https://www.foobar.com'
+    assert v['token'] == token
+    assert v['send_method'] == 'email-test'
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_link_shortening')
+    response_data = await r.json()
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'send'
+    assert len(source['events']) == 0
+
+    r = await cli.get('/l' + token, allow_redirects=False, headers={
+        'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/59.0.3071.115 Safari/537.36',
+    })
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'https://www.foobar.com'
+
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_link_shortening')
+    response_data = await r.json()
+    assert response_data['hits']['total'] == 1
+    source = response_data['hits']['hits'][0]['_source']
+    assert source['status'] == 'click'
+    assert len(source['events']) == 1
+    assert source['events'][0]['status'] == 'click'
+    assert source['events'][0]['extra']['user_agent'].startswith('Mozilla/5.0')
+    assert source['events'][0]['extra']['user_agent_display'].startswith('Chrome 59 on Linux')
+
+
+async def test_link_shortening_in_render(send_email, tmpdir, cli):
+    mid = await send_email(
+        context={
+            'message__render': 'test email {{ xyz }}\n',
+            'xyz': 'http://example.com/foobar'
+        },
+        company_code='test_link_shortening_in_render',
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{mid}.txt').read()
+    m = re.search('<p>test email https://click.example.com/l(.+?)</p>', msg_file)
+    assert m, msg_file
+    token = m.groups()[0]
+
+    await cli.server.app['es'].get('links/_refresh')
+    r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening_in_render')
+    response_data = await r.json()
+    assert response_data['hits']['total'] == 1
+    v = response_data['hits']['hits'][0]['_source']
+    assert v['url'] == 'http://example.com/foobar'
+    assert v['token'] == token
