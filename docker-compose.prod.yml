@@ -8,16 +8,6 @@ services:
     ports:
     - 5001:80
 
-  elastic:
-    environment:
-    - bootstrap.memory_lock=true
-    - "ES_JAVA_OPTS=-Xms7g -Xmx7g"
-    ulimits:
-      nproc: 3000
-      nofile: 65536
-      memlock: -1
-    mem_limit: 10g
-
   nginx:
     image: morpheus-nginx
     restart: always

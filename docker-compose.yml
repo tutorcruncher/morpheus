@@ -32,8 +32,15 @@ services:
     - xpack.monitoring.enabled=false
     - xpack.graph.enabled=false
     - xpack.ml.enabled=false
+    - bootstrap.memory_lock=true
     - "path.repo=[\"/snapshots\"]"
+    - "ES_JAVA_OPTS=-Xms7g -Xmx7g"
     restart: always
+    ulimits:
+      nproc: 3000
+      nofile: 65536
+      memlock: -1
+    mem_limit: ${ES_MEM_LIMIT:2g}
     volumes:
     - es_data:/usr/share/elasticsearch/data
     - es_snapshots:/snapshots
