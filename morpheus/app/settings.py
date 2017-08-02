@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     auth_key: str = 'testing'
 
     host_name: NoneStr = 'localhost'
+    click_host_name: str = 'localhost'
     sender_cls: PyObject = 'morpheus.app.worker.Sender'
     mandrill_key: str = ''
     mandrill_url = 'https://mandrillapp.com/api/1.0'

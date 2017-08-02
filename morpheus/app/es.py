@@ -172,6 +172,7 @@ MAPPINGS = {
     'links': {
         'token': KEYWORD,
         'url': KEYWORD,
+        'company': KEYWORD,
         'send_method': KEYWORD,
         'send_message_id': KEYWORD,
         'expires_ts': DATE,

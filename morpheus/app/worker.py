@@ -83,6 +83,7 @@ class Sender(Actor):
         super().__init__(**kwargs)
         self.session = self.es = self.mandrill = self.messagebird = None
         self.mandrill_webhook_auth_key = None
+        self.email_click_url = f'https://{self.settings.click_host_name}/l'
 
     async def startup(self):
         main_logger.info('Sender initialising session and elasticsearch and mandrill...')
@@ -263,7 +264,7 @@ class Sender(Actor):
 
     async def _render_email(self, j: EmailJob):
         try:
-            return render_email(j)
+            return render_email(j, self.email_click_url)
         except ChevronError as e:
             await self._store_email_failed(MessageStatus.render_failed, j, f'Error rendering email: {e}')
 
@@ -307,6 +308,15 @@ class Sender(Actor):
             attachments=[f'{a["id"] or ""}::{a["name"]}' for a in j.pdf_attachments],
             events=[]
         )
+        for url, token in email_info.shortened_link:
+            await self.es.post(
+                'links/c/',
+                token=token,
+                url=url,
+                company=j.company_code,
+                send_method=j.send_method,
+                send_message_id=uid,
+            )
 
     async def _store_email_failed(self, status: MessageStatus, j: EmailJob, error_msg):
         await self.es.post(

@@ -155,6 +155,7 @@ def settings(tmpdir, mock_external):
         log_level='ERROR',
         mandrill_url=mock_external.app['server_name'] + '/mandrill',
         host_name=None,
+        click_host_name='click.example.com',
         s3_access_key=None,
         s3_secret_key=None,
         snapshot_repo_name='morpheus-testing',
