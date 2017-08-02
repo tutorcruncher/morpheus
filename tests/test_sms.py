@@ -20,11 +20,11 @@ async def test_send_message(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    f = 'xxxxxxxxxxxxxxxxxxxx-447891123856.txt'
+    f = 'xxxxxxxxxxxxxxxxxxxx-+447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
-    assert ("to: Number(number='447891123856', country_code='44', "
+    assert ("to: Number(number='+447891123856', country_code='44', "
             "number_formatted='+44 7891 123856', descr=None, is_mobile=True)") in msg_file
     assert '\nfrom_name: Morpheus\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
@@ -50,21 +50,21 @@ async def test_validate_number(cli, tmpdir):
     assert {
         '123': None,
         '234': {
-            'number': '18183373095',
+            'number': '+18183373095',
             'country_code': '1',
             'number_formatted': '+1 818-337-3095',
             'descr': 'California, United States',
             'is_mobile': True
         },
         '345': {
-            'number': '447891123856',
+            'number': '+447891123856',
             'country_code': '44',
             'number_formatted': '+44 7891 123856',
             'descr': 'United Kingdom',
             'is_mobile': True
         },
         '456': {
-            'number': '442071128953',
+            'number': '+442071128953',
             'country_code': '44',
             'number_formatted': '+44 20 7112 8953',
             'descr': 'London, United Kingdom',
@@ -85,7 +85,7 @@ async def test_repeat_uuid(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    assert str(tmpdir.listdir()[0]).endswith('aaaaaaaaaaaaaaaaaaaa-447891123856.txt')
+    assert str(tmpdir.listdir()[0]).endswith('aaaaaaaaaaaaaaaaaaaa-+447891123856.txt')
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 409, await r.text()
     assert 'Send group with id "aaaaaaaaaaaaaaaaaaaa" already exists\n' in await r.text()
@@ -109,7 +109,7 @@ async def test_invalid_number(cli, tmpdir):
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 2
     files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
-    assert files == {'aaaaaaaaaaaaaaaaaaaa-18183373095.txt', 'aaaaaaaaaaaaaaaaaaaa-447891123856.txt'}
+    assert files == {'aaaaaaaaaaaaaaaaaaaa-+18183373095.txt', 'aaaaaaaaaaaaaaaaaaaa-+447891123856.txt'}
 
 
 async def test_exceed_cost_limit(cli, tmpdir):

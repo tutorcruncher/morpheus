@@ -86,6 +86,16 @@ export MODE='PRODUCTION'
 export PS1="PROD $PS1"
 ```
 
+### Setting up the machine
+
+you'll need to add
+
+```
+vm.max_map_count=262144
+```
+
+To the end of `/etc/sysctl.conf` to allow elastic search to boot.
+
 ### To deploy
 
 Set up your environment

@@ -15,9 +15,8 @@
       width: 100% !important;
       background: #fafafa;
       padding: 10px 0;
-      height: calc(100vh - 20px);
+      height: calc(350px - 50px);
     }
-
     #main {
       margin: 20px auto;
       line-height: 120%;
@@ -31,17 +30,14 @@
       color: #333;
       word-wrap: break-word;
     }
-
     hr {
       margin: 15px 0;
       border: none;
       border-top: 1px solid #ddd;
     }
-
     a {
       color: #016997 !important;
     }
-
     .metadata {
       display: inline-block;
       width: 8ch;
@@ -55,8 +51,9 @@
       <span class="metadata">From:</span>{{ from }}
       <br>
       <span class="metadata">To:</span>{{ to }}
-      <br>
+      {% if status %}
       <span class="metadata">Status:</span>{{ status }}
+      {% endif %}
       <hr>
       {{ message }}
     </div>

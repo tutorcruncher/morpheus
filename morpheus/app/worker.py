@@ -9,13 +9,13 @@ from typing import Dict, List, NamedTuple
 
 import chevron
 import msgpack
-import phonenumbers
 from aiohttp import ClientConnectionError, ClientError, ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
 from arq.utils import from_unix_ms, to_unix_ms, truncate
 from chevron import ChevronError
 from phonenumbers import parse as parse_number
-from phonenumbers import NumberParseException, PhoneNumberType, format_number, is_valid_number, number_type
+from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
+                          number_type)
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 
 from .es import ElasticSearch
@@ -338,7 +338,6 @@ class Sender(Actor):
             return
 
         is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
-        f_number = format_number(p, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
         descr = None
         if include_description:
             country = country_name_for_number(p, 'en')
@@ -346,9 +345,9 @@ class Sender(Actor):
             descr = country if country == region else f'{region}, {country}'
 
         return Number(
-            number=f'{p.country_code}{p.national_number}',
+            number=format_number(p, PhoneNumberFormat.E164),
             country_code=f'{p.country_code}',
-            number_formatted=f_number,
+            number_formatted=format_number(p, PhoneNumberFormat.INTERNATIONAL),
             descr=descr,
             is_mobile=is_mobile,
         )
@@ -506,10 +505,11 @@ class Sender(Actor):
             mcc = await redis.get(cc_mcc_key)
             if mcc is None:
                 main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
-                await self.messagebird.post(f'lookup/{number.number}/hlr')
+                api_number = number.number.replace('+', '')
+                await self.messagebird.post(f'lookup/{api_number}/hlr')
                 data = None
                 for i in range(30):
-                    r = await self.messagebird.get(f'lookup/{number.number}')
+                    r = await self.messagebird.get(f'lookup/{api_number}')
                     data = await r.json()
                     if data['hlr']['status'] == 'active':
                         main_logger.info('found result for %s after %d attempts %s',

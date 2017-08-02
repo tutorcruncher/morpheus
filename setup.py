@@ -2,10 +2,11 @@ from setuptools import setup
 
 setup(
     name='morpheus-mail',
-    version='0.0.4',
+    version='0.0.5',
     description='Email rendering engine from morpheus',
     long_description="""
-Note: this only installs the rendering logic for morpheus for testing and email preview.
+Note: this only installs the rendering logic for `morpheus <https://github.com/tutorcruncher/morpheus>`_ 
+for testing and email preview.
 
 Everything else is excluded to avoid installing unnecessary packages. 
 """,
@@ -33,7 +34,7 @@ Everything else is excluded to avoid installing unnecessary packages.
     python_requires='>=3.6',
     zip_safe=True,
     install_requires=[
-        'chevron>=0.10.0',
+        'chevron>=0.11.1',
         'libsass>=0.13.2',
         'misaka>=2.1.0',
     ],
