@@ -14,7 +14,7 @@ from time import time
 import msgpack
 import pytz
 import ujson
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect, Response
 from aiohttp_jinja2 import template
 from arq.utils import from_unix_ms, truncate
 from markupsafe import Markup
@@ -35,6 +35,35 @@ logger = logging.getLogger('morpheus.web')
 async def index(request):
     settings = request.app['settings']
     return {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
+
+
+class ClickRedirectView(TemplateView):
+    template = 'not-found.jinja'
+
+    async def call(self, request):
+        r = await self.app['es'].get(
+            f'links/_search?filter_path=hits',
+            query={
+                'bool': {
+                    'filter': [
+                        {'term': {'token': request.match_info['token']}},
+                        {'range': {'expires_ts': {'lte': 'now'}}},
+                    ]
+                }
+            },
+            size=1,
+        )
+        data = await r.json()
+        if data['hits']['total']:
+            hit = data['hits']['hits'][0]
+            source = hit['_source']
+            # TODO start job to record click
+            raise HTTPTemporaryRedirect(location=source['url'])
+        else:
+            return dict(
+                url=request.url,
+                http_status_=404,
+            )
 
 
 class EmailSendView(ServiceView):

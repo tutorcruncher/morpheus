@@ -191,7 +191,10 @@ class TemplateView(View):
 
     @classmethod
     def _modify_response(cls, request, context):
+        status = context.pop('http_status_', None)
         response = render_template(cls.template, request, context)
+        if status:
+            response.set_status(status)
         return super()._modify_response(request, response)
 
 

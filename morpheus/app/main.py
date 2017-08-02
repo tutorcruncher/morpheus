@@ -12,10 +12,10 @@ from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
 from .settings import Settings
 from .utils import THIS_DIR, Mandrill, MorpheusUserApi
-from .views import (AdminAggregatedView, AdminGetView, AdminListView, CreateSubaccountView, EmailSendView,
-                    MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView, SmsSendView,
-                    SmsValidateView, TestWebhookView, UserAggregationView, UserMessageDetailView, UserMessageListView,
-                    UserMessagePreviewView, UserMessagesJsonView, index)
+from .views import (AdminAggregatedView, AdminGetView, AdminListView, ClickRedirectView, CreateSubaccountView,
+                    EmailSendView, MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView,
+                    SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView, UserMessageDetailView,
+                    UserMessageListView, UserMessagePreviewView, UserMessagesJsonView, index)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -109,6 +109,7 @@ def create_app(loop, settings: Settings=None):
     app.on_cleanup.append(app_cleanup)
 
     app.router.add_get('/', index, name='index')
+    app.router.add_get('/l{token}{_:/?}', ClickRedirectView.view(), name='click-redirect')
 
     app.router.add_post('/send/email/', EmailSendView.view(), name='send-emails')
     app.router.add_post('/send/sms/', SmsSendView.view(), name='send-smss')

@@ -85,8 +85,9 @@ class ErrorLoggingMiddleware:
     def should_warning(self, r):
         return (
             self.should_log_warnings and
-            r.status >= 400 and not
-            (r.status == 401 and 'WWW-Authenticate' in r.headers)
+            r.status >= 400 and
+            not (r.status == 401 and 'WWW-Authenticate' in r.headers) and
+            not (r.status == 409)
         )
 
     async def __call__(self, app, handler):
