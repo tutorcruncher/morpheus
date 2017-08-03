@@ -1,4 +1,4 @@
-aiohttp==2.2.3
+aiohttp==2.2.4
 aiohttp-jinja2==0.13.0
 aioredis==0.3.3
 arq==0.9.0
