@@ -190,6 +190,7 @@ class Sender(Actor):
                 ],
                 headers=email_info.headers,
                 track_opens=True,
+                track_clicks=False,
                 auto_text=True,
                 view_content_link=False,
                 signing_domain=j.from_email[j.from_email.index('@') + 1:],
