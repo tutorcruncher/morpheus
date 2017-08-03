@@ -18,7 +18,7 @@ services:
   logs:
     image: gliderlabs/logspout
     environment:
-      SYSLOG_HOSTNAME: 'morpheus'
+      SYSLOG_HOSTNAME: ${SYSLOG_HOSTNAME:-morpheus}
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: always
@@ -34,13 +34,15 @@ services:
     - xpack.ml.enabled=false
     - bootstrap.memory_lock=true
     - "path.repo=[\"/snapshots\"]"
-    - "ES_JAVA_OPTS=-Xms7g -Xmx7g"
+    - "ES_JAVA_OPTS=-Xms${ES_JAVA_MEM:-1500m} -Xmx${ES_JAVA_MEM:-1500m}"
     restart: always
     ulimits:
       nproc: 3000
       nofile: 65536
-      memlock: -1
-    mem_limit: ${ES_MEM_LIMIT:2g}
+      memlock:
+        soft: -1
+        hard: -1
+    mem_limit: ${ES_MEM_LIMIT:-2g}
     volumes:
     - es_data:/usr/share/elasticsearch/data
     - es_snapshots:/snapshots

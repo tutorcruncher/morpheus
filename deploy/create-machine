@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-if [ "$MODE" != "PRODUCTION" ]; then
+if [ "$MODE" != "PRODUCTION" ] && [ "$MODE" != "BETA" ] ; then
     echo "MODE not set to PRODUCTION, use 'source activate.prod.sh'"
     exit 2
 fi

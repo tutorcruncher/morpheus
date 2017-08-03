@@ -9,8 +9,10 @@ dist/
 /sandbox/
 .coverage
 htmlcov/
-nginx/keys
+nginx/keys/
+nginx/keys-old/
 activate.prod.sh
+activate.beta.sh
 activate.client.sh
 nginx/htpasswd
 nginx/_build.nginx.conf
