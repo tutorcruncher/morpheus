@@ -68,11 +68,19 @@ def _apply_macros(s, macros):
     return s
 
 
+def looks_like_link(s):
+    return (
+        isinstance(s, str) and
+        re.match('^https?://', s) and
+        not re.search('\.(?:png|jpg|bmp)$', s)
+    )
+
+
 def apply_short_links(context, click_url, click_random=30):
     shortened_link = []
     for k, v in context.items():
         # TODO deal with unsubscribe links properly
-        if k != 'unsubscribe_link' and isinstance(v, str) and re.match('^https?://', v):
+        if k != 'unsubscribe_link' and looks_like_link(v):
             r = secrets.token_urlsafe(click_random)[:click_random]
             context[k] = click_url + r
             shortened_link.append((v, r))

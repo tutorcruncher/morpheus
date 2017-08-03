@@ -714,3 +714,17 @@ async def test_link_shortening_in_render(send_email, tmpdir, cli):
     v = response_data['hits']['hits'][0]['_source']
     assert v['url'] == 'http://example.com/foobar'
     assert v['token'] == token
+
+
+async def test_link_shortening_not_image(send_email, tmpdir, cli):
+    mid = await send_email(
+        context={
+            'message__render': '{{ foo }} {{ bar}}',
+            'foo': 'http://example.com/foobar',
+            'bar': 'http://whatever.com/img.jpg'
+        },
+        company_code='test_link_shortening_in_render',
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{mid}.txt').read()
+    assert re.search('<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
