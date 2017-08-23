@@ -109,3 +109,14 @@ then
     ./deploy/deploy
 
 That same command should also work to update the deployment after a change.
+
+
+### To test
+
+Set up your environment. If you have ElasticSearch installed and running you're fine, or you can run it with:
+
+    run-es.sh
+
+then
+
+    make

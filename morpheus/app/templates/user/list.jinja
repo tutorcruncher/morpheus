@@ -3,6 +3,9 @@
 {% block main %}
   <table class="table">
     <caption>Results: {{ total }}</caption>
+    {% if total_sms_spend %}
+      <caption>Total spend this month: £{{ total_sms_spend }}</caption>
+    {% endif %}
     <thead>
       <tr>
         {% for t in table_headings %}

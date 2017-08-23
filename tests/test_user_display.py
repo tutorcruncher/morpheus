@@ -314,11 +314,17 @@ async def test_user_sms(cli, settings, send_sms):
     assert hit['_source']['body'] == 'this is a test apples'
     assert hit['_source']['cost'] == 0.012
     assert hit['_source']['events'] == []
+    assert data['spend'] == 0.012
 
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 2
+
+    r = await cli.get(modify_url('/user/sms-test/messages.html', settings, 'snapcrap'))
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert '<caption>Total spend this month: £0.012</caption>' in text
 
 
 async def test_user_list_lots(cli, settings, send_email):
