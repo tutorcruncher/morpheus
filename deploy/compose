@@ -6,6 +6,6 @@ if [ "$MODE" != "PRODUCTION" ] && [ "$MODE" != "BETA" ] ; then
 fi
 export COMMIT=`git rev-parse HEAD`
 export RELEASE_DATE=`date`
-the_command="docker-compose -f docker-compose.yml -f ${COMPOSE_EXTRA:-docker-compose.prod.yml} $@"
+the_command="docker-compose -f docker-compose.yml -p morpheus -f ${COMPOSE_EXTRA:-docker-compose.prod.yml} $@"
 echo "Running '${the_command}'..."
 eval ${the_command}

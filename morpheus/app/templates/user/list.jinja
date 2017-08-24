@@ -2,9 +2,9 @@
 
 {% block main %}
   <table class="table">
-    <caption>Results: {{ total }}</caption>
+    <caption>Results: <b>{{ total }}</b></caption>
     {% if total_sms_spend %}
-      <caption>Total spend this month: £{{ total_sms_spend }}</caption>
+      <caption>Total spend this month: <b>£{{ total_sms_spend }}</b><span id="extra-spend-info"></span></caption>
     {% endif %}
     <thead>
       <tr>

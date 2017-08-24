@@ -385,7 +385,7 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         data = await r.json()
         total_sms_spend = None
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
-            total_sms_spend = await self.sender.check_sms_limit(self.session.company)
+            total_sms_spend = '{:,.3f}'.format(await self.sender.check_sms_limit(self.session.company))
         hits = data['hits']['hits']
         headings = ['To', 'Send Time', 'Status', 'Subject']
         total = data['hits']['total']
