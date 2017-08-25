@@ -53,7 +53,7 @@ async def test_user_list(cli, settings, send_email):
     r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()
     text = await r.text()
-    assert '<caption>Results: 6</caption>' in text
+    assert '<caption>Results: <b>6</b></caption>' in text
     assert text.count('.com</a>') == 6
 
 
@@ -314,11 +314,17 @@ async def test_user_sms(cli, settings, send_sms):
     assert hit['_source']['body'] == 'this is a test apples'
     assert hit['_source']['cost'] == 0.012
     assert hit['_source']['events'] == []
+    assert data['spend'] == 0.012
 
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data['hits']['total'] == 2
+
+    r = await cli.get(modify_url('/user/sms-test/messages.html', settings, 'snapcrap'))
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert '<caption>Total spend this month: <b>£0.012</b><span id="extra-spend-info"></span></caption>' in text, text
 
 
 async def test_user_list_lots(cli, settings, send_email):
@@ -331,7 +337,7 @@ async def test_user_list_lots(cli, settings, send_email):
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     text = await r.text()
-    m = re.search('<caption>Results: (\d+)</caption>', text)
+    m = re.search('<caption>Results: <b>(\d+)</b></caption>', text)
     results = int(m.groups()[0])
     assert results >= 110
     assert f'1 - 100' not in text

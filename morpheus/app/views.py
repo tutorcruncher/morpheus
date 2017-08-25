@@ -295,7 +295,13 @@ class UserMessagesJsonView(_UserMessagesView):
             tags=request.query.getall('tags', None),
             query=request.query.get('q')
         )
-        return Response(body=await r.text(), content_type='application/json')
+        if 'sms' in request.match_info['method'] and self.session.company != '__all__':
+            body = await r.json()
+            body['spend'] = await self.sender.check_sms_limit(self.session.company)
+            body = json.dumps(body)
+        else:
+            body = await r.text()
+        return Response(body=body, content_type='application/json')
 
 
 class UserMessageDetailView(TemplateView, _UserMessagesView):
@@ -377,8 +383,10 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             query=request.query.get('q', None)
         )
         data = await r.json()
+        total_sms_spend = None
+        if 'sms' in request.match_info['method'] and self.session.company != '__all__':
+            total_sms_spend = '{:,.3f}'.format(await self.sender.check_sms_limit(self.session.company))
         hits = data['hits']['hits']
-
         headings = ['To', 'Send Time', 'Status', 'Subject']
         total = data['hits']['total']
         size = 100
@@ -403,6 +411,7 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
             title=f'{self.request.match_info["method"]} - {total}',
             total=total,
+            total_sms_spend=total_sms_spend,
             table_headings=headings,
             table_body=self._table_body(hits),
             pagination=pagination,
