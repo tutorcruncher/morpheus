@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 if [ "$MODE" != "PRODUCTION" ] && [ "$MODE" != "BETA" ] ; then
-    echo "MODE not set to PRODUCTION, use 'source activate.prod.sh'"
+    echo "MODE not set to PRODUCTION or BETA, use 'source activate.prod.sh'"
     exit 2
 fi
 export COMMIT=`git rev-parse HEAD`
