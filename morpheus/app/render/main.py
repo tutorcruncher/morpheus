@@ -141,12 +141,12 @@ BASIC_CHARACTERS = {
 }
 
 # from first link above
-# apparently messagebird call \n two an extension character which differs from https://en.wikipedia.org/wiki/GSM_03.38
+# apparently messagebird call \n an extension character which differs from https://en.wikipedia.org/wiki/GSM_03.38
 # this might be because they replace \n with LF + CR which would constitute 2 characters
 EXTENSION_CHARACTERS = {'\n', '[', '\\', ']', '^', '{', '|', '}', '~', '€'}
 
 # from https://support.messagebird.com/hc/en-us/articles/208739745-How-long-is-1-SMS-Message-
-MESSAGE_LENGTHS = [
+MULTIPART_LENGTHS = [
     (1, 160),
     (2, 306),
     (3, 459),
@@ -176,7 +176,7 @@ def sms_length(msg: str) -> Tuple[int, int]:
             length += 2
         # in theory all other characters are unavailable in GSM 03.38 and will be stripped out
 
-    for msg_count, max_length in MESSAGE_LENGTHS:
+    for msg_parts, max_length in MULTIPART_LENGTHS:
         if length <= max_length:
-            return length, msg_count
+            return length, msg_parts
     raise MessageTooLong(f'message length {length} exceeds maximum multi-part SMS length {max_length}')
