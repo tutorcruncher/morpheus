@@ -317,3 +317,24 @@ async def test_send_multi_part(cli, tmpdir):
     print(msg_file)
     assert '\nlength: SmsLength(length=230, parts=2)\n' in msg_file
     assert msg_file.count('this is a message bar') == 10
+
+
+async def test_send_too_long(cli, tmpdir):
+    data = {
+        'uid': 'x' * 20,
+        'company_code': 'foobar',
+        'method': 'sms-test',
+        'main_template': 'x' * 1500,
+        'recipients': [
+            {
+                'number': '07891123856',
+                'context': {
+                    'foo': 'bar',
+                }
+            }
+        ]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    # no messages sent:
+    assert len(tmpdir.listdir()) == 0
