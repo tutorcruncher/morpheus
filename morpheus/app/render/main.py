@@ -1,7 +1,7 @@
 import logging
 import re
 import secrets
-from typing import Dict, NamedTuple
+from typing import Dict, NamedTuple, Tuple
 
 import chevron
 import sass
@@ -121,3 +121,62 @@ def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
         headers=m.headers,
         shortened_link=shortened_link,
     )
+
+
+BASIC_CHARACTERS = {
+    # basic characters from https://support.messagebird.com/hc/en-us/articles/208739765-Which-special-
+    # characters-count-as-two-characters-in-a-text-message- ordered and repeats removed!
+    ' ', '!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?', '@',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
+    'V', 'W', 'X', 'Y', 'Z',
+    '_',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u',
+    'v', 'w', 'x', 'y', 'z',
+    '¡', '£', '¤', '¥', '§', '¿', 'Ä', 'Å', 'Æ', 'Ç', 'É', 'Ñ', 'Ö', 'Ø', 'Ü', 'ß', 'à', 'ä', 'å', 'æ', 'è',
+    'é', 'ì', 'ñ', 'ò', 'ö', 'ø', 'ù', 'ü', 'Γ', 'Δ', 'Θ', 'Λ', 'Ξ', 'Π', 'Σ', 'Φ', 'Ψ', 'Ω',
+    # special cases from https://support.messagebird.com/hc/en-gb/articles/200731072-In-which-charset-can-I-deliver-
+    # SMS-messages-and-what-should-I-take-into-consideration- this is not an exhaustive list :(
+    'ç', '®'
+}
+
+# from first link above
+# apparently messagebird call \n two an extension character which differs from https://en.wikipedia.org/wiki/GSM_03.38
+# this might be because they replace \n with LF + CR which would constitute 2 characters
+EXTENSION_CHARACTERS = {'\n', '[', '\\', ']', '^', '{', '|', '}', '~', '€'}
+
+# from https://support.messagebird.com/hc/en-us/articles/208739745-How-long-is-1-SMS-Message-
+MESSAGE_LENGTHS = [
+    (1, 160),
+    (2, 306),
+    (3, 459),
+    (4, 612),
+    (5, 765),
+    (6, 918),
+    (7, 1071),
+    (8, 1224),
+    (9, 1377),
+]
+
+
+class MessageTooLong(ValueError):
+    pass
+
+
+def sms_length(msg: str) -> Tuple[int, int]:
+    """
+    :param msg: msg string
+    :return: tuple (length of the message, number of multi-part SMSs required)
+    """
+    length = 0
+    for c in msg:
+        if c in BASIC_CHARACTERS:
+            length += 1
+        elif c in EXTENSION_CHARACTERS:
+            length += 2
+        # in theory all other characters are unavailable in GSM 03.38 and will be stripped out
+
+    for msg_count, max_length in MESSAGE_LENGTHS:
+        if length <= max_length:
+            return length, msg_count
+    raise MessageTooLong(f'message length {length} exceeds maximum multi-part SMS length {max_length}')
