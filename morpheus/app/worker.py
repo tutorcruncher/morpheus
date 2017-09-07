@@ -208,7 +208,7 @@ class Sender(Actor):
                 response = await self.mandrill.post('messages/send.json', **data)
             except ClientConnectionError as e:
                 exc = e
-                main_logger.warning('%s: client connection error, email: "%s", retrying...', j.group_id, j.address)
+                main_logger.info('%s: client connection error, email: "%s", retrying...', j.group_id, j.address)
                 await asyncio.sleep(0.5)
             except (ClientError, ApiError) as e:
                 exc = e
