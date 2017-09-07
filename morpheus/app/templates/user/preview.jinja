@@ -51,10 +51,18 @@
       <span class="metadata">From:</span>{{ from }}
       <br>
       <span class="metadata">To:</span>{{ to }}
-      {% if status %}
-      <br>
-      <span class="metadata">Status:</span>{{ status }}
-      {% endif %}
+      {% if extra -%}
+        <br>
+        <span class="metadata">Length:</span>{{ extra.length }}
+        {% if extra.parts > 1 -%}
+          <br>
+          <span class="metadata">Multipart:</span>{{ extra.parts }} parts
+        {% endif -%}
+      {% endif -%}
+      {% if status -%}
+        <br>
+        <span class="metadata">Status:</span>{{ status }}
+      {% endif -%}
       <hr>
       {{ message }}
     </div>

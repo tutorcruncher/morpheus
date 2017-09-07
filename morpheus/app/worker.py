@@ -22,7 +22,7 @@ from ua_parser.user_agent_parser import Parse as ParseUserAgent
 from .es import ElasticSearch
 from .models import THIS_DIR, BaseWebhook, ClickInfo, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
-from .render.main import MessageTooLong, apply_short_links, sms_length
+from .render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from .settings import Settings
 from .utils import ApiError, Mandrill, MessageBird
 
@@ -82,7 +82,7 @@ class SmsData(NamedTuple):
     number: Number
     message: str
     shortened_link: dict
-    parts: int
+    length: SmsLength
 
 
 class Sender(Actor):
@@ -434,7 +434,7 @@ class Sender(Actor):
 
     async def _sms_prep(self, j: SmsJob) -> Optional[SmsData]:
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
-        msg, error, shortened_link, parts = None, None, None, None
+        msg, error, shortened_link, msg_length = None, None, None, None
         if not number_info or not number_info.is_mobile:
             error = f'invalid mobile number "{j.number}"'
             main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
@@ -446,7 +446,7 @@ class Sender(Actor):
                 error = f'Error rendering SMS: {e}'
             else:
                 try:
-                    _, parts = sms_length(msg)
+                    msg_length = sms_length(msg)
                 except MessageTooLong as e:
                     error = str(e)
 
@@ -467,16 +467,17 @@ class Sender(Actor):
                 body=error,
             )
         else:
-            return SmsData(number=number_info, message=msg, shortened_link=shortened_link, parts=parts)
+            return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
 
     async def _test_send_sms(self, j: SmsJob):
         sms_data = await self._sms_prep(j)
         if not sms_data:
             return
 
-        msg_id = f'{j.group_id}-{sms_data.number.number}'
+        # remove the + from the beginning of the number
+        msg_id = f'{j.group_id}-{sms_data.number.number[1:]}'
         send_ts = datetime.utcnow()
-        cost = 0.012 * sms_data.parts
+        cost = 0.012 * sms_data.length.parts
         output = (
             f'to: {sms_data.number}\n'
             f'msg id: {msg_id}\n'
@@ -486,7 +487,7 @@ class Sender(Actor):
             f'company_code: {j.company_code}\n'
             f'from_name: {j.from_name}\n'
             f'cost: {cost}\n'
-            f'parts: {sms_data.parts}\n'
+            f'length: {sms_data.length}\n'
             f'message:\n'
             f'{sms_data.message}\n'
         )
@@ -554,10 +555,10 @@ class Sender(Actor):
             return
         msg_cost = await self._messagebird_get_number_cost(sms_data.number)
 
-        cost = sms_data.parts * msg_cost
+        cost = sms_data.length.parts * msg_cost
         send_ts = datetime.utcnow()
         main_logger.info('sending SMS to %s, parts: %d, cost: %0.2fp',
-                         sms_data.number.number, sms_data.parts, cost * 100)
+                         sms_data.number.number, sms_data.length.parts, cost * 100)
         r = await self.messagebird.post(
             'messages',
             originator=j.from_name,
@@ -587,6 +588,7 @@ class Sender(Actor):
             tags=j.tags,
             body=sms_data.message,
             cost=cost,
+            extra=sms_data.length._asdict(),
             events=[],
         )
         for url, token in sms_data.shortened_link:

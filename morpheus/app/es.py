@@ -136,6 +136,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
 KEYWORD = {'type': 'keyword'}
 DATE = {'type': 'date'}
 TEXT = {'type': 'text'}
+DYNAMIC = {'type': 'object', 'dynamic': 'true'}
 MAPPINGS = {
     'messages': {
         'group_id': KEYWORD,
@@ -158,14 +159,12 @@ MAPPINGS = {
           'type': 'scaled_float',
           'scaling_factor': 1000,
         },
+        'extra': DYNAMIC,
         'events': {
             'properties': {
                 'ts': DATE,
                 'status': KEYWORD,
-                'extra': {
-                    'type': 'object',
-                    'dynamic': 'true',
-                },
+                'extra': DYNAMIC,
             }
         },
     },

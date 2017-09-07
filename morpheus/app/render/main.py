@@ -1,7 +1,7 @@
 import logging
 import re
 import secrets
-from typing import Dict, NamedTuple, Tuple
+from typing import Dict, NamedTuple
 
 import chevron
 import sass
@@ -159,11 +159,16 @@ MULTIPART_LENGTHS = [
 ]
 
 
+class SmsLength(NamedTuple):
+    length: int
+    parts: int
+
+
 class MessageTooLong(ValueError):
     pass
 
 
-def sms_length(msg: str) -> Tuple[int, int]:
+def sms_length(msg: str) -> SmsLength:
     """
     :param msg: msg string
     :return: tuple (length of the message, number of multi-part SMSs required)
@@ -178,5 +183,5 @@ def sms_length(msg: str) -> Tuple[int, int]:
 
     for msg_parts, max_length in MULTIPART_LENGTHS:
         if length <= max_length:
-            return length, msg_parts
+            return SmsLength(length, msg_parts)
     raise MessageTooLong(f'message length {length} exceeds maximum multi-part SMS length {max_length}')

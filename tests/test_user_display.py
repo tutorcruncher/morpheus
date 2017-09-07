@@ -314,6 +314,7 @@ async def test_user_sms(cli, settings, send_sms):
     assert hit['_source']['body'] == 'this is a test apples'
     assert hit['_source']['cost'] == 0.012
     assert hit['_source']['events'] == []
+    assert hit['_source']['extra'] == {'length': 21, 'parts': 1}
     assert data['spend'] == 0.012
 
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, '__all__'))
@@ -325,6 +326,20 @@ async def test_user_sms(cli, settings, send_sms):
     assert r.status == 200, await r.text()
     text = await r.text()
     assert '<caption>Total spend this month: <b>£0.012</b><span id="extra-spend-info"></span></caption>' in text, text
+
+
+async def test_user_sms_preview(cli, settings, send_sms):
+    await cli.server.app['es'].create_indices(True)
+    msg_id = await send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
+
+    await send_sms(uid=str(uuid.uuid4()), company_code='flip')
+    await cli.server.app['es'].get('messages/_refresh')
+    r = await cli.get(modify_url(f'/user/sms-test/{msg_id}/preview/', settings, 'smspreview'))
+    text = await r.text()
+    assert r.status == 200, text
+    print(text)
+    assert '<span class="metadata">Length:</span>220' in text
+    assert '<span class="metadata">Multipart:</span>2 parts' in text
 
 
 async def test_user_list_lots(cli, settings, send_email):
