@@ -5,7 +5,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, NamedTuple
+from typing import Dict, List, NamedTuple, Optional
 
 import chevron
 import msgpack
@@ -22,7 +22,7 @@ from ua_parser.user_agent_parser import Parse as ParseUserAgent
 from .es import ElasticSearch
 from .models import THIS_DIR, BaseWebhook, ClickInfo, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
-from .render.main import apply_short_links
+from .render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from .settings import Settings
 from .utils import ApiError, Mandrill, MessageBird
 
@@ -76,6 +76,13 @@ class Number(NamedTuple):
     number_formatted: str
     descr: str
     is_mobile: bool
+
+
+class SmsData(NamedTuple):
+    number: Number
+    message: str
+    shortened_link: dict
+    length: SmsLength
 
 
 class Sender(Actor):
@@ -343,7 +350,7 @@ class Sender(Actor):
         )
 
     @classmethod
-    def validate_number(cls, number, country, include_description=True):
+    def validate_number(cls, number, country, include_description=True) -> Optional[Number]:
         try:
             p = parse_number(number, country)
         except NumberParseException:
@@ -425,9 +432,9 @@ class Sender(Actor):
                 jobs += 1
         return jobs
 
-    async def _sms_prep(self, j: SmsJob):
+    async def _sms_prep(self, j: SmsJob) -> Optional[SmsData]:
         number_info = self.validate_number(j.number, j.country_code, include_description=False)
-        msg, error, shortened_link = None, None, None
+        msg, error, shortened_link, msg_length = None, None, None, None
         if not number_info or not number_info.is_mobile:
             error = f'invalid mobile number "{j.number}"'
             main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
@@ -437,6 +444,11 @@ class Sender(Actor):
                 msg = chevron.render(j.main_template, data=j.context)
             except ChevronError as e:
                 error = f'Error rendering SMS: {e}'
+            else:
+                try:
+                    msg_length = sms_length(msg)
+                except MessageTooLong as e:
+                    error = str(e)
 
         if error:
             await self.es.post(
@@ -454,20 +466,20 @@ class Sender(Actor):
                 tags=j.tags,
                 body=error,
             )
-            return None, None, None
         else:
-            return number_info, msg, shortened_link
+            return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
 
     async def _test_send_sms(self, j: SmsJob):
-        number, message, shortened_link = await self._sms_prep(j)
-        if not number:
+        sms_data = await self._sms_prep(j)
+        if not sms_data:
             return
 
-        msg_id = f'{j.group_id}-{number.number}'
+        # remove the + from the beginning of the number
+        msg_id = f'{j.group_id}-{sms_data.number.number[1:]}'
         send_ts = datetime.utcnow()
-        cost = 0.012
+        cost = 0.012 * sms_data.length.parts
         output = (
-            f'to: {number}\n'
+            f'to: {sms_data.number}\n'
             f'msg id: {msg_id}\n'
             f'ts: {send_ts}\n'
             f'group_id: {j.group_id}\n'
@@ -475,15 +487,16 @@ class Sender(Actor):
             f'company_code: {j.company_code}\n'
             f'from_name: {j.from_name}\n'
             f'cost: {cost}\n'
+            f'length: {sms_data.length}\n'
             f'message:\n'
-            f'{message}\n'
+            f'{sms_data.message}\n'
         )
         if self.settings.test_output:  # pragma: no branch
             Path.mkdir(self.settings.test_output, parents=True, exist_ok=True)
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_sms(msg_id, send_ts, j, number, message, cost, shortened_link)
+        await self._store_sms(msg_id, send_ts, j, sms_data, cost)
 
     async def _messagebird_get_mcc_cost(self, redis, mcc):
         rates_key = 'messagebird-rates'
@@ -537,28 +550,29 @@ class Sender(Actor):
             return await self._messagebird_get_mcc_cost(redis, mcc)
 
     async def _messagebird_send_sms(self, j: SmsJob):
-        number, message, shortened_link = await self._sms_prep(j)
-        if not number:
+        sms_data = await self._sms_prep(j)
+        if sms_data is None:
             return
+        msg_cost = await self._messagebird_get_number_cost(sms_data.number)
 
-        cost = await self._messagebird_get_number_cost(number)
+        cost = sms_data.length.parts * msg_cost
         send_ts = datetime.utcnow()
-        main_logger.info('sending SMS to %s, cost: %0.2fp', number.number, cost * 100)
+        main_logger.info('sending SMS to %s, parts: %d, cost: %0.2fp',
+                         sms_data.number.number, sms_data.length.parts, cost * 100)
         r = await self.messagebird.post(
             'messages',
             originator=j.from_name,
-            body=message,
-            recipients=[number.number],
+            body=sms_data.message,
+            recipients=[sms_data.number.number],
             allowed_statuses=201,
             reference='morpheus',  # required to prompt status updates to occur
         )
         data = await r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
-        await self._store_sms(data['id'], send_ts, j, number, message, cost, shortened_link)
+        await self._store_sms(data['id'], send_ts, j, sms_data, cost)
 
-    async def _store_sms(self, uid, send_ts, j: SmsJob, number: Number,
-                         message: str, cost: float, shortened_link: dict):
+    async def _store_sms(self, uid, send_ts, j: SmsJob, sms_data: SmsData, cost: float):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -569,14 +583,15 @@ class Sender(Actor):
             to_first_name=j.first_name,
             to_last_name=j.last_name,
             to_user_link=j.user_link,
-            to_address=number.number_formatted,
+            to_address=sms_data.number.number_formatted,
             from_name=j.from_name,
             tags=j.tags,
-            body=message,
+            body=sms_data.message,
             cost=cost,
+            extra=sms_data.length._asdict(),
             events=[],
         )
-        for url, token in shortened_link:
+        for url, token in sms_data.shortened_link:
             await self.es.post(
                 'links/c/',
                 token=token,

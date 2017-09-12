@@ -206,7 +206,7 @@ class CreateSubaccountView(ServiceView):
     """
     Create a new subaccount with mandrill for new sending company
     """
-    async def call(self, request):
+    async def call(self, request) -> Response:
         method = request.match_info['method']
         if method != SendMethod.email_mandrill:
             return Response(text=f'no subaccount creation required for "{method}"\n')
@@ -463,9 +463,10 @@ class UserMessagePreviewView(TemplateView, UserView):
             # need to render the sms so it makes sense to users
             return {
                 'from': source['from_name'],
-                'to': source['to_last_name'],
+                'to': source['to_last_name'] or source['to_address'],
                 'status': source['status'],
                 'message': body,
+                'extra': source['extra'],
             }
         else:
             return {'raw': body}

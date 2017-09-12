@@ -21,7 +21,7 @@ async def test_send_message(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    f = 'xxxxxxxxxxxxxxxxxxxx-+447891123856.txt'
+    f = 'xxxxxxxxxxxxxxxxxxxx-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
@@ -29,6 +29,7 @@ async def test_send_message(cli, tmpdir):
             "number_formatted='+44 7891 123856', descr=None, is_mobile=True)") in msg_file
     assert '\nfrom_name: Morpheus\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
+    assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
 
 
 async def test_validate_number(cli, tmpdir):
@@ -86,7 +87,7 @@ async def test_repeat_uuid(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    assert str(tmpdir.listdir()[0]).endswith('aaaaaaaaaaaaaaaaaaaa-+447891123856.txt')
+    assert str(tmpdir.listdir()[0]).endswith('aaaaaaaaaaaaaaaaaaaa-447891123856.txt')
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 409, await r.text()
     assert 'Send group with id "aaaaaaaaaaaaaaaaaaaa" already exists\n' in await r.text()
@@ -110,7 +111,7 @@ async def test_invalid_number(cli, tmpdir):
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 2
     files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
-    assert files == {'aaaaaaaaaaaaaaaaaaaa-+18183373095.txt', 'aaaaaaaaaaaaaaaaaaaa-+447891123856.txt'}
+    assert files == {'aaaaaaaaaaaaaaaaaaaa-18183373095.txt', 'aaaaaaaaaaaaaaaaaaaa-447891123856.txt'}
 
 
 async def test_exceed_cost_limit(cli, tmpdir):
@@ -270,7 +271,7 @@ async def test_link_shortening(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    f = 'xxxxxxxxxxxxxxxxxxxx-+447891123856.txt'
+    f = 'xxxxxxxxxxxxxxxxxxxx-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
@@ -290,3 +291,50 @@ async def test_link_shortening(cli, tmpdir):
     r = await cli.get('/l' + token, allow_redirects=False)
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
+
+
+async def test_send_multi_part(cli, tmpdir):
+    data = {
+        'uid': 'x' * 20,
+        'company_code': 'foobar',
+        'method': 'sms-test',
+        'main_template': 'this is a message {{ foo }}\n' * 10,
+        'recipients': [
+            {
+                'number': '07891123856',
+                'context': {
+                    'foo': 'bar',
+                }
+            }
+        ]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert len(tmpdir.listdir()) == 1
+    f = 'xxxxxxxxxxxxxxxxxxxx-447891123856.txt'
+    assert str(tmpdir.listdir()[0]).endswith(f)
+    msg_file: str = tmpdir.join(f).read()
+    print(msg_file)
+    assert '\nlength: SmsLength(length=230, parts=2)\n' in msg_file
+    assert msg_file.count('this is a message bar') == 10
+
+
+async def test_send_too_long(cli, tmpdir):
+    data = {
+        'uid': 'x' * 20,
+        'company_code': 'foobar',
+        'method': 'sms-test',
+        'main_template': 'x' * 1500,
+        'recipients': [
+            {
+                'number': '07891123856',
+                'context': {
+                    'foo': 'bar',
+                }
+            }
+        ]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    # no messages sent:
+    assert len(tmpdir.listdir()) == 0
