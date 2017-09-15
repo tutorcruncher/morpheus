@@ -466,7 +466,7 @@ class UserMessagePreviewView(TemplateView, UserView):
                 'to': source['to_last_name'] or source['to_address'],
                 'status': source['status'],
                 'message': body,
-                'extra': source['extra'],
+                'extra': source.get('extra') or {},
             }
         else:
             return {'raw': body}
