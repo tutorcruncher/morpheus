@@ -78,13 +78,16 @@ def looks_like_link(s):
 
 def apply_short_links(context, click_url, click_random=30):
     shortened_link = []
+    long_links = {}
     for k, v in context.items():
         # TODO deal with unsubscribe links properly
         if k != 'unsubscribe_link' and looks_like_link(v):
             r = secrets.token_urlsafe(click_random)[:click_random]
             context[k] = click_url + r
+            long_links[f'{k}_long_link'] = v
             shortened_link.append((v, r))
-    return shortened_link
+    context.update(long_links)
+    return context, shortened_link
 
 
 def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
@@ -100,8 +103,7 @@ def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
 
     shortened_link = []
     if click_url:
-        shortened_link = apply_short_links(m.context, click_url, click_random)
-
+        context, shortened_link = apply_short_links(m.context, click_url, click_random)
     m.context.update(
         email_subject=subject,
         **dict(_update_context(m.context, m.mustache_partials, m.macros))

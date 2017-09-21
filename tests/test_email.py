@@ -751,6 +751,19 @@ async def test_link_shortening_in_render(send_email, tmpdir, cli):
     assert v['token'] == token
 
 
+async def test_link_shortening_keep_long_link(send_email, tmpdir, cli):
+    mid = await send_email(
+        context={
+            'message__render': 'test email {{ xyz_long_link }}\n',
+            'xyz': 'http://example.com/foobar'
+        },
+        company_code='test_link_shortening_in_render',
+    )
+    msg_file = tmpdir.join(f'{mid}.txt').read()
+    m = re.search('<p>test email http://example.com/foobar</p>', msg_file)
+    assert m, msg_file
+
+
 async def test_link_shortening_not_image(send_email, tmpdir, cli):
     mid = await send_email(
         context={
