@@ -754,7 +754,7 @@ async def test_link_shortening_in_render(send_email, tmpdir, cli):
 async def test_link_shortening_keep_long_link(send_email, tmpdir, cli):
     mid = await send_email(
         context={
-            'message__render': 'test email {{ xyz_long_link }}\n',
+            'message__render': 'test email {{ xyz_original }}\n',
             'xyz': 'http://example.com/foobar'
         },
         company_code='test_link_shortening_in_render',
