@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     messagebird_pricing_username: str = None
     messagebird_pricing_password: str = None
 
+    # Have to use a US number as the originator to send to the US
+    # https://support.messagebird.com/hc/en-us/articles/208747865-United-States
+    us_send_number = '15744445663'
+
     @property
     def redis_settings(self) -> RedisSettings:
         return RedisSettings(
