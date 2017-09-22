@@ -8,6 +8,7 @@ async def test_send_message(cli, tmpdir):
         'uid': 'x' * 20,
         'company_code': 'foobar',
         'method': 'sms-test',
+        'from_name': 'foobar send',
         'main_template': 'this is a message {{ foo }}',
         'recipients': [
             {
@@ -27,7 +28,38 @@ async def test_send_message(cli, tmpdir):
     print(msg_file)
     assert ("to: Number(number='+447891123856', country_code='44', "
             "number_formatted='+44 7891 123856', descr=None, is_mobile=True)") in msg_file
-    assert '\nfrom_name: Morpheus\n' in msg_file
+    assert '\nfrom_name: foobar send\n' in msg_file
+    assert '\nmessage:\nthis is a message bar\n' in msg_file
+    assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
+
+
+async def test_send_message_usa(cli, settings, tmpdir):
+    data = {
+        'uid': 'x' * 20,
+        'company_code': 'foobar',
+        'country_code': 'US',
+        'from_name': 'foobar send',
+        'method': 'sms-test',
+        'main_template': 'this is a message {{ foo }}',
+        'recipients': [
+            {
+                'number': '+1 818 337 3095',
+                'context': {
+                    'foo': 'bar',
+                }
+            }
+        ]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert len(tmpdir.listdir()) == 1
+    f = 'xxxxxxxxxxxxxxxxxxxx-18183373095.txt'
+    assert str(tmpdir.listdir()[0]).endswith(f)
+    msg_file = tmpdir.join(f).read()
+    print(msg_file)
+    assert ("to: Number(number='+18183373095', country_code='1', "
+            "number_formatted='+1 818-337-3095', descr=None, is_mobile=True)") in msg_file
+    assert f'\nfrom_name: {settings.us_send_number}\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
     assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
 

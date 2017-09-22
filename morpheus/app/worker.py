@@ -400,9 +400,8 @@ class Sender(Actor):
             main_template=main_template,
             company_code=company_code,
             country_code=country_code,
-            from_name=from_name,
+            from_name=from_name if country_code != 'US' else self.settings.us_send_number,
         )
-
         drain = Drain(
             redis_pool=await self.get_redis_pool(),
             raise_task_exception=True,
