@@ -11,6 +11,6 @@ msgpack-python==0.4.8
 phonenumbers==8.8.2
 pydantic==0.4
 pytz==2017.2
-raven==6.1.0
+raven==6.2.1
 ua-parser==0.7.3
 ujson==1.35
