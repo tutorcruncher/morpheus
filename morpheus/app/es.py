@@ -109,7 +109,8 @@ class ElasticSearch(ApiSession):  # pragma: no cover
         main_logger.info('indices closed. Restoring backup %s, this may take some time...', snapshot_name)
         start = time()
         r = await self.post(
-            f'/_snapshot/{self.settings.snapshot_repo_name}/{snapshot_name}/_restore?wait_for_completion=true'
+            f'/_snapshot/{self.settings.snapshot_repo_name}/{snapshot_name}/_restore?wait_for_completion=true',
+            timeout=None,
         )
         main_logger.info(json.dumps(await r.json(), indent=2))
 
