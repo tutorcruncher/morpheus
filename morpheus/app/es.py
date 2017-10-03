@@ -134,6 +134,32 @@ class ElasticSearch(ApiSession):  # pragma: no cover
             main_logger.info('%d types updated for %s, re-opening index', len(types), index_name)
             await self.post(f'{index_name}/_open')
 
+    async def _patch_copy_events(self):
+        r = await self.get(f'messages/_mapping')
+        all_mappings = await r.json()
+        for t in all_mappings['messages']['mappings']:
+            r = await self.get(f'/messages/{t}/_search?scroll=60m', query={'match_all': {}}, size=1000)
+            assert r.status == 200, r.status
+            data = await r.json()
+            scroll_id = data['_scroll_id']
+            print(f'messages/{t} {data["hits"]["total"]} messages to move events for')
+            added = 0
+            while True:
+                for hit in data['hits']['hits']:
+                    for event in hit['_source'].get('events', []):
+                        await self.post(
+                            f'events/{t}/',
+                            message=hit['_id'],
+                            **event
+                        )
+                        added += 1
+                r = await self.get(f'/_search/scroll', scroll='60m', scroll_id=scroll_id)
+                assert r.status == 200, r.status
+                data = await r.json()
+                if not data['hits']['hits']:
+                    break
+            print(f'messages/{t} {added} events added')
+
 
 KEYWORD = {'type': 'keyword'}
 DATE = {'type': 'date'}
