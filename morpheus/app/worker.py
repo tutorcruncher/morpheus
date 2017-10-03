@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -317,7 +318,6 @@ class Sender(Actor):
             subject=email_info.subject,
             body=email_info.html_body,
             attachments=[f'{a["id"] or ""}::{a["name"]}' for a in j.pdf_attachments],
-            events=[]
         )
         for url, token in email_info.shortened_link:
             await self.es.post(
@@ -588,7 +588,6 @@ class Sender(Actor):
             body=sms_data.message,
             cost=cost,
             extra=sms_data.length._asdict(),
-            events=[],
         )
         for url, token in sms_data.shortened_link:
             await self.es.post(
@@ -656,48 +655,42 @@ class Sender(Actor):
         await self.update_message_status(send_method, m)
 
     async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
+        h = hashlib.md5(f'{to_unix_ms(m.ts)}-{m.status}-{json.dumps(m.extra(), sort_keys=True)}'.encode())
+        ref = f'event-{h.hexdigest()}'
+        async with await self.get_redis_conn() as redis:
+            v = await redis.incr(ref)
+            if v > 1:
+                main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
+                return
+            await redis.expire(ref, 7200)
+
         r = await self.es.get(f'messages/{es_type}/{m.message_id}', allowed_statuses=(200, 404))
         if r.status == 404:
             return
         data = await r.json()
 
-        events = data['_source']['events']
-        if events:
-            last_event = data['_source']['events'][-1]
-            if (to_unix_ms(m.ts) == last_event['ts'] and
-                    m.status == last_event['status'] and
-                    json.dumps(m.extra(), sort_keys=True) == json.dumps(last_event['extra'], sort_keys=True)):
-                main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
-                return
+        log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+        await self.es.post(
+            f'events/{es_type}/',
+            message=m.message_id,
+            ts=m.ts,
+            status=m.status,
+            extra=m.extra(),
+        )
 
         old_update_ts = from_unix_ms(data['_source']['update_ts'])
         if m.ts.tzinfo:
             old_update_ts = old_update_ts.replace(tzinfo=timezone.utc)
 
-        update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=10'
+        update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=5'
         try:
             # give 1 second "lee way" for new event to have happened just before the old event
             if m.ts >= (old_update_ts - timedelta(seconds=1)):
                 await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
-            log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-            await self.es.post(
-                update_uri,
-                script={
-                    'inline': 'ctx._source.events.add(params.event)',
-                    'params': {
-                        'event': {
-                            'ts': m.ts,
-                            'status': m.status,
-                            'extra': m.extra(),
-                        }
-                    }
-                }
-            )
         except ApiError as e:  # pragma: no cover
             # no error here if we know the problem
             if e.status == 409:
                 main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-                return
             else:
                 raise
 

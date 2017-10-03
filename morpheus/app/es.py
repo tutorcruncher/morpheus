@@ -94,7 +94,8 @@ class ElasticSearch(ApiSession):  # pragma: no cover
         main_logger.info('creating elastic search snapshot...')
         r = await self.put(
             f'/_snapshot/{self.settings.snapshot_repo_name}/'
-            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true'
+            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true',
+            timeout=1000,
         )
         main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
 
@@ -176,5 +177,11 @@ MAPPINGS = {
         'send_method': KEYWORD,
         'send_message_id': KEYWORD,
         'expires_ts': DATE,
+    },
+    'events': {
+        'message': KEYWORD,
+        'ts': DATE,
+        'status': KEYWORD,
+        'extra': DYNAMIC,
     }
 }

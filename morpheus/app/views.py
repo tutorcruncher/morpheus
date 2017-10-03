@@ -283,25 +283,39 @@ class _UserMessagesView(UserView):
                 {'send_ts': 'desc'},
             ]
 
-        return await self.app['es'].get(
+        r = await self.app['es'].get(
             f'messages/{self.request.match_info["method"]}/_search?filter_path=hits', **es_query
         )
+        assert r.status == 200, r.status
+        return await r.json()
+
+    async def insert_events(self, data):
+        t = self.request.match_info['method']
+        for hit in data['hits']['hits']:
+            r = await self.app['es'].get(
+                f'events/{t}/_search?filter_path=hits',
+                query={
+                    'term': {'message': hit['_id']}
+                },
+                size=100,
+            )
+            assert r.status == 200, r.status
+            event_data = await r.json()
+            hit['_source']['events'] = [e['_source'] for e in event_data['hits']['hits']]
 
 
 class UserMessagesJsonView(_UserMessagesView):
     async def call(self, request):
-        r = await self.query(
+        data = await self.query(
             message_id=request.query.get('message_id'),
             tags=request.query.getall('tags', None),
             query=request.query.get('q')
         )
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
-            body = await r.json()
-            body['spend'] = await self.sender.check_sms_limit(self.session.company)
-            body = json.dumps(body)
-        else:
-            body = await r.text()
-        return Response(body=body, content_type='application/json')
+            data['spend'] = await self.sender.check_sms_limit(self.session.company)
+
+        await self.insert_events(data)
+        return self.json_response(**data)
 
 
 class UserMessageDetailView(TemplateView, _UserMessagesView):
@@ -310,8 +324,8 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
 
     async def call(self, request):
         msg_id = self.request.match_info['id']
-        r = await self.query(message_id=msg_id)
-        data = await r.json()
+        data = await self.query(message_id=msg_id)
+        await self.insert_events(data)
         if len(data['hits']['hits']) == 0:
             raise HTTPNotFound(text='message not found')
         data = data['hits']['hits'][0]
@@ -378,11 +392,10 @@ class UserMessageListView(TemplateView, _UserMessagesView):
     template = 'user/list.jinja'
 
     async def call(self, request):
-        r = await self.query(
+        data = await self.query(
             tags=request.query.getall('tags', None),
             query=request.query.get('q', None)
         )
-        data = await r.json()
         total_sms_spend = None
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
             total_sms_spend = '{:,.3f}'.format(await self.sender.check_sms_limit(self.session.company))

@@ -45,6 +45,13 @@ async def test_send_email(cli, tmpdir):
     assert set(data['tags']) == {'xxxxxxxxxxxxxxxxxxxx', 'foobar'}
 
 
+async def get_events(cli, msg_id, es_type='email-test'):
+    await cli.server.app['es'].get('events/_refresh')
+    r = await cli.server.app['es'].get(f'events/{es_type}/_search?q=message:{msg_id}')
+    assert r.status == 200, await r.text()
+    return await r.json()
+
+
 async def test_webhook(cli, send_email):
     message_id = await send_email(uid='x' * 20)
     r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
@@ -52,7 +59,8 @@ async def test_webhook(cli, send_email):
     assert data['_source']['status'] == 'send'
     first_update_ts = data['_source']['update_ts']
     assert data['_source']['send_ts'] == first_update_ts
-    assert len(data['_source']['events']) == 0
+    events = await get_events(cli, 'xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
+    assert events['hits']['total'] == 0
     data = {
         'ts': int(2e9),
         'event': 'open',
@@ -64,7 +72,25 @@ async def test_webhook(cli, send_email):
     r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
     data = await r.json()
     assert data['_source']['status'] == 'open'
-    assert len(data['_source']['events']) == 1
+    events = await get_events(cli, 'xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
+    assert events['hits']['total'] == 1
+    assert {
+          'message': 'xxxxxxxxxxxxxxxxxxxx-foobartestingcom',
+          'ts': 2000000000000,
+          'status': 'open',
+          'extra': {
+              'user_agent': None,
+              'location': None,
+              'bounce_description': None,
+              'clicks': None,
+              'diag': None,
+              'reject': None,
+              'opens': None,
+              'resends': None,
+              'smtp_events': None,
+              'state': None,
+          }
+      } == events['hits']['hits'][0]['_source']
     assert data['_source']['update_ts'] > first_update_ts
 
 
@@ -75,7 +101,8 @@ async def test_webhook_old(cli, send_email):
     assert data['_source']['status'] == 'send'
     first_update_ts = data['_source']['update_ts']
     assert data['_source']['send_ts'] == first_update_ts
-    assert len(data['_source']['events']) == 0
+    events = await get_events(cli, msg_id)
+    assert events['hits']['total'] == 0
     data = {
         'ts': int(1.4e9),
         'event': 'open',
@@ -87,7 +114,8 @@ async def test_webhook_old(cli, send_email):
     r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
     data = await r.json()
     assert data['_source']['status'] == 'send'
-    assert len(data['_source']['events']) == 1
+    events = await get_events(cli, msg_id)
+    assert events['hits']['total'] == 1
     assert data['_source']['update_ts'] == first_update_ts
 
 
@@ -98,7 +126,8 @@ async def test_webhook_repeat(cli, send_email):
     assert data['_source']['status'] == 'send'
     first_update_ts = data['_source']['update_ts']
     assert data['_source']['send_ts'] == first_update_ts
-    assert len(data['_source']['events']) == 0
+    events = await get_events(cli, msg_id)
+    assert events['hits']['total'] == 0
     data = {
         'ts': '2032-06-06T12:10',
         'event': 'open',
@@ -119,7 +148,8 @@ async def test_webhook_repeat(cli, send_email):
     r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
     data = await r.json()
     assert data['_source']['status'] == 'open'
-    assert len(data['_source']['events']) == 2
+    events = await get_events(cli, msg_id)
+    assert events['hits']['total'] == 2
 
 
 async def test_webhook_missing(cli, send_email):
@@ -136,7 +166,8 @@ async def test_webhook_missing(cli, send_email):
     r = await cli.server.app['es'].get(f'messages/email-test/{msg_id}')
     data = await r.json()
     assert data['_source']['status'] == 'send'
-    assert len(data['_source']['events']) == 0
+    events = await get_events(cli, msg_id)
+    assert events['hits']['total'] == 0
 
 
 async def test_mandrill_send(cli, send_email):
@@ -183,9 +214,11 @@ async def test_mandrill_webhook(cli):
     r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
     assert r.status == 200
     data = await r.json()
-    assert len(data['_source']['events']) == 1
     assert data['_source']['update_ts'] == 1e13
     assert data['_source']['status'] == 'open'
+    events = await get_events(cli, data['_id'], es_type='email-mandrill')
+    assert events['hits']['total'] == 1
+    assert events['hits']['hits'][0]['_source']['status'] == 'open'
 
 
 async def test_mandrill_send_bad_template(cli, send_email):
@@ -658,7 +691,7 @@ async def test_link_shortening(send_email, tmpdir, cli):
     await cli.server.app['es'].get('links/_refresh')
     r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening')
     response_data = await r.json()
-    print(json.dumps(response_data, indent=2))
+    # print(json.dumps(response_data, indent=2))
     assert response_data['hits']['total'] == 1
     v = response_data['hits']['hits'][0]['_source']
     assert v['url'] == 'https://www.foobar.com'
@@ -671,7 +704,8 @@ async def test_link_shortening(send_email, tmpdir, cli):
     assert response_data['hits']['total'] == 1
     source = response_data['hits']['hits'][0]['_source']
     assert source['status'] == 'send'
-    assert len(source['events']) == 0
+    events = await get_events(cli, response_data['hits']['hits'][0]['_id'])
+    assert events['hits']['total'] == 0
 
     r = await cli.get('/l' + token, allow_redirects=False, headers={
         'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
@@ -687,10 +721,11 @@ async def test_link_shortening(send_email, tmpdir, cli):
     assert response_data['hits']['total'] == 1
     source = response_data['hits']['hits'][0]['_source']
     assert source['status'] == 'click'
-    assert len(source['events']) == 1
-    assert source['events'][0]['status'] == 'click'
-    assert source['events'][0]['extra']['user_agent'].startswith('Mozilla/5.0')
-    assert source['events'][0]['extra']['user_agent_display'].startswith('Chrome 59 on Linux')
+    events = await get_events(cli, response_data['hits']['hits'][0]['_id'])
+    assert events['hits']['total'] == 1
+    assert events['hits']['hits'][0]['_source']['status'] == 'click'
+    assert events['hits']['hits'][0]['_source']['extra']['user_agent'].startswith('Mozilla/5.0')
+    assert events['hits']['hits'][0]['_source']['extra']['user_agent_display'].startswith('Chrome 59 on Linux')
 
 
 async def test_link_shortening_in_render(send_email, tmpdir, cli):
