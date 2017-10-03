@@ -1,9 +1,11 @@
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import datetime
 from time import time
 
+from arq import create_pool_lenient
 from .settings import Settings
 from .utils import THIS_DIR, ApiSession
 
@@ -137,28 +139,43 @@ class ElasticSearch(ApiSession):  # pragma: no cover
     async def _patch_copy_events(self):
         r = await self.get(f'messages/_mapping')
         all_mappings = await r.json()
-        for t in all_mappings['messages']['mappings']:
-            r = await self.get(f'/messages/{t}/_search?scroll=60m', query={'match_all': {}}, size=1000)
-            assert r.status == 200, r.status
-            data = await r.json()
-            scroll_id = data['_scroll_id']
-            main_logger.info(f'messages/{t} {data["hits"]["total"]} messages to move events for')
-            added = 0
-            while True:
-                for hit in data['hits']['hits']:
-                    for event in hit['_source'].get('events', []):
-                        await self.post(
-                            f'events/{t}/',
-                            message=hit['_id'],
-                            **event
-                        )
-                        added += 1
-                r = await self.get(f'/_search/scroll', scroll='60m', scroll_id=scroll_id)
+        redis_pool = await create_pool_lenient(self.settings.redis_settings, loop=None)
+        async with redis_pool.get() as redis:
+            for t in all_mappings['messages']['mappings']:
+                r = await self.get(f'/messages/{t}/_search?scroll=60m', query={'match_all': {}}, size=1000)
                 assert r.status == 200, r.status
                 data = await r.json()
-                if not data['hits']['hits']:
-                    break
-            main_logger.info(f'messages/{t} {added} events added')
+                scroll_id = data['_scroll_id']
+                main_logger.info(f'messages/{t} {data["hits"]["total"]} messages to move events for')
+                added, skipped = 0, 0
+                cache_key = f'event-cache-{t}'
+                events = set(json.loads(await redis.get(cache_key) or '[]'))
+                while True:
+                    for hit in data['hits']['hits']:
+                        msg_id = hit['_id']
+                        for event in hit['_source'].get('events', []):
+                            h = hashlib.md5(f'{msg_id}-{json.dumps(event, sort_keys=True)}'.encode())
+                            ref = h.hexdigest()
+                            if ref in events:
+                                skipped += 1
+                                continue
+                            events.add(ref)
+                            await self.post(
+                                f'events/{t}/',
+                                message=msg_id,
+                                **event
+                            )
+                            added += 1
+                    r = await self.get(f'/_search/scroll', scroll='60m', scroll_id=scroll_id)
+                    assert r.status == 200, r.status
+                    data = await r.json()
+                    if not data['hits']['hits']:
+                        break
+                await redis.setex(cache_key, 86400, json.dumps(list(events)))
+                main_logger.info(f'messages/{t} {added} events added, {skipped} skipped')
+        redis_pool.close()
+        await redis_pool.wait_closed()
+        await redis_pool.clear()
 
 
 KEYWORD = {'type': 'keyword'}
