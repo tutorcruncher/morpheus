@@ -121,6 +121,12 @@ then
 
     make
 
-### to monitor backups
+### to monitor
+
+backup in progress
 
     docker run -it --rm --network morpheus_default python:3.6 curl elastic:9200/_cat/recovery?v
+
+indices
+    
+    docker run -it --rm --network morpheus_default python:3.6 curl elastic:9200/_cat/indices/?v

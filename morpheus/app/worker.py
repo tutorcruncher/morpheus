@@ -669,15 +669,6 @@ class Sender(Actor):
             return
         data = await r.json()
 
-        log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-        await self.es.post(
-            f'events/{es_type}/',
-            message=m.message_id,
-            ts=m.ts,
-            status=m.status,
-            extra=m.extra(),
-        )
-
         old_update_ts = from_unix_ms(data['_source']['update_ts'])
         if m.ts.tzinfo:
             old_update_ts = old_update_ts.replace(tzinfo=timezone.utc)
@@ -686,13 +677,23 @@ class Sender(Actor):
         try:
             # give 1 second "lee way" for new event to have happened just before the old event
             if m.ts >= (old_update_ts - timedelta(seconds=1)):
-                await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status})
+                await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status}, timeout_=20)
         except ApiError as e:  # pragma: no cover
             # no error here if we know the problem
             if e.status == 409:
                 main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
             else:
                 raise
+
+        log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+        await self.es.post(
+            f'events/{es_type}/',
+            message=m.message_id,
+            ts=m.ts,
+            status=m.status,
+            extra=m.extra(),
+            timeout_=20,
+        )
 
 
 class AuxActor(Actor):  # pragma: no cover

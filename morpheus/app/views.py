@@ -788,7 +788,7 @@ class MessageStatsView(AuthView):
                                 'age': {
                                     'avg': {
                                         'script': {
-                                            'inline': 'doc.update_ts.value - doc.send_ts.value'
+                                            'source': 'doc.update_ts.value - doc.send_ts.value'
                                         }
                                     },
                                 },
