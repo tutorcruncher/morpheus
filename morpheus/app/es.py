@@ -4,8 +4,10 @@ import logging
 from datetime import datetime
 from time import time
 
+from arq import create_pool_lenient
+
 from .settings import Settings
-from .utils import THIS_DIR, ApiSession
+from .utils import THIS_DIR, ApiError, ApiSession
 
 main_logger = logging.getLogger('morpheus.elastic')
 
@@ -94,7 +96,8 @@ class ElasticSearch(ApiSession):  # pragma: no cover
         main_logger.info('creating elastic search snapshot...')
         r = await self.put(
             f'/_snapshot/{self.settings.snapshot_repo_name}/'
-            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true'
+            f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true',
+            timeout_=1000,
         )
         main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
 
@@ -110,7 +113,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
         start = time()
         r = await self.post(
             f'/_snapshot/{self.settings.snapshot_repo_name}/{snapshot_name}/_restore?wait_for_completion=true',
-            timeout=None,
+            timeout_=None,
         )
         main_logger.info(json.dumps(await r.json(), indent=2))
 
@@ -132,6 +135,81 @@ class ElasticSearch(ApiSession):  # pragma: no cover
 
             main_logger.info('%d types updated for %s, re-opening index', len(types), index_name)
             await self.post(f'{index_name}/_open')
+
+    async def _patch_copy_events(self):
+        r = await self.get(f'messages/_mapping')
+        all_mappings = await r.json()
+        redis_pool = await create_pool_lenient(self.settings.redis_settings, loop=None)
+        async with redis_pool.get() as redis:
+            for t in all_mappings['messages']['mappings']:
+                r = await self.get(f'/messages/{t}/_search?scroll=2m', sort=['_doc'], query={'match_all': {}},
+                                   size=1000)
+                data = await r.json()
+                scroll_id = data['_scroll_id']
+                main_logger.info(f'messages/{t} {data["hits"]["total"]} messages to move events for')
+                added, skipped = 0, 0
+                set_key = f'event-set-{t}'
+                events = set(await redis.smembers(set_key, encoding='utf8'))
+                for i in range(int(1e9)):
+                    rows = set()
+                    for hit in data['hits']['hits']:
+                        msg_id = hit['_id']
+                        for event in hit['_source'].get('events', []):
+                            row = json.dumps({'message': msg_id, **event}, sort_keys=True)
+                            if row in events:
+                                skipped += 1
+                            else:
+                                added += 1
+                                rows.add(row)
+                    r = await self.get('_search/scroll', scroll='2m', scroll_id=scroll_id, timeout_=10)
+                    data = await r.json()
+                    main_logger.info('  %d: %d events added, %d skipped, adding %d rows', i, added, skipped, len(rows))
+                    if rows:
+                        await asyncio.gather(
+                            redis.sadd(set_key, *rows),
+                            redis.setex(set_key, 86400),
+                        )
+                    if not data['hits']['hits']:
+                        break
+                main_logger.info(f'messages/{t} {added} events added, {skipped} skipped')
+
+        redis_pool.close()
+        await redis_pool.wait_closed()
+        await redis_pool.clear()
+
+    async def _patch_create_events(self):
+        r = await self.get(f'messages/_mapping')
+        all_mappings = await r.json()
+        redis_pool = await create_pool_lenient(self.settings.redis_settings, loop=None)
+        async with redis_pool.get() as redis:
+            async def bulk_insert(rows):
+                post_data = '\n'.join(rows)
+                start = time()
+                async with self.session.post(self.root + '_bulk', data=post_data, timeout=3600,
+                                             headers={'Content-Type': 'application/x-ndjson'}) as r:
+                    if r.status != 200:
+                        raise ApiError('post', '_bulk', rows, r, await r.text())
+                return time() - start
+
+            for t in all_mappings['messages']['mappings']:
+                set_key = f'event-set-{t}'
+                for i in range(int(1e9)):
+                    insert_rows = []
+                    rows = await redis.srandmember(set_key, count=200, encoding='utf8')
+                    if not rows:
+                        break
+                    for r in rows:
+                        insert_rows.append(json.dumps({'index': {'_index': 'events', '_type': t}}))
+                        insert_rows.append(r)
+                    dur = await bulk_insert(insert_rows)
+                    await redis.srem(set_key, *rows)
+                    if i % 50 == 0:
+                        remaining = await redis.scard(set_key)
+                        main_logger.info('events/%s inserted %d rows in %0.2fs, remaining %d',
+                                         t, len(insert_rows), dur, remaining)
+        redis_pool.close()
+        await redis_pool.wait_closed()
+        await redis_pool.clear()
 
 
 KEYWORD = {'type': 'keyword'}
@@ -176,5 +254,11 @@ MAPPINGS = {
         'send_method': KEYWORD,
         'send_message_id': KEYWORD,
         'expires_ts': DATE,
+    },
+    'events': {
+        'message': KEYWORD,
+        'ts': DATE,
+        'status': KEYWORD,
+        'extra': DYNAMIC,
     }
 }

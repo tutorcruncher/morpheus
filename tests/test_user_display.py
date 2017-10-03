@@ -185,6 +185,7 @@ async def test_message_details(cli, settings, send_email):
     assert r.status == 200, await r.text()
 
     await cli.server.app['es'].get('messages/_refresh')
+    await cli.server.app['es'].get('events/_refresh')
 
     r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
     assert r.status == 200, await r.text()
@@ -226,6 +227,7 @@ async def test_message_details_link(cli, settings, send_email):
     assert r.status == 200, await r.text()
 
     await cli.server.app['es'].get('messages/_refresh')
+    await cli.server.app['es'].get('events/_refresh')
 
     url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
     r = await cli.get(url)
@@ -234,7 +236,7 @@ async def test_message_details_link(cli, settings, send_email):
     assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
     assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
     assert '<a href="#">different.pdf</a>' in text
-    assert 'Open &bull; Wed 2033-05-18 03:33' == re.search('Open &bull; .+', text).group()
+    assert 'Open &bull; Wed 2033-05-18 03:33' == re.search('Open &bull; .+', text).group(), text
     assert 'extra values not shown' not in text
 
     r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'Europe/London'}))
@@ -266,9 +268,15 @@ async def test_many_events(cli, settings, send_email):
         }
         for i in range(55)
     ]
-    await cli.server.app['es'].post(f'messages/email-test/{msg_id}/_update', doc={'events': events})
+    for event in events:
+        await cli.server.app['es'].post(
+            f'events/email-test/',
+            message=msg_id,
+            **event
+        )
 
     await cli.server.app['es'].get('messages/_refresh')
+    await cli.server.app['es'].get('events/_refresh')
 
     url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
     r = await cli.get(url)
@@ -303,7 +311,7 @@ async def test_user_sms(cli, settings, send_sms):
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, 'snapcrap'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    print(json.dumps(data, indent=2))
+    # print(json.dumps(data, indent=2))
     assert data['hits']['total'] == 1
     hit = data['hits']['hits'][0]
     assert hit['_index'] == 'messages'

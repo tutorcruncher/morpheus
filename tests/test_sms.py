@@ -2,6 +2,8 @@ import re
 import uuid
 from urllib.parse import urlencode
 
+from .test_email import get_events
+
 
 async def test_send_message(cli, tmpdir):
     data = {
@@ -243,7 +245,8 @@ async def test_messagebird_webhook(cli, mock_external):
     assert source['body'] == 'this is a message'
     assert source['cost'] == 0.02
     assert len(source['tags']) == 1  # just group_id
-    assert source['events'] == []
+    events = await get_events(cli, response_data['hits']['hits'][0]['_id'], es_type='sms-messagebird')
+    assert events['hits']['total'] == 0
 
     url_args = {
         'id': response_data['hits']['hits'][0]['_id'],
@@ -262,8 +265,9 @@ async def test_messagebird_webhook(cli, mock_external):
     source = response_data['hits']['hits'][0]['_source']
 
     assert source['status'] == 'delivered'
-    assert len(source['events']) == 1
-    assert source['events'][0]['status'] == 'delivered'
+    events = await get_events(cli, response_data['hits']['hits'][0]['_id'], es_type='sms-messagebird')
+    assert events['hits']['total'] == 1
+    assert events['hits']['hits'][0]['_source']['status'] == 'delivered'
 
 
 async def test_failed_render(cli, tmpdir):

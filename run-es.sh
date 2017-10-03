@@ -7,4 +7,4 @@ docker run --rm \
   -e "transport.host=127.0.0.1" \
   -e "xpack.security.enabled=false" \
   -e "path.repo=[\"/snapshots\"]" \
-  docker.elastic.co/elasticsearch/elasticsearch:5.4.2
+  docker.elastic.co/elasticsearch/elasticsearch:5.6.2
