@@ -120,3 +120,7 @@ Set up your environment. If you have ElasticSearch installed and running you're 
 then
 
     make
+
+### to monitor backups
+
+    docker run -it --rm --network morpheus_default python:3.6 curl elastic:9200/_cat/recovery?v

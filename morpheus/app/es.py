@@ -95,7 +95,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
         r = await self.put(
             f'/_snapshot/{self.settings.snapshot_repo_name}/'
             f'snapshot-{datetime.now():%Y-%m-%d_%H-%M-%S}?wait_for_completion=true',
-            timeout=1000,
+            timeout_=1000,
         )
         main_logger.info('snapshot created: %s', json.dumps(await r.json(), indent=2))
 
@@ -111,7 +111,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
         start = time()
         r = await self.post(
             f'/_snapshot/{self.settings.snapshot_repo_name}/{snapshot_name}/_restore?wait_for_completion=true',
-            timeout=None,
+            timeout_=None,
         )
         main_logger.info(json.dumps(await r.json(), indent=2))
 
@@ -142,7 +142,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
             assert r.status == 200, r.status
             data = await r.json()
             scroll_id = data['_scroll_id']
-            print(f'messages/{t} {data["hits"]["total"]} messages to move events for')
+            main_logger.info(f'messages/{t} {data["hits"]["total"]} messages to move events for')
             added = 0
             while True:
                 for hit in data['hits']['hits']:
@@ -158,7 +158,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
                 data = await r.json()
                 if not data['hits']['hits']:
                     break
-            print(f'messages/{t} {added} events added')
+            main_logger.info(f'messages/{t} {added} events added')
 
 
 KEYWORD = {'type': 'keyword'}

@@ -282,7 +282,8 @@ class ApiSession:
     async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
         method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)
         headers = data.pop('headers_', {})
-        async with self.session.request(method, url, json=data, headers=headers) as r:
+        timeout = data.pop('timeout_', 300)
+        async with self.session.request(method, url, json=data, headers=headers, timeout=timeout) as r:
             # always read entire response before closing the connection
             response_text = await r.text()
 

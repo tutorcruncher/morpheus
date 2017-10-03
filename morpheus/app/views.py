@@ -289,6 +289,12 @@ class _UserMessagesView(UserView):
         assert r.status == 200, r.status
         return await r.json()
 
+    @staticmethod
+    def _event_data(e):
+        data = e['_source']
+        data.pop('message')
+        return data
+
     async def insert_events(self, data):
         t = self.request.match_info['method']
         for hit in data['hits']['hits']:
@@ -301,7 +307,7 @@ class _UserMessagesView(UserView):
             )
             assert r.status == 200, r.status
             event_data = await r.json()
-            hit['_source']['events'] = [e['_source'] for e in event_data['hits']['hits']]
+            hit['_source']['events'] = [self._event_data(e) for e in event_data['hits']['hits']]
 
 
 class UserMessagesJsonView(_UserMessagesView):
