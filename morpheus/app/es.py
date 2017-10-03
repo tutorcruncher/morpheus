@@ -167,7 +167,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
                     if rows:
                         await asyncio.gather(
                             redis.sadd(set_key, *rows),
-                            redis.setex(set_key, 86400),
+                            redis.expire(set_key, 86400),
                         )
                     if not data['hits']['hits']:
                         break

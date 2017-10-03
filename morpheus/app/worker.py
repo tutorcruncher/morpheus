@@ -662,7 +662,7 @@ class Sender(Actor):
             if v > 1:
                 main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
                 return
-            await redis.expire(ref, 7200)
+            await redis.expire(ref, 86400)
 
         r = await self.es.get(f'messages/{es_type}/{m.message_id}', allowed_statuses=(200, 404))
         if r.status == 404:
@@ -674,18 +674,21 @@ class Sender(Actor):
             old_update_ts = old_update_ts.replace(tzinfo=timezone.utc)
 
         update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=5'
-        try:
-            # give 1 second "lee way" for new event to have happened just before the old event
-            if m.ts >= (old_update_ts - timedelta(seconds=1)):
+        # give 1 second "lee way" for new event to have happened just before the old event
+        change_status = False
+        if m.ts >= (old_update_ts - timedelta(seconds=1)):
+            change_status = True
+            try:
                 await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status}, timeout_=20)
-        except ApiError as e:  # pragma: no cover
-            # no error here if we know the problem
-            if e.status == 409:
-                main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-            else:
-                raise
+            except ApiError as e:  # pragma: no cover
+                # no error here if we know the problem
+                if e.status == 409:
+                    main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+                else:
+                    raise
 
-        log_each and main_logger.info('updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+        log_each and main_logger.info('adding event %s, ts: %s, status: %s, updating status: %r',
+                                      m.message_id, m.ts, m.status, change_status)
         await self.es.post(
             f'events/{es_type}/',
             message=m.message_id,
