@@ -728,6 +728,15 @@ async def test_link_shortening(send_email, tmpdir, cli):
     assert events['hits']['hits'][0]['_source']['extra']['user_agent'].startswith('Mozilla/5.0')
     assert events['hits']['hits'][0]['_source']['extra']['user_agent_display'].startswith('Chrome 59 on Linux')
 
+    # check we use the right url with a valid token but a different url arg
+    r = await cli.get('/l' + token + '?u=' + base64.urlsafe_b64encode(b'foobar').decode(), allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'https://www.foobar.com'
+
+    r = await cli.get('/lx' + token + '?u=' + base64.urlsafe_b64encode(b'foobar').decode(), allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'foobar'
+
 
 async def test_link_shortening_in_render(send_email, tmpdir, cli):
     mid = await send_email(

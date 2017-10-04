@@ -54,6 +54,13 @@ class ClickRedirectView(TemplateView):
             size=1,
         )
         data = await r.json()
+        arg_url = request.query.get('u')
+        if arg_url:
+            try:
+                arg_url = base64.urlsafe_b64decode(arg_url.encode()).decode()
+            except ValueError:
+                arg_url = None
+
         if data['hits']['total']:
             hit = data['hits']['hits'][0]
             source = hit['_source']
@@ -73,7 +80,13 @@ class ClickRedirectView(TemplateView):
                 send_method=source['send_method'],
                 send_message_id=source['send_message_id']
             )
-            raise HTTPTemporaryRedirect(location=source['url'])
+            url = source['url']
+            if arg_url and arg_url != url:
+                logger.warning('db url does not match arg url: "%s" !+ "%s"', url, arg_url)
+            raise HTTPTemporaryRedirect(location=url)
+        elif arg_url:
+            logger.warning('no url found, using arg url "%s"', arg_url)
+            raise HTTPTemporaryRedirect(location=arg_url)
         else:
             return dict(
                 url=request.url,
