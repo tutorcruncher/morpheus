@@ -688,19 +688,8 @@ class Sender(Actor):
         if m.ts.tzinfo:
             old_update_ts = old_update_ts.replace(tzinfo=timezone.utc)
 
-        update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=5'
         # give 1 second "lee way" for new event to have happened just before the old event
-        status = UpdateStatus.added
-        if m.ts >= (old_update_ts - timedelta(seconds=1)):
-            status = UpdateStatus.updated
-            try:
-                await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status}, timeout_=20)
-            except ApiError as e:  # pragma: no cover
-                # no error here if we know the problem
-                if e.status == 409:
-                    main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-                else:
-                    raise
+        status = UpdateStatus.updated if m.ts >= (old_update_ts - timedelta(seconds=1)) else UpdateStatus.added
 
         log_each and main_logger.info('adding event %s, ts: %s, status: %s, updating status: %r',
                                       m.message_id, m.ts, m.status, status == UpdateStatus.updated)
@@ -712,6 +701,18 @@ class Sender(Actor):
             extra=m.extra(),
             timeout_=20,
         )
+        if status == UpdateStatus.updated:
+            try:
+                await self.es.post(f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=5',
+                                   doc={'update_ts': m.ts, 'status': m.status}, timeout_=30)
+            except ApiError as e:  # pragma: no cover
+                # no error here if we know the problem
+                if e.status == 409:
+                    main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+                else:
+                    raise
+            except asyncio.TimeoutError:  # pragma: no cover
+                main_logger.info('timeout updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
         return status
 
 
