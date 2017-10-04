@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional
 
@@ -84,6 +85,13 @@ class SmsData(NamedTuple):
     message: str
     shortened_link: dict
     length: SmsLength
+
+
+class UpdateStatus(str, Enum):
+    duplicate = 'duplicate'
+    missing = 'missing'
+    updated = 'updated'
+    added = 'added'
 
 
 class Sender(Actor):
@@ -625,10 +633,16 @@ class Sender(Actor):
     @concurrent(Actor.LOW_QUEUE)
     async def update_mandrill_webhooks(self, events):
         mandrill_webhook = MandrillWebhook(events=events)
-        main_logger.info('updating %d messages', len(mandrill_webhook.events))
         # do in a loop to avoid elastic search conflict
+        statuses = {}
         for m in mandrill_webhook.events:
-            await self.update_message_status('email-mandrill', m, log_each=False)
+            status = await self.update_message_status('email-mandrill', m, log_each=False)
+            if status in statuses:
+                statuses[status] += 1
+            else:
+                statuses[status] = 1
+        main_logger.info('updating %d messages: %s', len(mandrill_webhook.events),
+                         ' '.join(f'{k}={v}' for k, v in statuses.items()))
 
     @concurrent
     async def store_click(self, *, target, ip, ts, user_agent, send_method, send_message_id):
@@ -652,21 +666,22 @@ class Sender(Actor):
             message_id=send_message_id,
             extra_=extra
         )
-        await self.update_message_status(send_method, m)
+        return await self.update_message_status(send_method, m)
 
-    async def update_message_status(self, es_type, m: BaseWebhook, log_each=True):
+    async def update_message_status(self, es_type, m: BaseWebhook, log_each=True) -> UpdateStatus:
         h = hashlib.md5(f'{to_unix_ms(m.ts)}-{m.status}-{json.dumps(m.extra(), sort_keys=True)}'.encode())
         ref = f'event-{h.hexdigest()}'
         async with await self.get_redis_conn() as redis:
             v = await redis.incr(ref)
             if v > 1:
-                main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
-                return
+                log_each and main_logger.info('event already exists %s, ts: %s, '
+                                              'status: %s. skipped', m.message_id, m.ts, m.status)
+                return UpdateStatus.duplicate
             await redis.expire(ref, 86400)
 
         r = await self.es.get(f'messages/{es_type}/{m.message_id}', allowed_statuses=(200, 404))
         if r.status == 404:
-            return
+            return UpdateStatus.missing
         data = await r.json()
 
         old_update_ts = from_unix_ms(data['_source']['update_ts'])
@@ -675,9 +690,9 @@ class Sender(Actor):
 
         update_uri = f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=5'
         # give 1 second "lee way" for new event to have happened just before the old event
-        change_status = False
+        status = UpdateStatus.added
         if m.ts >= (old_update_ts - timedelta(seconds=1)):
-            change_status = True
+            status = UpdateStatus.updated
             try:
                 await self.es.post(update_uri, doc={'update_ts': m.ts, 'status': m.status}, timeout_=20)
             except ApiError as e:  # pragma: no cover
@@ -688,7 +703,7 @@ class Sender(Actor):
                     raise
 
         log_each and main_logger.info('adding event %s, ts: %s, status: %s, updating status: %r',
-                                      m.message_id, m.ts, m.status, change_status)
+                                      m.message_id, m.ts, m.status, status == UpdateStatus.updated)
         await self.es.post(
             f'events/{es_type}/',
             message=m.message_id,
@@ -697,6 +712,7 @@ class Sender(Actor):
             extra=m.extra(),
             timeout_=20,
         )
+        return status
 
 
 class AuxActor(Actor):  # pragma: no cover
