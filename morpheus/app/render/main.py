@@ -1,6 +1,7 @@
 import logging
 import re
 import secrets
+from base64 import urlsafe_b64encode
 from typing import Dict, NamedTuple
 
 import chevron
@@ -76,14 +77,17 @@ def looks_like_link(s):
     )
 
 
-def apply_short_links(context, click_url, click_random=30):
+def apply_short_links(context, click_url, click_random=30, backup_arg=False):
     shortened_link = []
     extra = {}
     for k, v in context.items():
         # TODO deal with unsubscribe links properly
         if k != 'unsubscribe_link' and looks_like_link(v):
             r = secrets.token_urlsafe(click_random)[:click_random]
-            extra[k] = click_url + r
+            new_url = click_url + r
+            if backup_arg:
+                new_url += '?u=' + urlsafe_b64encode(v.encode()).decode()
+            extra[k] = new_url
             extra[f'{k}_original'] = v
             shortened_link.append((v, r))
     context.update(extra)
@@ -103,7 +107,7 @@ def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
 
     shortened_link = []
     if click_url:
-        shortened_link = apply_short_links(m.context, click_url, click_random)
+        shortened_link = apply_short_links(m.context, click_url, click_random, backup_arg=True)
     m.context.update(
         email_subject=subject,
         **dict(_update_context(m.context, m.mustache_partials, m.macros))
