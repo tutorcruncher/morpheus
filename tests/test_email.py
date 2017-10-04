@@ -683,10 +683,11 @@ async def test_link_shortening(send_email, tmpdir, cli):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{mid}.txt').read()
-    m = re.search('<a href="https://click.example.com/l(.+?)">foobar</a> test message', msg_file)
+    m = re.search('<a href="https://click.example.com/l(.+?)\?u=(.+?)">foobar</a> test message', msg_file)
     assert m, msg_file
-    token = m.groups()[0]
+    token, enc_url = m.groups()
     assert len(token) == 30
+    assert base64.urlsafe_b64decode(enc_url).decode() == 'https://www.foobar.com'
 
     await cli.server.app['es'].get('links/_refresh')
     r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening')
@@ -727,6 +728,15 @@ async def test_link_shortening(send_email, tmpdir, cli):
     assert events['hits']['hits'][0]['_source']['extra']['user_agent'].startswith('Mozilla/5.0')
     assert events['hits']['hits'][0]['_source']['extra']['user_agent_display'].startswith('Chrome 59 on Linux')
 
+    # check we use the right url with a valid token but a different url arg
+    r = await cli.get('/l' + token + '?u=' + base64.urlsafe_b64encode(b'foobar').decode(), allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'https://www.foobar.com'
+
+    r = await cli.get('/lx' + token + '?u=' + base64.urlsafe_b64encode(b'foobar').decode(), allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'foobar'
+
 
 async def test_link_shortening_in_render(send_email, tmpdir, cli):
     mid = await send_email(
@@ -738,9 +748,9 @@ async def test_link_shortening_in_render(send_email, tmpdir, cli):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{mid}.txt').read()
-    m = re.search('<p>test email https://click.example.com/l(.+?)</p>', msg_file)
+    m = re.search('<p>test email https://click.example.com/l(.+?)\?u=(.+?)</p>', msg_file)
     assert m, msg_file
-    token = m.groups()[0]
+    token, enc_url = m.groups()
 
     await cli.server.app['es'].get('links/_refresh')
     r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening_in_render')
@@ -749,6 +759,7 @@ async def test_link_shortening_in_render(send_email, tmpdir, cli):
     v = response_data['hits']['hits'][0]['_source']
     assert v['url'] == 'http://example.com/foobar'
     assert v['token'] == token
+    assert base64.urlsafe_b64decode(enc_url).decode() == 'http://example.com/foobar'
 
 
 async def test_link_shortening_keep_long_link(send_email, tmpdir, cli):

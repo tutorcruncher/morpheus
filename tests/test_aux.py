@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -242,3 +243,15 @@ async def test_missing_link(cli):
     text = await r.text()
     assert (f'<p>404: No redirect could be found for "http://127.0.0.1:{cli.server.port}/lxxx", '
             f'this link may have expired.</p>') in text
+
+
+async def test_missing_url_with_arg(cli):
+    url = 'https://example.com/foobar'
+    r = await cli.get('/lxxx?u=' + base64.urlsafe_b64encode(url.encode()).decode(), allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['Location'] == url
+
+
+async def test_missing_url_with_arg_bad(cli):
+    r = await cli.get('/lxxx?u=xxx', allow_redirects=False)
+    assert r.status == 404, await r.text()
