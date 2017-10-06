@@ -73,7 +73,7 @@ class ErrorLoggingMiddleware:
 
     async def log_warning(self, request, response):
         self.logger.warning('%s %d', request.rel_url, response.status, extra={
-            'fingerprint': [request.rel_url, str(response.status)],
+            'fingerprint': [str(request.rel_url), str(response.status)],
             'data': await self.log_extra_data(request, response)
         })
 
@@ -87,7 +87,9 @@ class ErrorLoggingMiddleware:
             self.should_log_warnings and
             r.status >= 400 and
             not (r.status == 401 and 'WWW-Authenticate' in r.headers) and
-            not (r.status == 409)
+            not r.status == 409 and
+            '127.0.0.1' not in r.headers.get('Origin', '') and
+            'localhost' not in r.headers.get('Origin', '')
         )
 
     async def __call__(self, app, handler):
