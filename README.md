@@ -130,3 +130,26 @@ backup in progress (the pydf image has curl installed)
 indices
     
     docker exec -it morpheus_pdf_1 curl elastic:9200/_cat/indices/?v
+
+
+### to backup redis
+
+```
+docker exec -it morpheus_redis_1 redis-cli SAVE
+docker cp morpheus_redis_1:/data/dump.rdb dump.rdb
+```
+
+### to restore redis
+
+```
+./deploy/compose stop redis
+docker cp dump.rdb morpheus_redis_1:/data/dump.rdb
+./deploy/compose start redis
+```
+
+check with
+
+```
+docker exec -it morpheus_redis_1 redis-cli DBSIZE
+docker exec -it morpheus_redis_1 redis-cli INFO
+```
