@@ -69,11 +69,18 @@ def _apply_macros(s, macros):
     return s
 
 
+SKIPPED_LINKS = [
+    re.compile(r'\.(?:png|jpg|bmp)$'),
+    re.compile(r'^https?://maps.googleapis.com'),
+    re.compile(r'^https?://maps.google.com'),
+]
+
+
 def looks_like_link(s):
     return (
         isinstance(s, str) and
         re.match('^https?://', s) and
-        not re.search('\.(?:png|jpg|bmp)$', s)
+        not any(m.search(s) for m in SKIPPED_LINKS)
     )
 
 
