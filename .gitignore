@@ -11,9 +11,7 @@ dist/
 htmlcov/
 nginx/keys/
 nginx/keys-old/
-activate.prod.sh
-activate.beta.sh
-activate.client.sh
+activate.*
 nginx/htpasswd
 nginx/_build.nginx.conf
 morpheus/es-license/license.json

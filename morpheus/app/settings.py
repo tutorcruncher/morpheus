@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     auth_key: str = 'testing'
 
+    deploy_name = 'testing'
     host_name: NoneStr = 'localhost'
     click_host_name: str = 'click.example.com'
     sender_cls: PyObject = 'morpheus.app.worker.Sender'

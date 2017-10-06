@@ -27,7 +27,7 @@ def setup_logging(settings: Settings):
                 'class': 'raven.handlers.logging.SentryHandler',
                 'dsn': settings.raven_dsn,
                 'release': settings.commit,
-                'name': settings.host_name,
+                'name': settings.deploy_name,
             },
         },
         'loggers': {

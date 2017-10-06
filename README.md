@@ -123,10 +123,10 @@ then
 
 ### to monitor
 
-backup in progress
+backup in progress (the pydf image has curl installed)
 
-    docker run -it --rm --network morpheus_default python:3.6 curl elastic:9200/_cat/recovery?v
+    docker exec -it morpheus_pdf_1 curl elastic:9200/_cat/recovery?v
 
 indices
     
-    docker run -it --rm --network morpheus_default python:3.6 curl elastic:9200/_cat/indices/?v
+    docker exec -it morpheus_pdf_1 curl elastic:9200/_cat/indices/?v

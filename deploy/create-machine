@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
-if [ "$MODE" != "PRODUCTION" ] && [ "$MODE" != "BETA" ] ; then
-    echo "MODE not set to PRODUCTION, use 'source activate.prod.sh'"
-    exit 2
+
+if [ -z ${AWS_ACCESS_KEY+x} ]; then
+  echo 'Error: $AWS_ACCESS_KEY not set'
+  exit 2
 fi
-NAME='morpheus'
-docker-machine create -d scaleway --scaleway-commercial-type 'C2M' --scaleway-name ${NAME} ${NAME}
+
+if [ -z ${AWS_SECRET_KEY+x} ]; then
+  echo 'Error: $AWS_SECRET_KEY not set'
+  exit 2
+fi
+
+
+docker-machine create \
+    --driver amazonec2 \
+    --amazonec2-access-key $AWS_ACCESS_KEY \
+    --amazonec2-secret-key $AWS_SECRET_KEY \
+    --amazonec2-instance-type t2.large \
+    --amazonec2-root-size 80 \
+    --amazonec2-region eu-west-1 \
+    morpheus2
