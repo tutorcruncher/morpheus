@@ -1,4 +1,4 @@
-cffi==1.11.0
+cffi==1.11.2
 libsass==0.13.2
 misaka==2.1.0
 multidict==3.2.0
