@@ -4,7 +4,7 @@ aioredis==0.3.3
 arq==0.11
 chevron==0.11.1
 click==6.7
-ipython==6.2.0
+ipython==6.2.1
 jinja2==2.9.6
 misaka==2.1.0
 msgpack-python==0.4.8
