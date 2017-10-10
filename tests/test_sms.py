@@ -324,7 +324,11 @@ async def test_link_shortening(cli, tmpdir):
     assert v['url'] == 'http://whatever.com/foo/bar'
     assert v['token'] == token
 
-    r = await cli.get('/l' + token, allow_redirects=False)
+    r = await cli.get(f'/l{token}', allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'http://whatever.com/foo/bar'
+
+    r = await cli.get(f'/l{token}.', allow_redirects=False)
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
 

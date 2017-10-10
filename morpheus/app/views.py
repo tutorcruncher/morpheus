@@ -41,12 +41,13 @@ class ClickRedirectView(TemplateView):
     template = 'not-found.jinja'
 
     async def call(self, request):
+        token = request.match_info['token'].rstrip('.')
         r = await self.app['es'].get(
             f'links/_search?filter_path=hits',
             query={
                 'bool': {
                     'filter': [
-                        {'term': {'token': request.match_info['token']}},
+                        {'term': {'token': token}},
                         {'range': {'expires_ts': {'gte': 'now'}}},
                     ]
                 }
