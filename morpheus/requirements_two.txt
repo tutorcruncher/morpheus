@@ -10,7 +10,7 @@ misaka==2.1.0
 msgpack-python==0.4.8
 phonenumbers==8.8.4
 pydantic==0.5
-pytz==2017.2
+pytz==2017.3
 raven==6.2.1
 ua-parser==0.7.3
 ujson==1.35
