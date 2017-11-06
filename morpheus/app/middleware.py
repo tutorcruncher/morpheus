@@ -2,47 +2,45 @@ import asyncio
 import logging
 from time import time
 
+from aiohttp.web import middleware
 from aiohttp.web_exceptions import HTTPException, HTTPInternalServerError
 
 
-async def stats_middleware(app, handler):
-    async def _save_request(time_taken, request, response_status):
-        sender = app['sender']
-        route = request.match_info.route.name or request.path
-        status = f'{int(response_status/100)}XX'
-        redis_key = app['stats_list_key']
-        async with await sender.get_redis_conn() as redis:
-            # we put route_name last as it could have colons in it
-            _, list_len = await asyncio.gather(
-                redis.lpush(redis_key, f'{time_taken:0.4f}:{status}:{request.method}:{route}'),
-                redis.llen(redis_key),
-            )
-            if list_len > app['settings'].max_request_stats:
-                # to avoid filling up redis we nuke this data if it exceeds the max length
-                tr = redis.multi_exec()
-                tr.delete(redis_key)
-                tr.set(app['stats_start_key'], time())
-                await tr.execute()
+async def _save_request(time_taken, request, response_status):
+    if request.match_info.route.name == 'request-stats':
+        return
+    key = f'{request.method}:{int(response_status/100)}'
+    async with await request.app['sender'].get_redis_conn() as redis:
+        redis_list_key = request.app['stats_request_list']
 
-    async def _handler(request):
-        try:
-            start = float(request.headers.get('X-Request-Start', '.'))
-        except ValueError:
-            start = request.time_service.time()
-        http_exception = getattr(request.match_info, 'http_exception', None)
-        try:
-            if http_exception:
-                raise http_exception
-            else:
-                r = await handler(request)
-        except HTTPException as e:
-            app.loop.create_task(_save_request(time() - start, request, e.status))
-            raise
+        _, _, list_len = await asyncio.gather(
+            redis.hincrby(request.app['stats_request_count'], key),
+            redis.lpush(redis_list_key, key + f':{int(time_taken * 1000)}'),
+            redis.llen(redis_list_key),
+        )
+        if list_len > request.app['settings'].max_request_stats:
+            # to avoid filling up redis we nuke this data if it exceeds the max length
+            await redis.delete(redis_list_key)
+
+
+@middleware
+async def stats_middleware(request, handler):
+    try:
+        start = float(request.headers.get('X-Request-Start', '.'))
+    except ValueError:
+        start = time()
+    http_exception = getattr(request.match_info, 'http_exception', None)
+    try:
+        if http_exception:
+            raise http_exception
         else:
-            app.loop.create_task(_save_request(time() - start, request, r.status))
-            return r
-
-    return _handler
+            r = await handler(request)
+    except HTTPException as e:
+        request.app.loop.create_task(_save_request(time() - start, request, e.status))
+        raise
+    else:
+        request.app.loop.create_task(_save_request(time() - start, request, r.status))
+        return r
 
 
 class ErrorLoggingMiddleware:
