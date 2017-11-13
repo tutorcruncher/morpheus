@@ -72,7 +72,7 @@ class ClickRedirectView(TemplateView):
             try:
                 ts = float(request.headers.get('X-Request-Start', '.'))
             except ValueError:
-                ts = request.time_service.time()
+                ts = time()
             await self.sender.store_click(
                 target=source['url'],
                 ip=ip_address,
@@ -721,58 +721,59 @@ class RequestStatsView(AuthView):
     auth_token_field = 'stats_token'
 
     @classmethod
-    def process_values(cls, values, time_taken):
-        groups = {}
-        for v in values:
-            time, tags = v.decode().split(':', 1)
-            time = float(time)
-            if tags in groups:
-                groups[tags].add(time)
+    def process_values(cls, request_count, request_list):
+        groups = {k: {'request_count': int(v.decode())} for k, v in request_count.items()}
+
+        for v in request_list:
+            k, time_ = v.rsplit(b':', 1)
+            time_ = float(time_.decode()) / 1000
+            g = groups.get(k)
+            if g:
+                if 'times' in g:
+                    g['times'].append(time_)
+                else:
+                    g['times'] = [time_]
             else:
-                groups[tags] = {time}
+                groups[k] = {'times': [time_]}
+
         data = []
-        for tags, times in groups.items():
-            status, method, route = tags.split(':', 2)
-            times = sorted(times)
-            times_count = len(times)
-            data_ = dict(
-                status=status,
+        for k, v in groups.items():
+            method, status = k.decode().split(':')
+            v.update(
                 method=method,
-                route=route,
-                stats_interval=time_taken,
-                request_count=times_count,
-                request_per_second=times_count / time_taken,
-                time_min=times[0],
-                time_max=times[-1],
-                time_mean=mean(times),
+                status=status + 'XX'
             )
-            if times_count > 2:
-                data_.update(
-                    time_stdev=stdev(times),
-                    time_90=times[int(times_count*0.9)],
-                    time_95=times[int(times_count*0.95)],
+            times = v.pop('times')
+            if times:
+                times = sorted(times)
+                times_count = len(times)
+                v.update(
+                    time_min=times[0],
+                    time_max=times[-1],
+                    time_mean=mean(times),
+                    request_count_interval=times_count,
                 )
-            data.append(data_)
+                if times_count > 2:
+                    v.update(
+                        time_stdev=stdev(times),
+                        time_90=times[int(times_count*0.9)],
+                        time_95=times[int(times_count*0.95)],
+                    )
+            data.append(v)
         return ujson.dumps(data).encode()
 
     async def call(self, request):
-        stats_list_key, stats_start_key = self.app['stats_list_key'], self.app['stats_start_key']
         stats_cache_key = 'request-stats-cache'
         async with await self.sender.get_redis_conn() as redis:
             response_data = await redis.get(stats_cache_key)
             if not response_data:
-                finish_time = time()
                 tr = redis.multi_exec()
-                tr.lrange(stats_list_key, 0, -1)
-                tr.delete(stats_list_key)
-                tr.get(stats_start_key)
-                tr.set(stats_start_key, finish_time)
-                values, _, start_time, _ = await tr.execute()
-                if start_time:
-                    time_taken = finish_time - float(start_time)
-                else:
-                    time_taken = 60  # completely random guess
-                response_data = self.process_values(values, time_taken)
+                tr.hgetall(request.app['stats_request_count'])
+                tr.lrange(request.app['stats_request_list'], 0, -1)
+
+                tr.delete(request.app['stats_request_list'])
+                request_count, request_list, _ = await tr.execute()
+                response_data = self.process_values(request_count, request_list)
                 await redis.setex(stats_cache_key, 8, response_data)
         return Response(body=response_data, content_type='application/json')
 

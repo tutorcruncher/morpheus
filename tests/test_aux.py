@@ -80,13 +80,13 @@ async def test_stats_unauthorised(cli):
 
 async def test_request_stats(cli):
     async with await cli.server.app['sender'].get_redis_conn() as redis:
-        await redis.delete(cli.server.app['stats_list_key'])
-        await redis.delete(cli.server.app['stats_start_key'])
+        await redis.delete(cli.server.app['stats_request_count'])
+        await redis.delete(cli.server.app['stats_request_list'])
     await asyncio.gather(*(cli.get('/') for _ in range(5)))
     await cli.post('/')
 
     async with await cli.server.app['sender'].get_redis_conn() as redis:
-        assert 6 == await redis.llen(cli.server.app['stats_list_key'])
+        assert 6 == await redis.llen(cli.server.app['stats_request_list'])
 
     r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
@@ -94,13 +94,13 @@ async def test_request_stats(cli):
     assert len(data) == 2
     good = next(d for d in data if d['status'] == '2XX')
     assert good['request_count'] == 5
+    assert good['request_count_interval'] == 5
     assert good['method'] == 'GET'
-    assert good['route'] == 'index'
+    assert 'time_90' in good
 
     async with await cli.server.app['sender'].get_redis_conn() as redis:
-        keys = await redis.llen(cli.server.app['stats_list_key'])
-        # /stats/requests/ request may or may not be included here
-        assert keys in (0, 1)
+        keys = await redis.llen(cli.server.app['stats_request_list'])
+        assert keys == 0
 
     # used cached value
     r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
@@ -110,13 +110,21 @@ async def test_request_stats(cli):
 
 
 async def test_request_stats_reset(cli):
+    async with await cli.server.app['sender'].get_redis_conn() as redis:
+        await redis.delete(cli.server.app['stats_request_count'])
+        await redis.delete(cli.server.app['stats_request_list'])
+
     for _ in range(30):
         await cli.get('/')
+
+    async with await cli.server.app['sender'].get_redis_conn() as redis:
+        assert 10 > await redis.llen(cli.server.app['stats_request_list'])
+
     r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
     assert len(data) == 1
-    assert data[0]['request_count'] < 10
+    assert data[0]['request_count'] == 30
 
 
 async def test_message_stats(cli, send_email):

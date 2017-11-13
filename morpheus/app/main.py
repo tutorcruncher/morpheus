@@ -101,8 +101,8 @@ def create_app(loop, settings: Settings=None):
         mandrill=Mandrill(settings=settings, loop=loop),
         webhook_auth_key=None,
         morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
-        stats_list_key='request-stats-list',
-        stats_start_key='request-stats-start',
+        stats_request_count='request-stats-count',
+        stats_request_list='request-stats-list',
     )
 
     app.on_startup.append(app_startup)
