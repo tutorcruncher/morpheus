@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -5,6 +6,7 @@ from typing import Dict, List
 
 from aiohttp.web_exceptions import HTTPBadRequest
 from pydantic import BaseModel, NameEmail, ValidationError, constr
+from pydantic.validators import str_validator
 
 THIS_DIR = Path(__file__).parent.resolve()
 
@@ -171,10 +173,24 @@ class BaseWebhook(WebModel):
         raise NotImplementedError()
 
 
+ID_REGEX = re.compile(r'[/<>= ]')
+
+
+class IDStr(str):
+    @classmethod
+    def get_validators(cls):
+        yield str_validator
+        yield cls.validate
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        return ID_REGEX.sub('', value)
+
+
 class MandrillSingleWebhook(BaseWebhook):
     ts: datetime
     status: MandrillMessageStatus
-    message_id: str
+    message_id: IDStr
     user_agent: str = None
     location: dict = None
     msg: dict = {}
@@ -211,7 +227,7 @@ class MandrillWebhook(WebModel):
 class MessageBirdWebHook(BaseWebhook):
     ts: datetime
     status: MessageBirdMessageStatus
-    message_id: str
+    message_id: IDStr
     error_code: str = None
 
     def extra(self):
@@ -229,7 +245,7 @@ class MessageBirdWebHook(BaseWebhook):
 class ClickInfo(BaseWebhook):
     ts: datetime
     status: MessageStatus
-    message_id: str
+    message_id: IDStr
     extra_: dict
 
     def extra(self):

@@ -221,6 +221,31 @@ async def test_mandrill_webhook(cli):
     assert events['hits']['hits'][0]['_source']['status'] == 'open'
 
 
+async def test_mandrill_webhook_invalid(cli):
+    await cli.server.app['es'].post(
+        f'messages/email-mandrill/test-webhook',
+        company='foobar',
+        send_ts=123,
+        update_ts=123,
+        status='send',
+        to_address='testing@example.com',
+        events=[]
+    )
+    messages = [{'ts': int(1e10), 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
+    data = {'mandrill_events': json.dumps(messages)}
+
+    sig = base64.b64encode(
+        hmac.new(
+            b'testing',
+            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 10000000000, '
+                 b'"event": "open", "_id": "e587306</div></body><meta name=", "foobar": ["x"]}]'),
+            digestmod=hashlib.sha1
+        ).digest()
+    )
+    r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
+    assert r.status == 200, await r.text()
+
+
 async def test_mandrill_send_bad_template(cli, send_email):
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarbtestingcom', allowed_statuses='*')
     assert r.status == 404, await r.text()
