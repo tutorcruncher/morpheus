@@ -743,7 +743,7 @@ class RequestStatsView(AuthView):
                 method=method,
                 status=status + 'XX'
             )
-            times = v.pop('times')
+            times = v.pop('times', None)
             if times:
                 times = sorted(times)
                 times_count = len(times)
