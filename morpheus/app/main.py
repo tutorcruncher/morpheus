@@ -85,7 +85,7 @@ def create_app(loop, settings: Settings=None):
     setup_logging(settings)
     app = Application(
         client_max_size=1024**2*100,
-        middlewares=(stats_middleware, ErrorLoggingMiddleware())
+        middlewares=(stats_middleware, ErrorLoggingMiddleware().middleware)
     )
     aiohttp_jinja2.setup(
         app,

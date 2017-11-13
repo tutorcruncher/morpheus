@@ -80,36 +80,39 @@ class ErrorLoggingMiddleware:
             'data': await self.log_extra_data(request)
         })
 
-    def should_warning(self, r):
+    def should_warning(self, req, resp):
         return (
             self.should_log_warnings and
-            r.status >= 400 and
-            not (r.status == 401 and 'WWW-Authenticate' in r.headers) and
-            not r.status == 409 and
-            '127.0.0.1' not in r.headers.get('Origin', '') and
-            'localhost' not in r.headers.get('Origin', '')
+            resp.status >= 400 and
+            not (resp.status == 401 and 'WWW-Authenticate' in resp.headers) and
+            not resp.status == 409 and
+            not self.is_local(resp) and
+            not (resp.status == 403 and req.match_info.route.name == 'user-messages' and 'company' in req.query)
         )
 
-    async def __call__(self, app, handler):
-        async def _handler(request):
-            try:
-                http_exception = getattr(
-                    request.match_info, 'http_exception', None
-                )
-                if http_exception:
-                    raise http_exception
-                else:
-                    r = await handler(request)
-            except HTTPException as e:
-                if self.should_warning(e):
-                    await self.log_warning(request, e)
-                raise
-            except BaseException as e:
-                await self.log_exception(e, request)
-                raise HTTPInternalServerError()
-            else:
-                if self.should_warning(r):
-                    await self.log_warning(request, r)
-                return r
+    @staticmethod
+    def is_local(r):
+        origin = r.headers.get('Origin', '')
+        return '127.0.0.1' in origin or 'localhost' in origin
 
-        return _handler
+    @middleware
+    async def middleware(self, request, handler):
+        try:
+            http_exception = getattr(
+                request.match_info, 'http_exception', None
+            )
+            if http_exception:
+                raise http_exception
+            else:
+                r = await handler(request)
+        except HTTPException as e:
+            if self.should_warning(request, e):
+                await self.log_warning(request, e)
+            raise
+        except BaseException as e:
+            await self.log_exception(e, request)
+            raise HTTPInternalServerError()
+        else:
+            if self.should_warning(request, r):
+                await self.log_warning(request, r)
+            return r
