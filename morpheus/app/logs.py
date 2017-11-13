@@ -1,5 +1,8 @@
 import logging
 import logging.config
+from functools import partial
+
+from raven_aiohttp import QueuedAioHttpTransport
 
 from .settings import Settings
 
@@ -25,6 +28,7 @@ def setup_logging(settings: Settings):
             'sentry': {
                 'level': 'WARNING',
                 'class': 'raven.handlers.logging.SentryHandler',
+                'transport': partial(QueuedAioHttpTransport, workers=5, qsize=1000),
                 'dsn': settings.raven_dsn,
                 'release': settings.commit,
                 'name': settings.deploy_name,
