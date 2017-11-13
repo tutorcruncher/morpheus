@@ -571,8 +571,9 @@ class Sender(Actor):
             originator=j.from_name,
             body=sms_data.message,
             recipients=[sms_data.number.number],
-            allowed_statuses=201,
+            datacoding='auto',
             reference='morpheus',  # required to prompt status updates to occur
+            allowed_statuses=201,
         )
         data = await r.json()
         if data['recipients']['totalCount'] != 1:
