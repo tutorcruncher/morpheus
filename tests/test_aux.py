@@ -73,9 +73,18 @@ async def test_run_snapshot(cli, settings, loop):
     assert len(data['snapshots']) == snapshots_before + 1
 
 
-async def test_stats_unauthorised(cli):
+async def test_stats_unauthorised(cli, caplog):
+    caplog.set_loggers(log_names=['morpheus.request'])
     r = await cli.get('/stats/requests/')
     assert r.status == 403, await r.text()
+    assert '403 /stats/requests/' in caplog
+
+
+async def test_405(cli, caplog):
+    caplog.set_loggers(log_names=['morpheus.request'])
+    r = await cli.post('/')
+    assert r.status == 405, await r.text()
+    assert '405 /' in caplog
 
 
 async def test_request_stats(cli):

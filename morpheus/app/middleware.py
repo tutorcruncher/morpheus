@@ -29,12 +29,8 @@ async def stats_middleware(request, handler):
         start = float(request.headers.get('X-Request-Start', '.'))
     except ValueError:
         start = time()
-    http_exception = getattr(request.match_info, 'http_exception', None)
     try:
-        if http_exception:
-            raise http_exception
-        else:
-            r = await handler(request)
+        r = await handler(request)
     except HTTPException as e:
         request.app.loop.create_task(_save_request(time() - start, request, e.status))
         raise
@@ -70,7 +66,7 @@ class ErrorLoggingMiddleware:
         )
 
     async def log_warning(self, request, response):
-        self.logger.warning('%s %d', request.rel_url, response.status, extra={
+        self.logger.warning('%d %s', response.status, request.rel_url, extra={
             'fingerprint': [str(request.rel_url), str(response.status)],
             'data': await self.log_extra_data(request, response)
         })
@@ -98,9 +94,7 @@ class ErrorLoggingMiddleware:
     @middleware
     async def middleware(self, request, handler):
         try:
-            http_exception = getattr(
-                request.match_info, 'http_exception', None
-            )
+            http_exception = getattr(request.match_info, 'http_exception', None)
             if http_exception:
                 raise http_exception
             else:
