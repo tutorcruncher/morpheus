@@ -1,7 +1,7 @@
 aiohttp==2.3.5
 aiohttp-jinja2==0.14.0
 aioredis==1.0.0
-arq==0.11
+arq==0.13
 chevron==0.11.1
 click==6.7
 ipython==6.2.1
