@@ -2,4 +2,4 @@ cffi==1.11.4
 libsass==0.13.5
 misaka==2.1.0
 multidict==4.0.0
-uvloop==0.8.1
+uvloop==0.9.1
