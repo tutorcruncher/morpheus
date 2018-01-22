@@ -1,6 +1,6 @@
 aiohttp==2.3.9
 aiohttp-jinja2==0.14.0
-aioredis==0.3.4
+aioredis==1.0.0
 arq==0.11
 chevron==0.11.1
 click==6.7
