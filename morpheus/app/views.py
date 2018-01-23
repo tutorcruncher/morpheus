@@ -238,21 +238,22 @@ class CreateSubaccountView(ServiceView):
             timeout_=12,
         )
         data = await r.json()
-        if r.status == 500:
-            if f'A subaccount with id {m.company_code} already exists' in data.get('message', ''):
-                r = await mandrill.get('subaccounts/info.json', id=m.company_code, timeout_=12)
-                data = await r.json()
-                total_sent = data['sent_total']
-                if total_sent > 100:
-                    return Response(text=f'subaccount already exists with {total_sent} emails sent, '
-                                         f'reuse of subaccount id not permitted\n', status=409)
-                else:
-                    return Response(text=f'subaccount already exists with only {total_sent} emails sent, '
-                                         f'reuse of subaccount id permitted\n')
-            else:
-                return Response(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
-        else:
+        if r.status == 200:
             return Response(text='subaccount created\n', status=201)
+
+        assert r.status == 500, r.status
+        if f'A subaccount with id {m.company_code} already exists' not in data.get('message', ''):
+            return Response(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
+
+        r = await mandrill.get('subaccounts/info.json', id=m.company_code, timeout_=12)
+        data = await r.json()
+        total_sent = data['sent_total']
+        if total_sent > 100:
+            return Response(text=f'subaccount already exists with {total_sent} emails sent, '
+                                 f'reuse of subaccount id not permitted\n', status=409)
+        else:
+            return Response(text=f'subaccount already exists with only {total_sent} emails sent, '
+                                 f'reuse of subaccount id permitted\n')
 
 
 class _UserMessagesView(UserView):
