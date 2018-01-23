@@ -159,7 +159,7 @@ class Sender(Actor):
             context['styles__sass'] = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 
         drain = Drain(
-            redis_pool=await self.get_redis_pool(),
+            redis=await self.get_redis(),
             raise_task_exception=True,
             max_concurrent_tasks=10,
             shutdown_delay=60,
@@ -411,7 +411,7 @@ class Sender(Actor):
             from_name=from_name if country_code != 'US' else self.settings.us_send_number,
         )
         drain = Drain(
-            redis_pool=await self.get_redis_pool(),
+            redis=await self.get_redis(),
             raise_task_exception=True,
             max_concurrent_tasks=10,
             shutdown_delay=60,
@@ -536,8 +536,8 @@ class Sender(Actor):
 
     async def _messagebird_get_number_cost(self, number: Number):
         cc_mcc_key = f'messagebird-cc:{number.country_code}'
-        pool = await self.get_redis_pool()
-        async with pool.get() as redis:
+        pool = await self.get_redis()
+        with await pool as redis:
             mcc = await redis.get(cc_mcc_key)
             if mcc is None:
                 main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
@@ -672,7 +672,8 @@ class Sender(Actor):
     async def update_message_status(self, es_type, m: BaseWebhook, log_each=True) -> UpdateStatus:
         h = hashlib.md5(f'{to_unix_ms(m.ts)}-{m.status}-{json.dumps(m.extra(), sort_keys=True)}'.encode())
         ref = f'event-{h.hexdigest()}'
-        async with await self.get_redis_conn() as redis:
+        redis_pool = await self.get_redis()
+        with await redis_pool as redis:
             v = await redis.incr(ref)
             if v > 1:
                 log_each and main_logger.info('event already exists %s, ts: %s, '
