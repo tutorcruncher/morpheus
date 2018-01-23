@@ -98,7 +98,8 @@ class ClickRedirectView(TemplateView):
 class EmailSendView(ServiceView):
     async def call(self, request):
         m = await self.request_data(EmailSendModel)
-        async with await self.sender.get_redis_conn() as redis:
+        redis_pool = await request.app['sender'].get_redis()
+        with await redis_pool as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
@@ -123,7 +124,8 @@ class SmsSendView(ServiceView):
     async def call(self, request):
         m = await self.request_data(SmsSendModel)
         spend = None
-        async with await self.sender.get_redis_conn() as redis:
+        redis_pool = await request.app['sender'].get_redis()
+        with await redis_pool as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
@@ -764,7 +766,8 @@ class RequestStatsView(AuthView):
 
     async def call(self, request):
         stats_cache_key = 'request-stats-cache'
-        async with await self.sender.get_redis_conn() as redis:
+        redis_pool = await self.sender.get_redis()
+        with await redis_pool as redis:
             response_data = await redis.get(stats_cache_key)
             if not response_data:
                 tr = redis.multi_exec()
@@ -783,7 +786,8 @@ class MessageStatsView(AuthView):
 
     async def call(self, request):
         cache_key = 'message-stats'
-        async with await self.sender.get_redis_conn() as redis:
+        redis_pool = await request.app['sender'].get_redis()
+        with await redis_pool as redis:
             response_data = await redis.get(cache_key)
             if not response_data:
                 r = await self.app['es'].get(

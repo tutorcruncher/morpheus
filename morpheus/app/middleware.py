@@ -10,7 +10,8 @@ async def _save_request(time_taken, request, response_status):
     if request.match_info.route.name == 'request-stats':
         return
     key = f'{request.method}:{int(response_status/100)}'
-    async with await request.app['sender'].get_redis_conn() as redis:
+    redis_pool = await request.app['sender'].get_redis()
+    with await redis_pool as redis:
         redis_list_key = request.app['stats_request_list']
 
         _, _, list_len = await asyncio.gather(

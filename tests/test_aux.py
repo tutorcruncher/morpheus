@@ -87,15 +87,19 @@ async def test_405(cli, caplog):
     assert '405 /' in caplog
 
 
-async def test_request_stats(cli):
-    async with await cli.server.app['sender'].get_redis_conn() as redis:
-        await redis.delete(cli.server.app['stats_request_count'])
-        await redis.delete(cli.server.app['stats_request_list'])
+async def test_request_stats(cli, loop):
+    redis = await cli.server.app['sender'].get_redis()
+    await redis.delete(cli.server.app['stats_request_count'])
+    await redis.delete(cli.server.app['stats_request_list'])
     await asyncio.gather(*(cli.get('/') for _ in range(5)))
     await cli.post('/')
 
-    async with await cli.server.app['sender'].get_redis_conn() as redis:
-        assert 6 == await redis.llen(cli.server.app['stats_request_list'])
+    redis = await cli.server.app['sender'].get_redis()
+    for i in range(10):
+        if 6 == await redis.llen(cli.server.app['stats_request_list']):
+            break
+        await asyncio.sleep(0.1, loop=loop)
+    assert 6 == await redis.llen(cli.server.app['stats_request_list'])
 
     r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
@@ -107,9 +111,9 @@ async def test_request_stats(cli):
     assert good['method'] == 'GET'
     assert 'time_90' in good
 
-    async with await cli.server.app['sender'].get_redis_conn() as redis:
-        keys = await redis.llen(cli.server.app['stats_request_list'])
-        assert keys == 0
+    redis = await cli.server.app['sender'].get_redis()
+    keys = await redis.llen(cli.server.app['stats_request_list'])
+    assert keys == 0
 
     # used cached value
     r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
@@ -118,16 +122,19 @@ async def test_request_stats(cli):
     assert len(data) == 2
 
 
-async def test_request_stats_reset(cli):
-    async with await cli.server.app['sender'].get_redis_conn() as redis:
-        await redis.delete(cli.server.app['stats_request_count'])
-        await redis.delete(cli.server.app['stats_request_list'])
+async def test_request_stats_reset(cli, loop):
+    redis = await cli.server.app['sender'].get_redis()
+    await redis.delete(cli.server.app['stats_request_count'])
+    await redis.delete(cli.server.app['stats_request_list'])
 
     for _ in range(30):
         await cli.get('/')
 
-    async with await cli.server.app['sender'].get_redis_conn() as redis:
-        assert 10 > await redis.llen(cli.server.app['stats_request_list'])
+    redis = await cli.server.app['sender'].get_redis()
+    for i in range(10):
+        if 10 > await redis.llen(cli.server.app['stats_request_list']):
+            break
+        await asyncio.sleep(0.1, loop=loop)
 
     r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
