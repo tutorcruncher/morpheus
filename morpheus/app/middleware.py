@@ -24,12 +24,16 @@ async def _save_request(time_taken, request, response_status):
             await redis.delete(redis_list_key)
 
 
+def get_request_start(request):
+    try:
+        return float(request.headers.get('X-Request-Start', '.'))
+    except ValueError:
+        return time()
+
+
 @middleware
 async def stats_middleware(request, handler):
-    try:
-        start = float(request.headers.get('X-Request-Start', '.'))
-    except ValueError:
-        start = time()
+    start = get_request_start(request)
     try:
         r = await handler(request)
     except HTTPException as e:
@@ -54,7 +58,7 @@ class ErrorLoggingMiddleware:
         self.logger = logging.getLogger(log_name)
         self.should_log_warnings = log_warnings
 
-    async def log_extra_data(self, request, response=None):
+    async def log_extra_data(self, request, duration, response=None):
         return dict(
             request_url=str(request.rel_url),
             request_method=request.method,
@@ -64,18 +68,28 @@ class ErrorLoggingMiddleware:
             response_status=response and response.status,
             response_headers=response and dict(response.headers),
             response_text=response and response.text,
+            request_duration=duration,
+            route=self.get_route_name(request),
         )
 
-    async def log_warning(self, request, response):
+    async def log_warning(self, request, response, start):
         self.logger.warning('%d %s', response.status, request.rel_url, extra={
             'fingerprint': [str(request.rel_url), str(response.status)],
-            'data': await self.log_extra_data(request, response)
+            'data': await self.log_extra_data(request, time() - start, response)
         })
 
-    async def log_exception(self, exc, request):
-        self.logger.exception('%s: %s', exc.__class__.__name__, exc, extra={
-            'data': await self.log_extra_data(request)
-        })
+    async def log_exception(self, exc, request, start):
+        # ignore CancelledError from browser disconnects
+        duration = time() - start
+        if (isinstance(exc, asyncio.CancelledError) and
+                request.method == 'GET' and
+                duration < 2 and
+                'mozilla' in request.headers.get('User-Agent', '').lower()):
+            self.logger.info('browser disconnect after %0.2fs at "%s"', duration, request.rel_url)
+        else:
+            self.logger.exception('%s: %s', exc.__class__.__name__, exc, extra={
+                'data': await self.log_extra_data(request, duration)
+            })
 
     def should_warning(self, req, resp):
         return (
@@ -84,8 +98,15 @@ class ErrorLoggingMiddleware:
             not (resp.status == 401 and 'WWW-Authenticate' in resp.headers) and
             not resp.status == 409 and
             not self.is_local(resp) and
-            not (resp.status == 403 and req.match_info.route.name == 'user-messages' and 'company' in req.query)
+            not (resp.status == 403 and self.get_route_name(req) == 'user-messages' and 'company' in req.query)
         )
+
+    @staticmethod
+    def get_route_name(r):
+        try:
+            return r.match_info.route.name
+        except AttributeError:
+            return None
 
     @staticmethod
     def is_local(r):
@@ -94,6 +115,7 @@ class ErrorLoggingMiddleware:
 
     @middleware
     async def middleware(self, request, handler):
+        start = get_request_start(request)
         try:
             http_exception = getattr(request.match_info, 'http_exception', None)
             if http_exception:
@@ -102,12 +124,12 @@ class ErrorLoggingMiddleware:
                 r = await handler(request)
         except HTTPException as e:
             if self.should_warning(request, e):
-                await self.log_warning(request, e)
+                await self.log_warning(request, e, start)
             raise
         except BaseException as e:
-            await self.log_exception(e, request)
+            await self.log_exception(e, request, start)
             raise HTTPInternalServerError()
         else:
             if self.should_warning(request, r):
-                await self.log_warning(request, r)
+                await self.log_warning(request, r, start)
             return r
