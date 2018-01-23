@@ -235,11 +235,12 @@ class CreateSubaccountView(ServiceView):
             id=m.company_code,
             name=m.company_name,
             allowed_statuses=(200, 500),
+            timeout_=12,
         )
         data = await r.json()
         if r.status == 500:
             if f'A subaccount with id {m.company_code} already exists' in data.get('message', ''):
-                r = await mandrill.get('subaccounts/info.json', id=m.company_code)
+                r = await mandrill.get('subaccounts/info.json', id=m.company_code, timeout_=12)
                 data = await r.json()
                 total_sent = data['sent_total']
                 if total_sent > 100:
