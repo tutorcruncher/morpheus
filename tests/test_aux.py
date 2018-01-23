@@ -3,9 +3,11 @@ import base64
 import os
 import uuid
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
+from morpheus.app.utils import ApiError, ApiSession
 from morpheus.app.worker import AuxActor
 
 
@@ -279,3 +281,26 @@ async def test_missing_url_with_arg(cli):
 async def test_missing_url_with_arg_bad(cli):
     r = await cli.get('/lxxx?u=xxx', allow_redirects=False)
     assert r.status == 404, await r.text()
+
+
+def test_api_error_json():
+    e = ApiError('GET', 'http://example.com', {'x': 'y'}, MagicMock(), '{"hello": 123}')
+    assert 'Response data: {\n' in str(e)
+
+
+def test_api_error_not_json():
+    e = ApiError('GET', 'http://example.com', {'x': 'y'}, MagicMock(), 'foobar')
+    assert str(e).endswith('Response data: foobar')
+
+
+@pytest.mark.parametrize('input, result', [
+    ([1, 2, datetime(2032, 6, 1)], '[1, 2, 1969660800000]'),
+    ([1, 2, {1, 2, 3}], '[1, 2, [1, 2, 3]]'),
+])
+def test_custom_json_encoder(input, result):
+    assert ApiSession.encode_json(input) == result
+
+
+def test_custom_json_encoder_error():
+    with pytest.raises(TypeError):
+        ApiSession.encode_json([1, 2, {1: 2, 2: 4}.keys()])
