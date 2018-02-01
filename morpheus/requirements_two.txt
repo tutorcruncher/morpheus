@@ -1,5 +1,5 @@
 aiohttp==2.3.9
-aiohttp-jinja2==0.14.0
+aiohttp-jinja2==0.15.0
 aioredis==1.0.0
 arq==0.13
 chevron==0.11.1
