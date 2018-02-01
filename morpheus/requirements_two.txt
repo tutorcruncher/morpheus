@@ -1,5 +1,5 @@
 aiohttp==2.3.9
-aiohttp-jinja2==0.14.0
+aiohttp-jinja2==0.15.0
 aioredis==1.0.0
 arq==0.13
 chevron==0.11.1
@@ -8,7 +8,7 @@ ipython==6.2.1
 jinja2==2.10
 misaka==2.1.0
 msgpack-python==0.5.1
-phonenumbers==8.8.9
+phonenumbers==8.8.10
 pydantic==0.6.3
 pytz==2017.3
 raven==6.5.0
