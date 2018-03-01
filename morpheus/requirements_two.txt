@@ -9,7 +9,7 @@ jinja2==2.10
 misaka==2.1.0
 msgpack-python==0.5.5
 phonenumbers==8.9.0
-pydantic==0.6.3
+pydantic==0.7.1
 pytz==2017.3
 raven==6.5.0
 raven-aiohttp==0.6.0
