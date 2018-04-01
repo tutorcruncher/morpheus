@@ -12,6 +12,6 @@ phonenumbers==8.9.2
 pydantic==0.8
 pytz==2018.3
 raven==6.6.0
-raven-aiohttp==0.6.0
+raven-aiohttp==0.7.0
 ua-parser==0.7.3
 ujson==1.35
