@@ -13,5 +13,5 @@ pydantic==0.12.1
 pytz==2018.5
 raven==6.9.0
 raven-aiohttp==0.7.0
-ua-parser==0.7.3
+ua-parser==0.8.0
 ujson==1.35
