@@ -15,9 +15,9 @@ from aiohttp import ClientConnectionError, ClientError, ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
 from arq.utils import from_unix_ms, to_unix_ms, truncate
 from chevron import ChevronError
-from phonenumbers import parse as parse_number
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
                           number_type)
+from phonenumbers import parse as parse_number
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
