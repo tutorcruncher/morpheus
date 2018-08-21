@@ -34,7 +34,7 @@ logger = logging.getLogger('morpheus.web')
 @template('index.jinja')
 async def index(request):
     settings = request.app['settings']
-    return {k: escape(v) for k, v in settings.values(include=('commit', 'release_date')).items()}
+    return {k: escape(v) for k, v in settings.dict(include=('commit', 'release_date')).items()}
 
 
 class ClickRedirectView(TemplateView):
@@ -105,13 +105,13 @@ class EmailSendView(ServiceView):
             if v > 1:
                 raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
             recipients_key = f'recipients:{m.uid}'
-            data = m.values(exclude={'recipients', 'from_address'})
+            data = m.dict(exclude={'recipients', 'from_address'})
             data.update(
                 from_email=m.from_address.email,
                 from_name=m.from_address.name,
             )
             pipe = redis.pipeline()
-            pipe.lpush(recipients_key, *[msgpack.packb(r.values(), use_bin_type=True) for r in m.recipients])
+            pipe.lpush(recipients_key, *[msgpack.packb(r.dict(), use_bin_type=True) for r in m.recipients])
             pipe.expire(group_key, 86400)
             pipe.expire(recipients_key, 86400)
             await pipe.execute()
@@ -140,9 +140,9 @@ class SmsSendView(ServiceView):
                         status_=402,
                     )
             recipients_key = f'recipients:{m.uid}'
-            data = m.values(exclude={'recipients'})
+            data = m.dict(exclude={'recipients'})
             pipe = redis.pipeline()
-            pipe.lpush(recipients_key, *[msgpack.packb(r.values(), use_bin_type=True) for r in m.recipients])
+            pipe.lpush(recipients_key, *[msgpack.packb(r.dict(), use_bin_type=True) for r in m.recipients])
             pipe.expire(group_key, 86400)
             pipe.expire(recipients_key, 86400)
             await pipe.execute()

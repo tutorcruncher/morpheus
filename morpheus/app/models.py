@@ -199,7 +199,7 @@ class MandrillSingleWebhook(BaseWebhook):
         return {
             'user_agent': self.user_agent,
             'location': self.location,
-            **{f: self.msg.get(f) for f in self.config.msg_fields},
+            **{f: self.msg.get(f) for f in self.__config__.msg_fields},
         }
 
     class Config:
