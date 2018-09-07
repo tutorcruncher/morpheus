@@ -44,6 +44,7 @@ class EmailJob(NamedTuple):
     address: str
     tags: List[str]
     pdf_attachments: List[dict]
+    attachments: List[dict]
     main_template: str
     mustache_partials: Dict[str, dict]
     macros: Dict[str, dict]
@@ -190,6 +191,8 @@ class Sender(Actor):
         main_logger.info('%s: send to "%s" subject="%s" body=%d attachments=[%s]',
                          j.group_id, j.address, truncate(email_info.subject, 40), len(email_info.html_body),
                          ', '.join(f'{a["name"]}:{len(a["html"])}' for a in j.pdf_attachments))
+        attachments = [a async for a in self._generate_base64_pdf(j.pdf_attachments)]
+        attachments += [a async for a in self._generate_base64(j.attachments)]
         data = {
             'async': True,
             'message': dict(
@@ -214,7 +217,7 @@ class Sender(Actor):
                 tags=j.tags,
                 inline_css=True,
                 important=j.important,
-                attachments=[a async for a in self._generate_base64_pdf(j.pdf_attachments)]
+                attachments=attachments,
             ),
         }
         send_ts = datetime.utcnow()
@@ -250,7 +253,8 @@ class Sender(Actor):
         email_info = await self._render_email(j)
         if not email_info:
             return
-
+        attachs = [a async for a in self._generate_base64_pdf(j.pdf_attachments)]
+        attachs += [a async for a in self._generate_base64(j.attachments)]
         data = dict(
             from_email=j.from_email,
             from_name=j.from_name,
@@ -261,8 +265,7 @@ class Sender(Actor):
             to_user_link=j.user_link,
             tags=j.tags,
             important=j.important,
-            attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode(errors="ignore"):.40}'
-                         async for a in self._generate_base64_pdf(j.pdf_attachments)],
+            attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode(errors="ignore"):.40}' for a in attachs],
         )
         msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_id}-{j.address}')
         send_ts = datetime.utcnow()
@@ -308,6 +311,14 @@ class Sender(Actor):
                     data = await r.text()
                     main_logger.warning('error generating pdf %s, data: %s', r.status, data)
 
+    async def _generate_base64(self, attachments):
+        for attachment in attachments:
+            yield dict(
+                name=attachment['name'],
+                type=attachment['mime_type'],
+                content=base64.b64encode(attachment['content'])
+            )
+
     async def _store_email(self, uid, send_ts, j: EmailJob, email_info: EmailInfo):
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
@@ -325,7 +336,7 @@ class Sender(Actor):
             tags=j.tags,
             subject=email_info.subject,
             body=email_info.html_body,
-            attachments=[f'{a["id"] or ""}::{a["name"]}' for a in j.pdf_attachments],
+            attachments=[f'{a.get("id") or ""}::{a["name"]}' for a in [*j.pdf_attachments, *j.attachments]],
         )
         for url, token in email_info.shortened_link:
             await self.es.post(
@@ -354,7 +365,7 @@ class Sender(Actor):
             from_name=j.from_name,
             tags=j.tags,
             body=error_msg,
-            attachments=[a['name'] for a in j.pdf_attachments]
+            attachments=[a['name'] for a in [*j.pdf_attachments, *j.attachments]],
         )
 
     @classmethod

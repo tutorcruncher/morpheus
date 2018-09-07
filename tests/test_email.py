@@ -593,11 +593,31 @@ async def test_send_with_pdf(send_email, tmpdir, cli):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
-    print(msg_file)
     assert '<h1>testing</h1>"' in msg_file
     r = await cli.server.app['es'].get(f'messages/email-test/{message_id}')
     data = await r.json()
     assert set(data['_source']['attachments']) == {'123::testing.pdf', '::different.pdf'}
+
+
+async def test_send_with_other_attachment(send_email, tmpdir, cli):
+    message_id = await send_email(
+        recipients=[
+            {
+                'address': 'foobar@testing.com',
+                'attachments': [{
+                    'name': 'calendar.ics',
+                    'content': 'Look this is some test data',
+                    'mime_type': 'text/calendar',
+                }]
+            }
+        ]
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    assert 'Look this is some test data' in msg_file
+    r = await cli.server.app['es'].get(f'messages/email-test/{message_id}')
+    data = await r.json()
+    assert set(data['_source']['attachments']) == {'::calendar.ics'}
 
 
 async def test_pdf_not_unicode(send_email, tmpdir, cli):
