@@ -25,7 +25,7 @@ async def test_send_email(cli, tmpdir):
                 'first_name': 'foo',
                 'last_name': f'bar',
                 'user_link': '/user/profile/42/',
-                'address': 'foobar@example.com',
+                'address': 'foobar@example.org',
                 'tags': ['foobar'],
             }
         ]
@@ -33,13 +33,13 @@ async def test_send_email(cli, tmpdir):
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    msg_file = tmpdir.join('xxxxxxxxxxxxxxxxxxxx-foobarexamplecom.txt').read()
+    msg_file = tmpdir.join('xxxxxxxxxxxxxxxxxxxx-foobarexampleorg.txt').read()
     print(msg_file)
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
     data = json.loads(re.search('data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
     assert data['from_email'] == 's@muelcolvin.com'
-    assert data['to_address'] == 'foobar@example.com'
+    assert data['to_address'] == 'foobar@example.org'
     assert data['to_user_link'] == '/user/profile/42/'
     assert data['attachments'] == []
     assert set(data['tags']) == {'xxxxxxxxxxxxxxxxxxxx', 'foobar'}
@@ -184,6 +184,20 @@ async def test_mandrill_send(cli, send_email):
     assert data['_source']['to_address'] == 'foobar_a@testing.com'
 
 
+async def test_example_email_address(cli, send_email):
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobaraexamplecom', allowed_statuses='*')
+    assert r.status == 404, await r.text()
+    await send_email(
+        method='email-mandrill',
+        recipients=[{'address': 'foobar_a@example.com'}]
+    )
+
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobaraexamplecom', allowed_statuses='*')
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['_source']['to_address'] == 'foobar_a@example.com'
+
+
 async def test_mandrill_webhook(cli):
     await cli.server.app['es'].post(
         f'messages/email-mandrill/test-webhook',
@@ -191,7 +205,7 @@ async def test_mandrill_webhook(cli):
         send_ts=123,
         update_ts=123,
         status='send',
-        to_address='testing@example.com',
+        to_address='testing@example.org',
         events=[]
     )
     r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
@@ -228,7 +242,7 @@ async def test_mandrill_webhook_invalid(cli):
         send_ts=123,
         update_ts=123,
         status='send',
-        to_address='testing@example.com',
+        to_address='testing@example.org',
         events=[]
     )
     messages = [{'ts': int(1e10), 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
@@ -274,24 +288,24 @@ async def test_send_email_headers(cli, tmpdir):
         },
         'headers': {
             'Reply-To': 'another@whoever.com',
-            'List-Unsubscribe': '<http://example.com/unsub>'
+            'List-Unsubscribe': '<http://example.org/unsub>'
         },
         'recipients': [
             {
                 'first_name': 'foo',
                 'last_name': f'bar',
-                'address': f'foobar@example.com',
+                'address': f'foobar@example.org',
                 'context': {
                     'c': 'Carrot',
                 },
             },
             {
-                'address': f'2@example.com',
+                'address': f'2@example.org',
                 'context': {
                     'b': 'Banker',
                 },
                 'headers': {
-                    'List-Unsubscribe': '<http://example.com/different>'
+                    'List-Unsubscribe': '<http://example.org/different>'
                 },
             }
         ]
@@ -299,19 +313,17 @@ async def test_send_email_headers(cli, tmpdir):
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 2
-    msg_file = tmpdir.join(f'{uid}-foobarexamplecom.txt').read()
-    # print(msg_file)
+    msg_file = tmpdir.join(f'{uid}-foobarexampleorg.txt').read()
     assert '<p>test email Apple Banana Carrot.</p>\n' in msg_file
-    assert '"to_address": "foobar@example.com",\n' in msg_file
+    assert '"to_address": "foobar@example.org",\n' in msg_file
     assert '"Reply-To": "another@whoever.com",\n' in msg_file
-    assert '"List-Unsubscribe": "<http://example.com/unsub>"\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.org/unsub>"\n' in msg_file
 
-    msg_file = tmpdir.join(f'{uid}-2examplecom.txt').read()
-    print(msg_file)
+    msg_file = tmpdir.join(f'{uid}-2exampleorg.txt').read()
     assert '<p>test email Apple Banker .</p>\n' in msg_file
-    assert '"to_address": "2@example.com",\n' in msg_file
+    assert '"to_address": "2@example.org",\n' in msg_file
     assert '"Reply-To": "another@whoever.com",\n' in msg_file
-    assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.org/different>"\n' in msg_file
 
 
 async def test_send_unsub_context(send_email, tmpdir):
@@ -320,33 +332,33 @@ async def test_send_unsub_context(send_email, tmpdir):
         uid=uid,
         context={
             'message__render': 'test email {{ unsubscribe_link }}.\n',
-            'unsubscribe_link': 'http://example.com/unsub'
+            'unsubscribe_link': 'http://example.org/unsub'
         },
         recipients=[
-            {'address': f'1@example.com'},
+            {'address': f'1@example.org'},
             {
-                'address': f'2@example.com',
+                'address': f'2@example.org',
                 'context': {
-                    'unsubscribe_link': 'http://example.com/context'
+                    'unsubscribe_link': 'http://example.org/context'
                 },
                 'headers': {
-                    'List-Unsubscribe': '<http://example.com/different>'
+                    'List-Unsubscribe': '<http://example.org/different>'
                 },
             }
         ]
     )
     assert len(tmpdir.listdir()) == 2
-    msg_file = tmpdir.join(f'{uid}-1examplecom.txt').read()
+    msg_file = tmpdir.join(f'{uid}-1exampleorg.txt').read()
     # print(msg_file)
-    assert '"to_address": "1@example.com",\n' in msg_file
-    assert '"List-Unsubscribe": "<http://example.com/unsub>"\n' in msg_file
-    assert '<p>test email http://example.com/unsub.</p>\n' in msg_file
+    assert '"to_address": "1@example.org",\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.org/unsub>"\n' in msg_file
+    assert '<p>test email http://example.org/unsub.</p>\n' in msg_file
 
-    msg_file = tmpdir.join(f'{uid}-2examplecom.txt').read()
+    msg_file = tmpdir.join(f'{uid}-2exampleorg.txt').read()
     print(msg_file)
-    assert '"to_address": "2@example.com",\n' in msg_file
-    assert '"List-Unsubscribe": "<http://example.com/different>"\n' in msg_file
-    assert '<p>test email http://example.com/context.</p>\n' in msg_file
+    assert '"to_address": "2@example.org",\n' in msg_file
+    assert '"List-Unsubscribe": "<http://example.org/different>"\n' in msg_file
+    assert '<p>test email http://example.org/context.</p>\n' in msg_file
 
 
 async def test_markdown_context(send_email, tmpdir):
@@ -354,13 +366,13 @@ async def test_markdown_context(send_email, tmpdir):
         main_template='testing {{{ foobar }}}',
         context={
             'message__render': 'test email {{ unsubscribe_link }}.\n',
-            'foobar__md': '[hello](www.example.com/hello)'
+            'foobar__md': '[hello](www.example.org/hello)'
         },
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
-    assert 'content:\ntesting <p><a href="www.example.com/hello">hello</a></p>\n' in msg_file
+    assert 'content:\ntesting <p><a href="www.example.org/hello">hello</a></p>\n' in msg_file
 
 
 async def test_partials(send_email, tmpdir):
@@ -497,7 +509,7 @@ async def test_standard_sass(cli, tmpdir):
     data = dict(
         uid=str(uuid.uuid4()),
         company_code='foobar',
-        from_address='Sender Name <sender@example.com>',
+        from_address='Sender Name <sender@example.org>',
         method='email-test',
         subject_template='test message',
         context={'message': 'this is a test'},
@@ -791,12 +803,12 @@ async def test_link_shortening_keep_long_link(send_email, tmpdir, cli):
     mid = await send_email(
         context={
             'message__render': 'test email {{ xyz_original }}\n',
-            'xyz': 'http://example.com/foobar'
+            'xyz': 'http://example.org/foobar'
         },
         company_code='test_link_shortening_in_render',
     )
     msg_file = tmpdir.join(f'{mid}.txt').read()
-    m = re.search('<p>test email http://example.com/foobar</p>', msg_file)
+    m = re.search('<p>test email http://example.org/foobar</p>', msg_file)
     assert m, msg_file
 
 
