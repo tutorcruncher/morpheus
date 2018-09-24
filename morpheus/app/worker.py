@@ -218,6 +218,11 @@ class Sender(Actor):
             ),
         }
         send_ts = datetime.utcnow()
+        if j.address.endswith('@example.com'):
+            _id = re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{j.address}')
+            await self._store_email(_id, send_ts, j, email_info)
+            return
+
         response, exc = None, None
         for i in range(3):
             try:
