@@ -1,4 +1,4 @@
-aiohttp==3.3.2
+aiohttp==3.4.1
 aiohttp-jinja2==1.0.0
 aioredis==1.1.0
 arq==0.14
@@ -8,8 +8,8 @@ ipython==6.5.0
 jinja2==2.10
 misaka==2.1.0
 msgpack-python==0.5.6
-phonenumbers==8.9.10
-pydantic[email]==0.12.1
+phonenumbers==8.9.12
+pydantic[email]==0.13
 pytz==2018.5
 raven==6.9.0
 raven-aiohttp==0.7.0
