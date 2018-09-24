@@ -92,13 +92,19 @@ class MessageStatus(str, Enum):
     delivery_failed = 'delivery_failed'
 
 
-class AttachmentModel(BaseModel):
+class PDFAttachmentModel(BaseModel):
     name: str = ...
     html: str = ...
     id: int = None
 
     class Config:
         max_anystr_length = int(1e7)
+
+
+class AttachmentModel(BaseModel):
+    name: str
+    mime_type: str
+    content: bytes
 
 
 class EmailRecipientModel(BaseModel):
@@ -109,7 +115,8 @@ class EmailRecipientModel(BaseModel):
     tags: List[str] = []
     context: dict = {}
     headers: dict = {}
-    pdf_attachments: List[AttachmentModel] = []
+    pdf_attachments: List[PDFAttachmentModel] = []
+    attachments: List[AttachmentModel] = []
 
     class Config:
         max_anystr_length = int(1e7)
