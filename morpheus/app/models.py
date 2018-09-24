@@ -102,9 +102,9 @@ class PDFAttachmentModel(BaseModel):
 
 
 class AttachmentModel(BaseModel):
-    name: str = ...
-    mime_type: str = ...
-    content: bytes = b''
+    name: str
+    mime_type: str
+    content: bytes
 
 
 class EmailRecipientModel(BaseModel):

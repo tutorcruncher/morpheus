@@ -6,6 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from itertools import chain
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional
 
@@ -336,7 +337,7 @@ class Sender(Actor):
             tags=j.tags,
             subject=email_info.subject,
             body=email_info.html_body,
-            attachments=[f'{a.get("id") or ""}::{a["name"]}' for a in [*j.pdf_attachments, *j.attachments]],
+            attachments=[f'{a.get("id") or ""}::{a["name"]}' for a in chain(j.pdf_attachments, j.attachments)],
         )
         for url, token in email_info.shortened_link:
             await self.es.post(
@@ -365,7 +366,7 @@ class Sender(Actor):
             from_name=j.from_name,
             tags=j.tags,
             body=error_msg,
-            attachments=[a['name'] for a in [*j.pdf_attachments, *j.attachments]],
+            attachments=[a['name'] for a in chain(j.pdf_attachments, j.attachments)],
         )
 
     @classmethod
