@@ -3,9 +3,10 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List
+from uuid import UUID
 
 from aiohttp.web_exceptions import HTTPBadRequest
-from pydantic import BaseModel, NameEmail, ValidationError, constr
+from pydantic import BaseModel, NameEmail, ValidationError, constr, validator
 from pydantic.validators import str_validator
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -128,7 +129,7 @@ class EmailRecipientModel(BaseModel):
 
 
 class EmailSendModel(WebModel):
-    uid: constr(min_length=20, max_length=40) = ...
+    uid: UUID = ...
     main_template: str = (THIS_DIR / 'extra' / 'default-email-template.mustache').read_text()
     mustache_partials: Dict[str, str] = None
     macros: Dict[str, str] = None
@@ -142,6 +143,10 @@ class EmailSendModel(WebModel):
     headers: dict = {}
     important = False
     recipients: List[EmailRecipientModel] = ...
+
+    @validator('uid')
+    def validate_uid(cls, v):
+        return str(v)
 
 
 class SubaccountModel(WebModel):

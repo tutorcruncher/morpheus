@@ -28,6 +28,7 @@ CREATE TYPE MESSAGE_STATUSES AS ENUM (
 
 CREATE TABLE messages (
   id SERIAL PRIMARY KEY,
+  external_id VARCHAR(255),
   group_id INT NOT NULL REFERENCES message_groups ON DELETE CASCADE,
   send_ts TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_ts TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -39,12 +40,12 @@ CREATE TABLE messages (
   tags VARCHAR(255)[],
   subject TEXT,
   body TEXT,
-
   attachments VARCHAR(255)[],
   cost FLOAT,
   extra JSONB
 );
 CREATE INDEX message_group_id ON messages USING btree (group_id);
+CREATE INDEX message_external_id ON messages USING btree (external_id);
 CREATE INDEX message_status ON messages USING btree (status);
 CREATE INDEX message_send_ts ON messages USING btree (send_ts);
 CREATE INDEX message_update_ts ON messages USING btree (update_ts);

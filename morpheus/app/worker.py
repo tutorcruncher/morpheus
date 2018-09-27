@@ -37,7 +37,8 @@ ONE_YEAR = ONE_DAY * 365
 
 
 class EmailJob(NamedTuple):
-    group_id: str
+    group_id: int
+    group_uuid: str
     send_method: str
     first_name: str
     last_name: str
@@ -146,8 +147,16 @@ class Sender(Actor):
             raise NotImplementedError()
         tags.append(uid)
         main_logger.info('sending email group %s via %s', uid, method)
+        group_id = await self._store_email_group(
+            group_uuid=uid,
+            company=company_code,
+            method=method,
+            from_email=from_email,
+            from_name=from_name,
+        )
         base_kwargs = dict(
-            group_id=uid,
+            group_id=group_id,
+            group_uuid=uid,
             send_method=method,
             main_template=main_template,
             mustache_partials=mustache_partials,
@@ -266,7 +275,7 @@ class Sender(Actor):
         data = dict(
             from_email=j.from_email,
             from_name=j.from_name,
-            group_id=j.group_id,
+            group_uuid=j.group_uuid,
             headers=email_info.headers,
             to_address=j.address,
             to_name=email_info.full_name,
@@ -275,7 +284,7 @@ class Sender(Actor):
             important=j.important,
             attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode(errors="ignore"):.40}' for a in attachs],
         )
-        msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_id}-{j.address}')
+        msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_uuid}-{j.address}')
         send_ts = datetime.utcnow()
         output = (
             f'to: {j.address}\n'
@@ -327,65 +336,67 @@ class Sender(Actor):
                 content=base64.b64encode(attachment['content']).decode(),
             )
 
-    async def _store_email_group(self, j: EmailJob):
+    async def _store_email_group(self, *, group_uuid: str, company: str, method: EmailSendMethod, from_email: str,
+                                 from_name: str):
         async with self.pg.acquire() as conn:
-            conn.execute(
-                """
-                INSERT INTO message_groups ()
-                """
+            group_id = await conn.fetchval_b(
+                'INSERT INTO message_groups (:values__names) VALUES :values RETURNING id',
+                values=Values(
+                    uuid=group_uuid,
+                    company=company,
+                    method=method,
+                    from_email=from_email,
+                    from_name=from_name,
+                )
             )
+        return group_id
 
-
-    async def _store_email(self, uid, send_ts, j: EmailJob, email_info: EmailInfo):
+    async def _store_email(self, external_id, send_ts, j: EmailJob, email_info: EmailInfo):
         async with self.pg.acquire() as conn:
-
-        await self.es.post(
-            f'messages/{j.send_method}/{uid}',
-            company=j.company_code,
-            send_ts=send_ts,
-            update_ts=send_ts,
-            status=MessageStatus.send,
-            group_id=j.group_id,
-            to_first_name=j.first_name,
-            to_last_name=j.last_name,
-            to_user_link=j.user_link,
-            to_address=j.address,
-            from_email=j.from_email,
-            from_name=j.from_name,
-            tags=j.tags,
-            subject=email_info.subject,
-            body=email_info.html_body,
-            attachments=[f'{a.get("id") or ""}::{a["name"]}' for a in chain(j.pdf_attachments, j.attachments)],
-        )
-        for url, token in email_info.shortened_link:
-            await self.es.post(
-                'links/c/',
-                token=token,
-                url=url,
-                company=j.company_code,
-                send_method=j.send_method,
-                send_message_id=uid,
-                expires_ts=datetime.utcnow() + timedelta(days=365*50)
+            message_id = await conn.fetchval_b(
+                'INSERT INTO messages (:values__names) VALUES :values RETURNING id',
+                values=Values(
+                    external_id=external_id,
+                    group_id=j.group_id,
+                    send_ts=send_ts,
+                    status=MessageStatus.send,
+                    to_first_name=j.first_name,
+                    to_last_name=j.last_name,
+                    to_user_link=j.user_link,
+                    to_address=j.address,
+                    tags=j.tags,
+                    subject=email_info.subject,
+                    body=email_info.html_body,
+                    attachments=[f'{a.get("id") or ""}::{a["name"]}' for a in chain(j.pdf_attachments, j.attachments)],
+                )
             )
+            if email_info.shortened_link:
+                await conn.execute_b(
+                    'INSERT INTO links (:values__names) VALUES :values',
+                    values=MultipleValues(*[
+                        Values(
+                            message_id=message_id,
+                            token=token,
+                            url=url,
+                        ) for url, token in email_info.shortened_link
+                    ])
+                )
 
     async def _store_email_failed(self, status: MessageStatus, j: EmailJob, error_msg):
-        await self.es.post(
-            f'messages/{j.send_method}',
-            company=j.company_code,
-            send_ts=datetime.utcnow(),
-            update_ts=datetime.utcnow(),
-            status=status,
-            group_id=j.group_id,
-            to_first_name=j.first_name,
-            to_last_name=j.last_name,
-            to_user_link=j.user_link,
-            to_address=j.address,
-            from_email=j.from_email,
-            from_name=j.from_name,
-            tags=j.tags,
-            body=error_msg,
-            attachments=[a['name'] for a in chain(j.pdf_attachments, j.attachments)],
-        )
+        async with self.pg.acquire() as conn:
+            await conn.execute_b(
+                'INSERT INTO messages (:values__names) VALUES :values',
+                values=Values(
+                    group_id=j.group_id,
+                    status=status,
+                    to_first_name=j.first_name,
+                    to_last_name=j.last_name,
+                    to_user_link=j.user_link,
+                    to_address=j.address,
+                    tags=j.tags,
+                    body=error_msg,
+                )
+            )
 
     @classmethod
     def validate_number(cls, number, country, include_description=True) -> Optional[Number]:

@@ -3,14 +3,15 @@ import hashlib
 import hmac
 import json
 import re
-import uuid
+from uuid import uuid4
 
 from aiohttp import ClientError, ClientOSError
 
 
 async def test_send_email(cli, tmpdir):
+    uuid = str(uuid4())
     data = {
-        'uid': 'x' * 20,
+        'uid': uuid,
         'company_code': 'foobar',
         'from_address': 'Samuel <s@muelcolvin.com>',
         'method': 'email-test',
@@ -33,7 +34,7 @@ async def test_send_email(cli, tmpdir):
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    msg_file = tmpdir.join('xxxxxxxxxxxxxxxxxxxx-foobarexampleorg.txt').read()
+    msg_file = tmpdir.join(uuid + '-foobarexampleorg.txt').read()
     print(msg_file)
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
@@ -42,7 +43,7 @@ async def test_send_email(cli, tmpdir):
     assert data['to_address'] == 'foobar@example.org'
     assert data['to_user_link'] == '/user/profile/42/'
     assert data['attachments'] == []
-    assert set(data['tags']) == {'xxxxxxxxxxxxxxxxxxxx', 'foobar'}
+    assert set(data['tags']) == {uuid, 'foobar'}
 
 
 async def get_events(cli, msg_id, es_type='email-test'):
@@ -53,8 +54,9 @@ async def get_events(cli, msg_id, es_type='email-test'):
 
 
 async def test_webhook(cli, send_email):
-    message_id = await send_email(uid='x' * 20)
-    r = await cli.server.app['es'].get('messages/email-test/xxxxxxxxxxxxxxxxxxxx-foobartestingcom')
+    uuid = str(uuid4())
+    message_id = await send_email(uid=uuid)
+    r = await cli.server.app['es'].get(f'messages/email-test/{uuid}-foobartestingcom')
     data = await r.json()
     assert data['_source']['status'] == 'send'
     first_update_ts = data['_source']['update_ts']
@@ -297,7 +299,7 @@ async def test_mandrill_send_bad_template(cli, send_email):
 
 
 async def test_send_email_headers(cli, tmpdir):
-    uid = str(uuid.uuid4())
+    uid = str(uuid4())
     data = {
         'uid': uid,
         'company_code': 'foobar',
