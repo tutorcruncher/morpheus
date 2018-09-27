@@ -74,9 +74,9 @@ async def app_startup(app):
 
 async def app_cleanup(app):
     await app['sender'].close()
-    app['es'].close()
-    app['morpheus_api'].close()
-    app['mandrill'].close()
+    await app['es'].close()
+    await app['morpheus_api'].close()
+    await app['mandrill'].close()
 
 
 def create_app(loop, settings: Settings=None):

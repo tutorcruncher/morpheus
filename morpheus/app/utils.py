@@ -264,8 +264,8 @@ class ApiSession:
     def encode_json(cls, data):
         return json.dumps(data, cls=CustomJSONEncoder)
 
-    def close(self):
-        self.session.close()
+    async def close(self):
+        await self.session.close()
 
     async def get(self, uri, *, allowed_statuses=(200,), **data):
         return await self._request(METH_GET, uri, allowed_statuses=allowed_statuses, **data)

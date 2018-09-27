@@ -114,10 +114,10 @@ class Sender(Actor):
         self.messagebird = MessageBird(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):
-        self.session.close()
-        self.es.close()
-        self.mandrill.close()
-        self.messagebird.close()
+        await self.session.close()
+        await self.es.close()
+        await self.mandrill.close()
+        await self.messagebird.close()
 
     @concurrent
     async def send_emails(self,
@@ -747,7 +747,7 @@ class AuxActor(Actor):  # pragma: no cover
         self.es = ElasticSearch(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):
-        self.es.close()
+        await self.es.close()
 
     @cron(hour=3, minute=0)
     async def snapshot_es(self):

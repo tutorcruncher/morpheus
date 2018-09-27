@@ -71,7 +71,7 @@ def web(wait):
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
     app = create_app(loop, settings)
-    run_app(app, port=8000, loop=loop, print=lambda v: None, access_log=None)
+    run_app(app, port=8000, print=lambda v: None, access_log=None)
 
 
 @cli.command()
