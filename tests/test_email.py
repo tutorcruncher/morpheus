@@ -184,6 +184,29 @@ async def test_mandrill_send(cli, send_email):
     assert data['_source']['to_address'] == 'foobar_a@testing.com'
 
 
+async def test_send_mandrill_with_other_attachment(cli, send_email):
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarctestingcom', allowed_statuses='*')
+    assert r.status == 404, await r.text()
+    await send_email(
+        method='email-mandrill',
+        recipients=[
+            {
+                'address': 'foobar_c@testing.com',
+                'attachments': [{
+                    'name': 'calendar.ics',
+                    'content': 'Look this is some test data',
+                    'mime_type': 'text/calendar',
+                }]
+            }
+        ]
+    )
+    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarctestingcom', allowed_statuses='*')
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['_source']['to_address'] == 'foobar_c@testing.com'
+    assert set(data['_source']['attachments']) == {'::calendar.ics'}
+
+
 async def test_example_email_address(cli, send_email):
     r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobaraexamplecom', allowed_statuses='*')
     assert r.status == 404, await r.text()
