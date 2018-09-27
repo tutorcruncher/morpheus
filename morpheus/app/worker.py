@@ -322,7 +322,7 @@ class Sender(Actor):
             yield dict(
                 name=attachment['name'],
                 type=attachment['mime_type'],
-                content=base64.b64encode(attachment['content'])
+                content=base64.b64encode(attachment['content']).decode(),
             )
 
     async def _store_email(self, uid, send_ts, j: EmailJob, email_info: EmailInfo):
