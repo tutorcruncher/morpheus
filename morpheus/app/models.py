@@ -20,6 +20,9 @@ class WebModel(BaseModel):
 
 
 class SendMethod(str, Enum):
+    """
+    Should match SEND_METHODS sql enum
+    """
     email_mandrill = 'email-mandrill'
     email_ses = 'email-ses'
     email_test = 'email-test'
@@ -69,6 +72,8 @@ class MessageBirdMessageStatus(str, Enum):
 class MessageStatus(str, Enum):
     """
     Combined MandrillMessageStatus and MessageBirdMessageStatus
+
+    Should match MESSAGE_STATUSES sql enum
     """
     render_failed = 'render_failed'
     send_request_failed = 'send_request_failed'

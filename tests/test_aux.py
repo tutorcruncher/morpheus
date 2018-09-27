@@ -1,13 +1,11 @@
 import asyncio
 import base64
-import os
 import uuid
 from datetime import datetime, timedelta
 
 import pytest
 
 from morpheus.app.utils import ApiError, ApiSession
-from morpheus.app.worker import AuxActor
 
 
 async def test_index(cli):
@@ -51,27 +49,6 @@ async def test_create_repo(cli, settings):
     type, created = await es.create_snapshot_repo(delete_existing=True)
     assert type == 'fs'
     assert created is True
-
-
-@pytest.mark.skipif(not os.getenv('TRAVIS'),  reason='only run on travis')
-async def test_run_snapshot(cli, settings, loop):
-    es = cli.server.app['es']
-    await es.create_snapshot_repo()
-
-    r = await es.get(f'/_snapshot/{settings.snapshot_repo_name}/_all?pretty=true')
-    print(await r.text())
-    data = await r.json()
-    snapshots_before = len(data['snapshots'])
-
-    aux = AuxActor(settings=settings, loop=loop)
-    await aux.startup()
-    await aux.snapshot_es.direct()
-    await aux.close(shutdown=True)
-
-    r = await es.get(f'/_snapshot/{settings.snapshot_repo_name}/_all?pretty=true')
-    print(await r.text())
-    data = await r.json()
-    assert len(data['snapshots']) == snapshots_before + 1
 
 
 async def test_stats_unauthorised(cli, smart_caplog):

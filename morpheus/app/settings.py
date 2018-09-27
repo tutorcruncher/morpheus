@@ -1,7 +1,11 @@
 from pathlib import Path
+from urllib.parse import urlparse
 
 from arq import RedisSettings
-from pydantic import BaseSettings, NoneStr, PyObject
+from pydantic import BaseSettings, NoneStr, PyObject, validator
+
+THIS_DIR = Path(__file__).parent
+BASE_DIR = THIS_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -9,6 +13,9 @@ class Settings(BaseSettings):
     redis_port = 6379
     redis_database = 0
     redis_password: str = None
+
+    pg_dsn: str = 'postgres://postgres:waffle@localhost:5432/morpheus'
+    pg_name: str = None
 
     auth_key: str = 'testing'
 
@@ -64,3 +71,15 @@ class Settings(BaseSettings):
     @property
     def elastic_url(self):
         return f'http://{self.elastic_host}:{self.elastic_port}'
+
+    @validator('pg_name', always=True, pre=True)
+    def set_pg_name(cls, v, values, **kwargs):
+        return urlparse(values['pg_dsn']).path.lstrip('/')
+
+    @property
+    def models_sql(self):
+        return (THIS_DIR / 'sql' / 'models.sql').read_text()
+
+    @property
+    def logic_sql(self):
+        return (THIS_DIR / 'sql' / 'logic.sql').read_text()

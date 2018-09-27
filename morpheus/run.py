@@ -8,7 +8,7 @@ import uvloop
 from aiohttp.web import run_app
 from arq import RunWorkerProcess
 
-from app.es import ElasticSearch
+from app.db import patches, reset_database, run_patch
 from app.logs import setup_logging
 from app.main import create_app
 from app.settings import Settings
@@ -92,64 +92,30 @@ def worker(wait):
     RunWorkerProcess('app/worker.py', 'Worker')
 
 
-def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False):
-    """
-    setup elastic search db: create indexes and snapshot repo
-    """
-    es = ElasticSearch(settings=settings)
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(es.set_license())
-    loop.run_until_complete(es.create_indices(delete_existing=force_create_index))
-    loop.run_until_complete(es.create_snapshot_repo(delete_existing=force_create_repo))
-    es.close()
-
-
 @cli.command()
-@click.option('--force-create-index', is_flag=True)
-@click.option('--force-create-repo', is_flag=True)
-def elasticsearch_setup(force_create_index, force_create_repo):
-    settings = Settings(sender_cls='app.worker.Sender')
-    setup_logging(settings)
-    _elasticsearch_setup(settings, force_create_index, force_create_repo)
-
-
-@cli.command()
-@click.argument('patch')
-def elasticsearch_patch(patch):
-    settings = Settings(sender_cls='app.worker.Sender')
-    setup_logging(settings)
-    loop = asyncio.get_event_loop()
-    es = ElasticSearch(settings=settings)
-    try:
-        patch_func = getattr(es, '_patch_' + patch)
-        logger.info('running patch %s...', patch_func.__name__)
-        loop.run_until_complete(patch_func())
-    finally:
-        es.close()
-
-
-@cli.command()
-@click.argument('action', type=click.Choice(['create', 'list', 'restore']))
-@click.argument('snapshot-name', required=False)
-def elasticsearch_snapshot(action, snapshot_name):
+def postgres_reset_database():
     """
-    create an elastic search snapshot
+    reset the postgres database
     """
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    loop = asyncio.get_event_loop()
-    es = ElasticSearch(settings=settings)
-    try:
-        if action == 'create':
-            f = es.create_snapshot()
-        elif action == 'list':
-            f = es.restore_list()
-        else:
-            assert snapshot_name, 'snapshot-name may not be None'
-            f = es.restore_snapshot(snapshot_name)
-        loop.run_until_complete(f)
-    finally:
-        es.close()
+
+    logger.info('running reset_database...')
+    reset_database(settings)
+
+
+@cli.command()
+@click.option('--live/--not-live')
+@click.argument('patch', type=click.Choice([p.func.__name__ for p in patches]))
+def postgres_patch(live, patch):
+    """
+    run a postgres patch
+    """
+    settings = Settings(sender_cls='app.worker.Sender')
+    setup_logging(settings)
+
+    logger.info('running reset_database...')
+    run_patch(settings, live, patch)
 
 
 EXEC_LINES = [

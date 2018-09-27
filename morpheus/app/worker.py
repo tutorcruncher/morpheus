@@ -15,6 +15,7 @@ import msgpack
 from aiohttp import ClientConnectionError, ClientError, ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent, cron
 from arq.utils import from_unix_ms, to_unix_ms, truncate
+from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
                           number_type)
@@ -22,7 +23,6 @@ from phonenumbers import parse as parse_number
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
-from .es import ElasticSearch
 from .models import THIS_DIR, BaseWebhook, ClickInfo, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
 from .render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
@@ -101,23 +101,25 @@ class Sender(Actor):
         self.settings = settings or Settings()
         self.redis_settings = self.settings.redis_settings
         super().__init__(**kwargs)
-        self.session = self.es = self.mandrill = self.messagebird = None
+        self.pg = self.session = self.mandrill = self.messagebird = None
         self.mandrill_webhook_auth_key = None
         self.email_click_url = f'https://{self.settings.click_host_name}/l'
         self.sms_click_url = f'{self.settings.click_host_name}/l'
 
     async def startup(self):
-        main_logger.info('Sender initialising session and elasticsearch and mandrill...')
+        main_logger.info('Sender initialising session, postgres and mandrill...')
+        self.pg = await asyncpg.create_pool_b(dsn=self.settings.pg_dsn, min_size=2)
         self.session = ClientSession(loop=self.loop)
-        self.es = ElasticSearch(settings=self.settings, loop=self.loop)
         self.mandrill = Mandrill(settings=self.settings, loop=self.loop)
         self.messagebird = MessageBird(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):
-        await self.session.close()
-        await self.es.close()
-        await self.mandrill.close()
-        await self.messagebird.close()
+        await asyncio.gather(
+            self.session.close(),
+            self.pg.close(),
+            self.mandrill.close(),
+            self.messagebird.close(),
+        )
 
     @concurrent
     async def send_emails(self,
@@ -325,7 +327,18 @@ class Sender(Actor):
                 content=base64.b64encode(attachment['content']).decode(),
             )
 
+    async def _store_email_group(self, j: EmailJob):
+        async with self.pg.acquire() as conn:
+            conn.execute(
+                """
+                INSERT INTO message_groups ()
+                """
+            )
+
+
     async def _store_email(self, uid, send_ts, j: EmailJob, email_info: EmailInfo):
+        async with self.pg.acquire() as conn:
+
         await self.es.post(
             f'messages/{j.send_method}/{uid}',
             company=j.company_code,
@@ -735,29 +748,10 @@ class Sender(Actor):
         return status
 
 
-class AuxActor(Actor):  # pragma: no cover
-    def __init__(self, settings: Settings = None, **kwargs):
-        self.settings = settings or Settings()
-        self.redis_settings = self.settings.redis_settings
-        super().__init__(**kwargs)
-        self.es = None
-
-    async def startup(self):
-        main_logger.info('AuxActor initialising elasticsearch...')
-        self.es = ElasticSearch(settings=self.settings, loop=self.loop)
-
-    async def shutdown(self):
-        await self.es.close()
-
-    @cron(hour=3, minute=0)
-    async def snapshot_es(self):
-        await self.es.create_snapshot()
-
-
 class Worker(BaseWorker):  # pragma: no cover
     max_concurrent_tasks = 4
     timeout_seconds = 1200
-    shadows = [Sender, AuxActor]
+    shadows = [Sender]
 
     def __init__(self, **kwargs):
         self.settings = Settings(sender_cls='app.worker.Sender')

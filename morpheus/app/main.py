@@ -4,9 +4,9 @@ import logging
 import aiohttp_jinja2
 import async_timeout
 import jinja2
+from buildpg import asyncpg
 from aiohttp.web import Application
 
-from .es import ElasticSearch
 from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
@@ -68,15 +68,17 @@ async def app_startup(app):
         redis = await app['sender'].get_redis()
         info = await redis.info()
         logger.info('redis version: %s', info['server']['redis_version'])
-    app['sender'].es = app['es']
     loop.create_task(get_mandrill_webhook_key(app))
+    app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=app['settings'].pg_dsn, min_size=2)
 
 
 async def app_cleanup(app):
-    await app['sender'].close()
-    await app['es'].close()
-    await app['morpheus_api'].close()
-    await app['mandrill'].close()
+    await asyncio.gather(
+        app['pg'].close(),
+        app['sender'].close(),
+        app['morpheus_api'].close(),
+        app['mandrill'].close(),
+    )
 
 
 def create_app(loop, settings: Settings=None):
@@ -95,7 +97,6 @@ def create_app(loop, settings: Settings=None):
     app.update(
         settings=settings,
         sender=settings.sender_cls(settings=settings, loop=loop),
-        es=ElasticSearch(settings=settings, loop=loop),
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
         mandrill=Mandrill(settings=settings, loop=loop),
         webhook_auth_key=None,
