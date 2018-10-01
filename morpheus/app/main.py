@@ -71,6 +71,9 @@ async def app_startup(app):
     loop.create_task(get_mandrill_webhook_key(app))
     app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=app['settings'].pg_dsn, min_size=2)
 
+    # the Sender actor shares the same pg pool as the app
+    app['sender'].pg = app['pg']
+
 
 async def app_cleanup(app):
     await asyncio.gather(

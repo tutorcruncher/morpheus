@@ -242,7 +242,6 @@ async def test_create_sub_account_invalid_key(cli, mock_external):
     assert r.status == 403, await r.text()
 
 
-@pytest.mark.xfail(strict=True)
 async def test_missing_link(cli):
     r = await cli.get('/lxxx')
     assert r.status == 404, await r.text()
@@ -251,7 +250,6 @@ async def test_missing_link(cli):
             f'this link may have expired.</p>') in text
 
 
-@pytest.mark.xfail(strict=True)
 async def test_missing_url_with_arg(cli):
     url = 'https://example.com/foobar'
     r = await cli.get('/lxxx?u=' + base64.urlsafe_b64encode(url.encode()).decode(), allow_redirects=False)
@@ -259,7 +257,6 @@ async def test_missing_url_with_arg(cli):
     assert r.headers['Location'] == url
 
 
-@pytest.mark.xfail(strict=True)
 async def test_missing_url_with_arg_bad(cli):
     r = await cli.get('/lxxx?u=xxx', allow_redirects=False)
     assert r.status == 404, await r.text()

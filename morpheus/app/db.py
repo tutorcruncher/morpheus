@@ -91,15 +91,17 @@ async def prepare_database(settings: Settings, overwrite_existing: Union[bool, C
 class SimplePgPool:
     def __init__(self, conn):
         self.conn = conn
+        self._lock = asyncio.Lock(loop=self.conn._loop)
 
     def acquire(self):
         return self
 
     async def __aenter__(self):
+        await self._lock.acquire()
         return self.conn
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
+        self._lock.release()
 
     async def close(self):
         pass

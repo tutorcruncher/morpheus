@@ -21,9 +21,10 @@ from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberTy
                           number_type)
 from phonenumbers import parse as parse_number
 from phonenumbers.geocoder import country_name_for_number, description_for_number
+from pydantic.datetime_parse import parse_datetime
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
-from .models import THIS_DIR, BaseWebhook, ClickInfo, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
+from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
 from .render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from .settings import Settings
@@ -108,8 +109,8 @@ class Sender(Actor):
         self.sms_click_url = f'{self.settings.click_host_name}/l'
 
     async def startup(self):
-        main_logger.info('Sender initialising session, postgres and mandrill...')
-        self.pg = await asyncpg.create_pool_b(dsn=self.settings.pg_dsn, min_size=2)
+        main_logger.info('Sender initialising postgres, session and mandrill...')
+        self.pg = self.pg or await asyncpg.create_pool_b(dsn=self.settings.pg_dsn, min_size=2)
         self.session = ClientSession(loop=self.loop)
         self.mandrill = Mandrill(settings=self.settings, loop=self.loop)
         self.messagebird = MessageBird(settings=self.settings, loop=self.loop)
@@ -687,31 +688,49 @@ class Sender(Actor):
                          ' '.join(f'{k}={v}' for k, v in statuses.items()))
 
     @concurrent
-    async def store_click(self, *, target, ip, ts, user_agent, send_method, send_message_id):
-        extra = {
-            'target': target,
-            'ip': ip,
-            'user_agent': user_agent,
-        }
-        if user_agent:
-            ua_dict = ParseUserAgent(user_agent)
-            platform = ua_dict['device']['family']
-            if platform in {'Other', None}:
-                platform = ua_dict['os']['family']
-            extra['user_agent_display'] = ('{user_agent[family]} {user_agent[major]} on '
-                                           '{platform}').format(platform=platform, **ua_dict).strip(' ')
+    async def store_click(self, *, link_id, ip, ts, user_agent):
+        cache_key = f'click-{link_id}-{ip}'
+        redis_pool = await self.get_redis()
+        with await redis_pool as redis:
+            v = await redis.incr(cache_key)
+            if v > 1:
+                return 'recently_clicked'
+            await redis.expire(cache_key, 60)
 
-        # TODO process ip and add geo info
-        m = ClickInfo(
-            ts=ts,
-            status='click',
-            message_id=send_message_id,
-            extra_=extra
-        )
-        return await self.update_message_status(send_method, m)
+        async with self.pg.acquire() as conn:
+            message_id, target = await conn.fetchrow('select message_id, url from links where id=$1', link_id)
+            extra = {
+                'target': target,
+                'ip': ip,
+                'user_agent': user_agent,
+            }
+            if user_agent:
+                ua_dict = ParseUserAgent(user_agent)
+                platform = ua_dict['device']['family']
+                if platform in {'Other', None}:
+                    platform = ua_dict['os']['family']
+                extra['user_agent_display'] = ('{user_agent[family]} {user_agent[major]} on '
+                                               '{platform}').format(platform=platform, **ua_dict).strip(' ')
+
+            ts = parse_datetime(ts)
+            debug(ts)
+            status = 'click'
+            await conn.execute_b(
+                'insert into events (:values__names) values :values',
+                values=Values(
+                    message_id=message_id,
+                    status=status,
+                    ts=ts,
+                    extra=json.dumps(extra),
+                )
+            )
+            await conn.execute(
+                'update messages set update_ts=$1, status=$2 where id=$3',
+                ts, status, message_id
+            )
 
     async def update_message_status(self, send_method, m: BaseWebhook, log_each=True) -> UpdateStatus:
-        h = hashlib.md5(f'{to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
+        h = hashlib.md5(f'{m.message_id}-{to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
         ref = f'event-{h.hexdigest()}'
         redis_pool = await self.get_redis()
         with await redis_pool as redis:

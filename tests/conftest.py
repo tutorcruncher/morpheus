@@ -4,12 +4,13 @@ import uuid
 
 import pytest
 from aiohttp.test_utils import teardown_test_loop
-from aiohttp.web import Application, HTTPForbidden, Response, json_response
 from buildpg import asyncpg
 
 from morpheus.app.db import SimplePgPool, prepare_database
 from morpheus.app.main import create_app
 from morpheus.app.settings import Settings
+
+from .dummy_server import create_external_app
 
 
 def pytest_addoption(parser):
@@ -47,134 +48,8 @@ async def _fix_db_conn(loop, settings, clean_db):
 
 
 @pytest.fixture
-def db_pool(db_conn):
-    return SimplePgPool(db_conn)
-
-
-async def mandrill_send_view(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    to_email = data['message']['to'][0]['email']
-    return json_response([
-        {
-            'email': to_email,
-            '_id': re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{to_email}'),
-            'status': 'queued',
-        }
-    ])
-
-
-async def mandrill_sub_account_add(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    sa_id = data['id']
-    if sa_id == 'broken':
-        return json_response({'error': 'snap something unknown went wrong'}, status=500)
-    elif sa_id in request.app['mandrill_subaccounts']:
-        return json_response({'message': f'A subaccount with id {sa_id} already exists'}, status=500)
-    else:
-        request.app['mandrill_subaccounts'][sa_id] = data
-        return json_response({'message': "subaccount created (this isn't the same response as mandrill)"})
-
-
-async def mandrill_sub_account_info(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    sa_id = data['id']
-    sa_info = request.app['mandrill_subaccounts'].get(sa_id)
-    if sa_info:
-        return json_response({
-            'subaccount_info': sa_info,
-            'sent_total': 200 if sa_id == 'lots-sent' else 42,
-        })
-
-
-async def messagebird_hlr_post(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    return Response(status=201)
-
-
-async def messagebird_lookup(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    return json_response({
-        'hlr': {
-            'status': 'active',
-            'network': 23430,
-        }
-    })
-
-
-async def messagebird_send(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    data = await request.json()
-    return json_response({
-        'id': '6a23b2037595620ca8459a3b00026003',
-        'recipients': {
-            'totalCount': len(data['recipients']),
-        }
-    }, status=201)
-
-
-async def messagebird_pricing(request):
-    if not request.query.get('username') == 'mb-username':
-        raise HTTPForbidden(text='bad username')
-    if not request.query.get('password') == 'mb-password':
-        raise HTTPForbidden(text='bad password')
-    return json_response([
-        {
-            'mcc': '0',
-            'country_name': 'Default rate',
-            'rate': '0.0400',
-        },
-        {
-            'mcc': '234',
-            'country_name': 'United Kingdom',
-            'rate': '0.0200',
-        },
-    ])
-
-
-async def generate_pdf(request):
-    assert request.headers['pdf_zoom'] == '1.25'
-    data = await request.read()
-    if not data:
-        return Response(text='request was empty', status=400)
-    elif b'binary' in data:
-        return Response(body=b'binary-\xfe', content_type='application/pdf')
-    else:
-        return Response(body=data, content_type='application/pdf')
-
-
-async def logging_middleware(app, handler):
-    async def _handler(request):
-        r = await handler(request)
-        request.app['request_log'].append(f'{request.method} {request.path_qs} > {r.status}')
-        return r
-    return _handler
-
-
-@pytest.fixture
 async def mock_external(test_server):
-    app = Application(middlewares=[logging_middleware])
-
-    app.router.add_post('/mandrill/messages/send.json', mandrill_send_view)
-    app.router.add_post('/mandrill/subaccounts/add.json', mandrill_sub_account_add)
-    app.router.add_get('/mandrill/subaccounts/info.json', mandrill_sub_account_info)
-
-    app.router.add_post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post)
-    app.router.add_get('/messagebird/lookup/{number}', messagebird_lookup)
-    app.router.add_post('/messagebird/messages', messagebird_send)
-
-    app.router.add_get('/messagebird-pricing', messagebird_pricing)
-
-    app.router.add_route('*', '/generate.pdf', generate_pdf)
-    app.update(
-        request_log=[],
-        mandrill_subaccounts={}
-    )
+    app = create_external_app()
     server = await test_server(app)
     app['server_name'] = f'http://localhost:{server.port}'
     return server
@@ -208,10 +83,6 @@ def settings(tmpdir, mock_external):
 @pytest.fixture(name='cli')
 async def _fix_cli(loop, test_client, settings, db_conn):
     async def modify_startup(app):
-        app.update(
-            pg=SimplePgPool(db_conn),
-            webhook_auth_key=b'testing'
-        )
         app['sender']._concurrency_enabled = False
         await app['sender'].startup()
         redis = await app['sender'].get_redis()
@@ -221,6 +92,10 @@ async def _fix_cli(loop, test_client, settings, db_conn):
         await app['sender'].shutdown()
 
     app = create_app(loop, settings=settings)
+    app.update(
+        pg=SimplePgPool(db_conn),
+        webhook_auth_key=b'testing'
+    )
     app.on_startup.append(modify_startup)
     app.on_shutdown.append(shutdown)
     cli_ = await test_client(app)
@@ -229,7 +104,7 @@ async def _fix_cli(loop, test_client, settings, db_conn):
 
 
 @pytest.fixture
-def send_email(cli, **extra):
+def send_email(cli):
     async def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),

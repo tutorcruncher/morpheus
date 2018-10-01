@@ -6,7 +6,6 @@ import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
-import pytest
 from aiohttp import ClientError, ClientOSError
 from pytest_toolbox.comparison import AnyInt, RegexStr
 
@@ -158,7 +157,7 @@ async def test_webhook_missing(cli, send_email, db_conn):
     assert len(events) == 0
 
 
-async def test_mandrill_send(send_email, db_conn):
+async def test_mandrill_send(send_email, db_conn, mock_external):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is None
     await send_email(
@@ -169,12 +168,14 @@ async def test_mandrill_send(send_email, db_conn):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is not None
     assert m['to_address'] == 'foobar_a@testing.com'
+    assert mock_external.app['request_log'] == [
+        'POST /mandrill/messages/send.json > 200',
+    ]
 
 
-@pytest.mark.xfail(strict=True)
-async def test_send_mandrill_with_other_attachment(cli, send_email):
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarctestingcom', allowed_statuses='*')
-    assert r.status == 404, await r.text()
+async def test_send_mandrill_with_other_attachment(send_email, db_conn):
+    m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobarctestingcom')
+    assert m is None
     await send_email(
         method='email-mandrill',
         recipients=[
@@ -188,84 +189,67 @@ async def test_send_mandrill_with_other_attachment(cli, send_email):
             }
         ]
     )
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarctestingcom', allowed_statuses='*')
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['_source']['to_address'] == 'foobar_c@testing.com'
-    assert set(data['_source']['attachments']) == {'::calendar.ics'}
+    m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobarctestingcom')
+    assert m['to_address'] == 'foobar_c@testing.com'
+    assert set(m['attachments']) == {'::calendar.ics'}
 
 
-@pytest.mark.xfail(strict=True)
-async def test_example_email_address(cli, send_email):
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobaraexamplecom', allowed_statuses='*')
-    assert r.status == 404, await r.text()
+async def test_example_email_address(send_email, db_conn):
+    m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaraexamplecom')
+    assert m is None
     await send_email(
         method='email-mandrill',
         recipients=[{'address': 'foobar_a@example.com'}]
     )
 
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobaraexamplecom', allowed_statuses='*')
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['_source']['to_address'] == 'foobar_a@example.com'
+    m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaraexamplecom')
+    assert m['to_address'] == 'foobar_a@example.com'
+    assert m['status'] == 'send'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_mandrill_webhook(cli):
-    await cli.server.app['es'].post(
-        f'messages/email-mandrill/test-webhook',
-        company='foobar',
-        send_ts=123,
-        update_ts=123,
-        status='send',
-        to_address='testing@example.org',
-        events=[]
+async def test_mandrill_webhook(cli, send_email, db_conn):
+    await send_email(
+        method='email-mandrill',
+        recipients=[{'address': 'testing@example.org'}]
     )
-    r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
-    assert r.status == 200
-    data = await r.json()
-    assert len(data['_source']['events']) == 0
-    messages = [{'ts': int(1e10), 'event': 'open', '_id': 'test-webhook', 'foobar': ['hello', 'world']}]
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+
+    events = await db_conn.fetch('select * from events')
+    assert len(events) == 0
+
+    messages = [{'ts': 1969660800, 'event': 'open', '_id': 'mandrill-testingexampleorg', 'foobar': ['hello', 'world']}]
     data = {'mandrill_events': json.dumps(messages)}
 
     sig = base64.b64encode(
         hmac.new(
             b'testing',
-            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 10000000000, '
-                 b'"event": "open", "_id": "test-webhook", "foobar": ["hello", "world"]}]'),
+            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
+                 b'"event": "open", "_id": "mandrill-testingexampleorg", "foobar": ["hello", "world"]}]'),
             digestmod=hashlib.sha1
         ).digest()
     )
     r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
     assert r.status == 200, await r.text()
-    r = await cli.server.app['es'].get('messages/email-mandrill/test-webhook')
-    assert r.status == 200
-    data = await r.json()
-    assert data['_source']['update_ts'] == 1e13
-    assert data['_source']['status'] == 'open'
-    # events = await get_events(cli, data['_id'], es_type='email-mandrill')
-    # assert events['hits']['total'] == 1
-    # assert events['hits']['hits'][0]['_source']['status'] == 'open'
+
+    events = await db_conn.fetch('select * from events')
+    assert len(events) == 1
+
+    assert events[0]['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
+    assert events[0]['status'] == 'open'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_mandrill_webhook_invalid(cli):
-    await cli.server.app['es'].post(
-        f'messages/email-mandrill/test-webhook',
-        company='foobar',
-        send_ts=123,
-        update_ts=123,
-        status='send',
-        to_address='testing@example.org',
-        events=[]
+async def test_mandrill_webhook_invalid(cli, send_email, db_conn):
+    await send_email(
+        method='email-mandrill',
+        recipients=[{'address': 'testing@example.org'}]
     )
-    messages = [{'ts': int(1e10), 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
+    messages = [{'ts': 1969660800, 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
     data = {'mandrill_events': json.dumps(messages)}
 
     sig = base64.b64encode(
         hmac.new(
             b'testing',
-            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 10000000000, '
+            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
                  b'"event": "open", "_id": "e587306</div></body><meta name=", "foobar": ["x"]}]'),
             digestmod=hashlib.sha1
         ).digest()
@@ -273,19 +257,20 @@ async def test_mandrill_webhook_invalid(cli):
     r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
     assert r.status == 200, await r.text()
 
+    events = await db_conn.fetch('select * from events')
+    assert len(events) == 0
 
-@pytest.mark.xfail(strict=True)
-async def test_mandrill_send_bad_template(cli, send_email):
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarbtestingcom', allowed_statuses='*')
-    assert r.status == 404, await r.text()
+
+async def test_mandrill_send_bad_template(cli, send_email, db_conn):
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
     await send_email(
         method='email-mandrill',
         main_template='{{ foo } test message',
         recipients=[{'address': 'foobar_b@testing.com'}]
     )
 
-    r = await cli.server.app['es'].get('messages/email-mandrill/mandrill-foobarbtestingcom', allowed_statuses='*')
-    assert r.status == 404, await r.text()
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+    assert 'render_failed' == await db_conn.fetchval('select status from messages')
 
 
 async def test_send_email_headers(cli, tmpdir):
@@ -341,7 +326,6 @@ async def test_send_email_headers(cli, tmpdir):
     assert '"List-Unsubscribe": "<http://example.org/different>"\n' in msg_file
 
 
-@pytest.mark.xfail(strict=True)
 async def test_send_unsub_context(send_email, tmpdir):
     uid = str(uuid4())
     await send_email(
@@ -521,7 +505,6 @@ async def test_send_md_options(send_email, tmpdir):
     assert '<p>we are_testing_emphasis <strong>bold</strong><br>\nnewline</p>' in msg_file
 
 
-@pytest.mark.xfail(strict=True)
 async def test_standard_sass(cli, tmpdir):
     data = dict(
         uid=str(uuid4()),
@@ -561,8 +544,7 @@ async def test_custom_sass(send_email, tmpdir):
     assert '#body{-webkit-font-smoothing' not in msg_file
 
 
-@pytest.mark.xfail(strict=True)
-async def test_invalid_mustache_subject(send_email, tmpdir, cli):
+async def test_invalid_mustache_subject(send_email, tmpdir, db_conn):
     message_id = await send_email(
         subject_template='{{ foo } test message',
         context={'foo': 'FOO'},
@@ -572,39 +554,38 @@ async def test_invalid_mustache_subject(send_email, tmpdir, cli):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert '\nsubject: {{ foo } test message\n' in msg_file
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_invalid_mustache_subject')
-    response_data = await r.json()
-    # print(json.dumps(response_data, indent=2))
-    assert response_data['hits']['total'] == 1
-    source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'send'
-    assert source['subject'] == '{{ foo } test message'
-    assert source['body'] == '<body>\n\n</body>'
+    messages = await db_conn.fetch(
+        'select * from messages m join message_groups j on m.group_id=j.id where j.company=$1',
+        'test_invalid_mustache_subject',
+    )
+    assert len(messages) == 1
+    m = messages[0]
+    # debug(dict(m))
+    assert m['status'] == 'send'
+    assert m['subject'] == '{{ foo } test message'
+    assert m['body'] == '<body>\n\n</body>'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_invalid_mustache_body(send_email, tmpdir, cli):
+async def test_invalid_mustache_body(send_email, db_conn):
     await send_email(
         main_template='{{ foo } test message',
         context={'foo': 'FOO'},
         company_code='test_invalid_mustache_body',
     )
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_invalid_mustache_body')
-    response_data = await r.json()
-    print(json.dumps(response_data, indent=2))
-    assert response_data['hits']['total'] == 1
-    source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'render_failed'
-    assert 'subject' not in source
-    # https://github.com/noahmorrison/chevron/pull/22
-    assert source['body'].startswith('Error rendering email: unclosed tag at line')
+    messages = await db_conn.fetch(
+        'select * from messages m join message_groups j on m.group_id=j.id where j.company=$1',
+        'test_invalid_mustache_body',
+    )
+    assert len(messages) == 1
+    m = messages[0]
+    # debug(dict(m))
+    assert m['status'] == 'render_failed'
+    assert m['subject'] is None
+    assert m['body'] == 'Error rendering email: unclosed tag at line 1'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_send_with_pdf(send_email, tmpdir, cli):
+async def test_send_with_pdf(send_email, tmpdir, db_conn):
     message_id = await send_email(
         recipients=[
             {
@@ -626,13 +607,12 @@ async def test_send_with_pdf(send_email, tmpdir, cli):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert '<h1>testing</h1>"' in msg_file
-    r = await cli.server.app['es'].get(f'messages/email-test/{message_id}')
-    data = await r.json()
-    assert set(data['_source']['attachments']) == {'123::testing.pdf', '::different.pdf'}
+
+    attachments = await db_conn.fetchval('select attachments from messages where external_id=$1', message_id)
+    assert set(attachments) == {'123::testing.pdf', '::different.pdf'}
 
 
-@pytest.mark.xfail(strict=True)
-async def test_send_with_other_attachment(send_email, tmpdir, cli):
+async def test_send_with_other_attachment(send_email, tmpdir, db_conn):
     message_id = await send_email(
         recipients=[
             {
@@ -648,9 +628,8 @@ async def test_send_with_other_attachment(send_email, tmpdir, cli):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert 'Look this is some test data' in msg_file
-    r = await cli.server.app['es'].get(f'messages/email-test/{message_id}')
-    data = await r.json()
-    assert set(data['_source']['attachments']) == {'::calendar.ics'}
+    attachments = await db_conn.fetchval('select attachments from messages where external_id=$1', message_id)
+    assert set(attachments) == {'::calendar.ics'}
 
 
 async def test_pdf_not_unicode(send_email, tmpdir, cli):
@@ -690,16 +669,11 @@ async def test_pdf_empty(send_email, tmpdir):
     assert '\n  "attachments": []\n' in msg_file
 
 
-@pytest.mark.xfail(strict=True)
-async def test_mandrill_send_client_error(cli, send_email, mocker):
+async def test_mandrill_send_client_error(cli, send_email, mocker, db_conn):
     mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
     mock_mandrill_post.side_effect = ClientError('foobar')
 
-    es_url = 'messages/email-mandrill/_search?q=company:mandrill-error-test'
-    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 0
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
 
     await send_email(
         method='email-mandrill',
@@ -707,17 +681,14 @@ async def test_mandrill_send_client_error(cli, send_email, mocker):
         recipients=[{'address': 'foobar_a@testing.com'}]
     )
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 1
-    assert data['hits']['hits'][0]['_source']['status'] == 'send_request_failed'
-    assert data['hits']['hits'][0]['_source']['body'] == 'Error sending email: ClientError'
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+
+    m = await db_conn.fetchrow('select * from messages')
+    assert m['status'] == 'send_request_failed'
+    assert m['body'] == 'Error sending email: ClientError'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_mandrill_send_connection_error_ok(cli, send_email, mocker):
+async def test_mandrill_send_connection_error_ok(cli, send_email, mocker, db_conn):
     request = 0
 
     async def fake_response(url, **data):
@@ -734,11 +705,7 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker):
     mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
     mock_mandrill_post.side_effect = fake_response
 
-    es_url = 'messages/email-mandrill/_search?q=company:mandrill-error-ok-test'
-    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 0
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
 
     await send_email(
         method='email-mandrill',
@@ -746,17 +713,14 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker):
         recipients=[{'address': 'foobar_a@testing.com'}]
     )
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get(es_url, allowed_statuses='*')
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data['hits']['total'] == 1
-    assert data['hits']['hits'][0]['_source']['status'] == 'send'
-    assert data['hits']['hits'][0]['_source']['body'] == '<body>\nthis is a test\n</body>'
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+
+    m = await db_conn.fetchrow('select * from messages')
+    assert m['status'] == 'send'
+    assert m['body'] == '<body>\nthis is a test\n</body>'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_link_shortening(send_email, tmpdir, cli):
+async def send_with_link(send_email, tmpdir):
     mid = await send_email(
         main_template='<a href="{{ the_link }}">foobar</a> test message',
         context={'the_link': 'https://www.foobar.com'},
@@ -769,58 +733,79 @@ async def test_link_shortening(send_email, tmpdir, cli):
     token, enc_url = m.groups()
     assert len(token) == 30
     assert base64.urlsafe_b64decode(enc_url).decode() == 'https://www.foobar.com'
+    return token
 
-    await cli.server.app['es'].get('links/_refresh')
-    r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening')
-    response_data = await r.json()
-    # print(json.dumps(response_data, indent=2))
-    assert response_data['hits']['total'] == 1
-    v = response_data['hits']['hits'][0]['_source']
-    assert v['url'] == 'https://www.foobar.com'
-    assert v['token'] == token
-    assert v['send_method'] == 'email-test'
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_link_shortening')
-    response_data = await r.json()
-    assert response_data['hits']['total'] == 1
-    source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'send'
-    # events = await get_events(cli, response_data['hits']['hits'][0]['_id'])
-    # assert events['hits']['total'] == 0
+async def test_link_shortening(send_email, tmpdir, cli, db_conn):
+    token = await send_with_link(send_email, tmpdir)
+
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+    m = await db_conn.fetchrow('select * from messages')
+    assert m['status'] == 'send'
+
+    assert 1 == await db_conn.fetchval('select count(*) from links')
+    link = await db_conn.fetchrow('select * from links')
+    assert dict(link) == {
+        'id': AnyInt(),
+        'message_id': m['id'],
+        'token': token,
+        'url': 'https://www.foobar.com',
+    }
 
     r = await cli.get('/l' + token, allow_redirects=False, headers={
         'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
+        'X-Request-Start': '1969660800',
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
                       'Chrome/59.0.3071.115 Safari/537.36',
     })
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'https://www.foobar.com'
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get('messages/email-test/_search?q=company:test_link_shortening')
-    response_data = await r.json()
-    assert response_data['hits']['total'] == 1
-    source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'click'
-    # events = await get_events(cli, response_data['hits']['hits'][0]['_id'])
-    # assert events['hits']['total'] == 1
-    # assert events['hits']['hits'][0]['_source']['status'] == 'click'
-    # assert events['hits']['hits'][0]['_source']['extra']['user_agent'].startswith('Mozilla/5.0')
-    # assert events['hits']['hits'][0]['_source']['extra']['user_agent_display'].startswith('Chrome 59 on Linux')
+    m_status = await db_conn.fetchval('select status from messages where id=$1', m['id'])
+    assert m_status == 'click'
+    assert 1 == await db_conn.fetchval('select count(*) from events')
+    event = await db_conn.fetchrow('select * from events')
+    assert event['status'] == 'click'
+    assert event['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
+    extra = json.loads(event['extra'])
+    assert extra == {
+        'ip': '54.170.228.0',
+        'target': 'https://www.foobar.com',
+        'user_agent': ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                       'Chrome/59.0.3071.115 Safari/537.36'),
+        'user_agent_display': 'Chrome 59 on Linux',
+    }
 
+
+async def test_link_shortening_wrong_url(send_email, tmpdir, cli):
+    token = await send_with_link(send_email, tmpdir)
     # check we use the right url with a valid token but a different url arg
-    r = await cli.get('/l' + token + '?u=' + base64.urlsafe_b64encode(b'foobar').decode(), allow_redirects=False)
+    r = await cli.get('/l' + token + '?u=' + base64.urlsafe_b64encode(b'different').decode(), allow_redirects=False)
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'https://www.foobar.com'
 
-    r = await cli.get('/lx' + token + '?u=' + base64.urlsafe_b64encode(b'foobar').decode(), allow_redirects=False)
+
+async def test_link_shortening_wrong_url_missing(send_email, tmpdir, cli):
+    token = await send_with_link(send_email, tmpdir)
+    r = await cli.get('/lx' + token + '?u=' + base64.urlsafe_b64encode(b'different').decode(), allow_redirects=False)
     assert r.status == 307, await r.text()
-    assert r.headers['location'] == 'foobar'
+    assert r.headers['location'] == 'different'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_link_shortening_in_render(send_email, tmpdir, cli):
+async def test_link_shortening_repeat(send_email, tmpdir, cli, db_conn):
+    token = await send_with_link(send_email, tmpdir)
+    r = await cli.get('/l' + token, allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'https://www.foobar.com'
+    assert 1 == await db_conn.fetchval('select count(*) from events')
+
+    r = await cli.get('/l' + token, allow_redirects=False)
+    assert r.status == 307, await r.text()
+    assert r.headers['location'] == 'https://www.foobar.com'
+    assert 1 == await db_conn.fetchval('select count(*) from events')
+
+
+async def test_link_shortening_in_render(send_email, tmpdir, db_conn):
     mid = await send_email(
         context={
             'message__render': 'test email {{ xyz }}\n',
@@ -834,13 +819,10 @@ async def test_link_shortening_in_render(send_email, tmpdir, cli):
     assert m, msg_file
     token, enc_url = m.groups()
 
-    await cli.server.app['es'].get('links/_refresh')
-    r = await cli.server.app['es'].get('links/c/_search?q=company:test_link_shortening_in_render')
-    response_data = await r.json()
-    assert response_data['hits']['total'] == 1
-    v = response_data['hits']['hits'][0]['_source']
-    assert v['url'] == 'http://example.com/foobar'
-    assert v['token'] == token
+    assert 1 == await db_conn.fetchval('select count(*) from links')
+    link = await db_conn.fetchrow('select * from links')
+    assert link['url'] == 'http://example.com/foobar'
+    assert link['token'] == token
     assert base64.urlsafe_b64decode(enc_url).decode() == 'http://example.com/foobar'
 
 

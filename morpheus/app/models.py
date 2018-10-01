@@ -18,7 +18,11 @@ class WebModel(BaseModel):
         try:
             return super()._process_values(values)
         except ValidationError as e:
-            raise HTTPBadRequest(text=e.display_errors)
+            v = {
+                'error': 'validation error',
+                'details': e.errors()
+            }
+            raise HTTPBadRequest(text=json.dumps(v), content_type='application/json')
 
 
 class SendMethod(str, Enum):
@@ -264,13 +268,3 @@ class MessageBirdWebHook(BaseWebhook):
             'ts': 'statusDatetime',
             'error_code': 'statusErrorCode',
         }
-
-
-class ClickInfo(BaseWebhook):
-    ts: datetime
-    status: MessageStatus
-    message_id: IDStr
-    extra_: dict
-
-    def extra_json(self, sort_keys=False):
-        return json.dumps(self.extra_, sort_keys=sort_keys)

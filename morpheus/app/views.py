@@ -42,19 +42,9 @@ class ClickRedirectView(TemplateView):
 
     async def call(self, request):
         token = request.match_info['token'].rstrip('.')
-        r = await self.app['es'].get(
-            f'links/_search?filter_path=hits',
-            query={
-                'bool': {
-                    'filter': [
-                        {'term': {'token': token}},
-                        {'range': {'expires_ts': {'gte': 'now'}}},
-                    ]
-                }
-            },
-            size=1,
-        )
-        data = await r.json()
+        async with self.app['pg'].acquire() as conn:
+            link = await conn.fetchrow('select id, url from links where token=$1', token)
+
         arg_url = request.query.get('u')
         if arg_url:
             try:
@@ -62,9 +52,7 @@ class ClickRedirectView(TemplateView):
             except ValueError:
                 arg_url = None
 
-        if data['hits']['total']:
-            hit = data['hits']['hits'][0]
-            source = hit['_source']
+        if link:
             ip_address = request.headers.get('X-Forwarded-For')
             if ip_address:
                 ip_address = ip_address.split(',', 1)[0]
@@ -73,17 +61,16 @@ class ClickRedirectView(TemplateView):
                 ts = float(request.headers.get('X-Request-Start', '.'))
             except ValueError:
                 ts = time()
+
+            link_id, url = link
             await self.sender.store_click(
-                target=source['url'],
+                link_id=link_id,
                 ip=ip_address,
                 user_agent=request.headers.get('User-Agent'),
                 ts=ts,
-                send_method=source['send_method'],
-                send_message_id=source['send_message_id']
             )
-            url = source['url']
             if arg_url and arg_url != url:
-                logger.warning('db url does not match arg url: "%s" !+ "%s"', url, arg_url)
+                logger.warning('db url does not match arg url: %r !+ %r', url, arg_url)
             raise HTTPTemporaryRedirect(location=url)
         elif arg_url:
             logger.warning('no url found, using arg url "%s"', arg_url)
