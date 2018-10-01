@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from itertools import chain
 from pathlib import Path
@@ -63,6 +63,7 @@ class EmailJob(NamedTuple):
 
 class SmsJob(NamedTuple):
     group_id: str
+    group_uuid: str
     send_method: str
     first_name: str
     last_name: str
@@ -340,7 +341,7 @@ class Sender(Actor):
     async def _store_email_group(self, *, group_uuid: str, company: str, method: EmailSendMethod, from_email: str,
                                  from_name: str):
         async with self.pg.acquire() as conn:
-            group_id = await conn.fetchval_b(
+            return await conn.fetchval_b(
                 'insert into message_groups (:values__names) values :values returning id',
                 values=Values(
                     uuid=group_uuid,
@@ -350,7 +351,6 @@ class Sender(Actor):
                     from_name=from_name,
                 )
             )
-        return group_id
 
     async def _store_email(self, external_id, send_ts, j: EmailJob, email_info: EmailInfo):
         async with self.pg.acquire() as conn:
@@ -444,8 +444,15 @@ class Sender(Actor):
             raise NotImplementedError()
         tags.append(uid)
         main_logger.info('sending group %s via %s', uid, method)
+        group_id = await self._store_sms_group(
+            group_uuid=uid,
+            company=company_code,
+            method=method,
+            from_name=from_name,
+        )
         base_kwargs = dict(
-            group_id=uid,
+            group_id=group_id,
+            group_uuid=uid,
             send_method=method,
             main_template=main_template,
             company_code=company_code,
@@ -465,6 +472,7 @@ class Sender(Actor):
                     break
 
                 if cost_limit is not None:
+                    # FIXME, don't call check_sms_limit on every request, just increment value in loop
                     spend = await self.check_sms_limit(company_code)
                     if spend >= cost_limit:
                         main_logger.warning('cost limit exceeded %0.2f >= %0.2f, %s', spend, cost_limit, company_code)
@@ -524,7 +532,7 @@ class Sender(Actor):
             return
 
         # remove the + from the beginning of the number
-        msg_id = f'{j.group_id}-{sms_data.number.number[1:]}'
+        msg_id = f'{j.group_uuid}-{sms_data.number.number[1:]}'
         send_ts = datetime.utcnow()
         cost = 0.012 * sms_data.length.parts
         output = (
@@ -622,56 +630,61 @@ class Sender(Actor):
             main_logger.error('not one recipients in send response', extra={'data': data})
         await self._store_sms(data['id'], send_ts, j, sms_data, cost)
 
-    async def _store_sms(self, uid, send_ts, j: SmsJob, sms_data: SmsData, cost: float):
-        await self.es.post(
-            f'messages/{j.send_method}/{uid}',
-            company=j.company_code,
-            send_ts=send_ts,
-            update_ts=send_ts,
-            status=MessageStatus.send,
-            group_id=j.group_id,
-            to_first_name=j.first_name,
-            to_last_name=j.last_name,
-            to_user_link=j.user_link,
-            to_address=sms_data.number.number_formatted,
-            from_name=j.from_name,
-            tags=j.tags,
-            body=sms_data.message,
-            cost=cost,
-            extra=sms_data.length._asdict(),
-        )
-        for url, token in sms_data.shortened_link:
-            await self.es.post(
-                'links/c/',
-                token=token,
-                url=url,
-                company=j.company_code,
-                send_method=j.send_method,
-                send_message_id=uid,
-                expires_ts=datetime.utcnow() + timedelta(days=90)
+    async def _store_sms_group(self, *, group_uuid: str, company: str, method: EmailSendMethod, from_name: str):
+        async with self.pg.acquire() as conn:
+            return await conn.fetchval_b(
+                'insert into message_groups (:values__names) values :values returning id',
+                values=Values(
+                    uuid=group_uuid,
+                    company=company,
+                    method=method,
+                    from_name=from_name,
+                )
             )
 
+    async def _store_sms(self, external_id, send_ts, j: SmsJob, sms_data: SmsData, cost: float):
+        async with self.pg.acquire() as conn:
+            message_id = await conn.fetchval_b(
+                'insert into messages (:values__names) values :values returning id',
+                values=Values(
+                    external_id=external_id,
+                    group_id=j.group_id,
+                    send_ts=send_ts,
+                    status=MessageStatus.send,
+                    to_first_name=j.first_name,
+                    to_last_name=j.last_name,
+                    to_user_link=j.user_link,
+                    to_address=sms_data.number.number_formatted,
+                    tags=j.tags,
+                    body=sms_data.message,
+                    cost=cost,
+                    extra=json.dumps(sms_data.length._asdict()),
+                )
+            )
+            if sms_data.shortened_link:
+                await conn.execute_b(
+                    'insert into links (:values__names) values :values',
+                    values=MultipleValues(*[
+                        Values(
+                            message_id=message_id,
+                            token=token,
+                            url=url,
+                        ) for url, token in sms_data.shortened_link
+                    ])
+                )
+
     async def check_sms_limit(self, company_code):
-        r = await self.es.get(
-            'messages/_search?size=0',
-            query={
-                'bool': {
-                    'filter': [
-                        {
-                            'term': {'company': company_code}
-                        },
-                        {
-                            'range': {'send_ts': {'gte': 'now-28d/d'}}
-                        }
-                    ]
-                }
-            },
-            aggs={
-                'total_spend': {'sum': {'field': 'cost'}}
-            }
-        )
-        data = await r.json()
-        return data['aggregations']['total_spend']['value']
+        # TODO this is called more often than necessary
+        async with self.pg.acquire() as conn:
+            return await conn.fetchval(
+                """
+                select sum(m.cost)
+                from messages as m
+                join message_groups j on m.group_id = j.id
+                where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
+                """,
+                company_code
+            )
 
     @concurrent(Actor.LOW_QUEUE)
     async def update_mandrill_webhooks(self, events):
@@ -713,7 +726,6 @@ class Sender(Actor):
                                                '{platform}').format(platform=platform, **ua_dict).strip(' ')
 
             ts = parse_datetime(ts)
-            debug(ts)
             status = 'click'
             await conn.execute_b(
                 'insert into events (:values__names) values :values',
@@ -723,10 +735,6 @@ class Sender(Actor):
                     ts=ts,
                     extra=json.dumps(extra),
                 )
-            )
-            await conn.execute(
-                'update messages set update_ts=$1, status=$2 where id=$3',
-                ts, status, message_id
             )
 
     async def update_message_status(self, send_method, m: BaseWebhook, log_each=True) -> UpdateStatus:
@@ -742,28 +750,22 @@ class Sender(Actor):
             await redis.expire(ref, 86400)
 
         async with self.pg.acquire() as conn:
-            r = await conn.fetchrow(
+            message_id = await conn.fetchval(
                 """
-                select m.id, m.update_ts from messages m
+                select m.id from messages m
                 join message_groups j on m.group_id = j.id
                 where j.method = $1 and m.external_id = $2
                 """,
                 send_method,
                 m.message_id
             )
-            if not r:
+            if not message_id:
                 return UpdateStatus.missing
-
-            message_id, old_update_ts = r
 
             if not m.ts.tzinfo:
                 m.ts = m.ts.replace(tzinfo=timezone.utc)
 
-            # give 1 second "lee way" for new event to have happened just before the old event
-            newest_update = m.ts >= (old_update_ts - timedelta(seconds=1))
-
-            log_each and main_logger.info('adding event %s, ts: %s, status: %s, updating status: %r',
-                                          m.message_id, m.ts, m.status, newest_update)
+            log_each and main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
             await conn.execute_b(
                 'insert into events (:values__names) values :values',
@@ -774,13 +776,6 @@ class Sender(Actor):
                     extra=m.extra_json(),
                 )
             )
-
-            if newest_update:
-                await conn.execute(
-                    'update messages set update_ts=$1, status=$2 where id=$3',
-                    m.ts, m.status, message_id
-                )
-        return UpdateStatus.added_newest if newest_update else UpdateStatus.added_not_newest
 
 
 class Worker(BaseWorker):  # pragma: no cover

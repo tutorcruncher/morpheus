@@ -7,7 +7,6 @@ import re
 from datetime import datetime
 from html import escape
 from itertools import product
-from operator import itemgetter
 from statistics import mean, stdev
 from time import time
 
@@ -17,6 +16,7 @@ import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect, Response
 from aiohttp_jinja2 import template
 from arq.utils import from_unix_ms, truncate
+from buildpg import Var
 from markupsafe import Markup
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
@@ -244,75 +244,108 @@ class CreateSubaccountView(ServiceView):
 
 
 class _UserMessagesView(UserView):
-    es_from = True
+    offset = True
 
-    def _strftime(self, ts):
+    def get_dt_tz(self):
         dt_tz = self.request.query.get('dttz') or 'utc'
         try:
-            dt_tz = pytz.timezone(dt_tz)
-        except pytz.UnknownTimeZoneError:
+            pytz.timezone(dt_tz)
+        except KeyError:
             raise HTTPBadRequest(text=f'unknown timezone: "{dt_tz}"')
+        return dt_tz
 
-        dt_fmt = self.request.query.get('dtfmt') or '%a %Y-%m-%d %H:%M'
-        return from_unix_ms(ts, 0).astimezone(dt_tz).strftime(dt_fmt)
+    async def query(self, *, message_id=None, tags=None, query=None, pretty_ts=False):
+        where = Var('j.method') == self.request.match_info['method']
+        if self.session.company != '__all__':
+            where &= (Var('j.company') == self.session.company)
 
-    async def query(self, *, message_id=None, tags=None, query=None):
-        es_query = {
-            'query': {
-                'bool': {
-                    'filter': [
-                        {'match_all': {}}
-                        if self.session.company == '__all__' else
-                        {'term': {'company': self.session.company}},
-                    ]
-                }
-            },
-            'from': self.get_arg_int('from', 0) if self.es_from else 0,
-            'size': 100,
-        }
-        if message_id:
-            es_query['query']['bool']['filter'].append({'term': {'_id': message_id}})
-        elif query:
-            es_query['query']['bool']['should'] = [
-                {'simple_query_string': {
-                    'query': query,
-                    'fields': ['to_*^3', 'subject^2', '_all'],
-                    'lenient': True,
-                }}
-            ]
-            es_query['min_score'] = 0.01
+        if query:
+            return await self.query_general(where, query)
+        elif message_id:
+            where &= (Var('m.external_id') == message_id)
         elif tags:
-            es_query['query']['bool']['filter'] += [{'term': {'tags': t}} for t in tags]
-        else:
-            es_query['sort'] = [
-                {'send_ts': 'desc'},
-            ]
+            where &= (Var('tags').contains(tags))
 
-        r = await self.app['es'].get(
-            f'messages/{self.request.match_info["method"]}/_search?filter_path=hits', **es_query
-        )
-        assert r.status == 200, r.status
-        return await r.json()
+        async with self.app['pg'].acquire() as conn:
+            count = await conn.fetchval_b(
+                """
+                select count(*)
+                from messages m
+                join message_groups j on m.group_id = j.id
+                where :where
+                """,
+                where=where,
+            )
+            items = await conn.fetch_b(
+                """
+                select m.id as msg_id,
+                  external_id, :date_func(send_ts, :tz) send_ts, :date_func(update_ts, :tz) update_ts,
+                  status, to_first_name, to_last_name, to_user_link,
+                  to_address, company, method, subject, body, tags, attachments, from_name, from_name, cost, extra
+                from messages m
+                join message_groups j on m.group_id = j.id
+                where :where
+                order by send_ts
+                limit 100
+                offset :offset
+                """,
+                tz=self.get_dt_tz(),
+                date_func=Var('pretty_ts' if pretty_ts else 'iso_ts'),
+                where=where,
+                offset=self.get_arg_int('from', 0) if self.offset else 0,
+            )
+        return {
+            'count': count,
+            'items': [dict(r) for r in items],
+        }
 
-    @staticmethod
-    def _event_data(e):
-        data = e['_source']
-        data.pop('message')
-        return data
+    async def query_general(self, where, query):
+        async with self.app['pg'].acquire() as conn:
+            items = await conn.fetch_b(
+                """
+                select m.id as msg_id,
+                  external_id, iso_ts(send_ts, :tz) send_ts, iso_ts(update_ts, :tz) update_ts,
+                  status, to_first_name, to_last_name, to_user_link,
+                  to_address, company, ts_rank_cd(vector, tsquery, 16) ranking, subject
+                from messages m join message_groups j on m.group_id = j.id,
+                     to_tsquery(:query) tsquery
+                where :where and vector @@ tsquery
+                order by ranking desc
+                limit 10
+                """,
+                tz=self.get_dt_tz(),
+                query=query,
+                where=where,
+            )
+        return {
+            'count': len(items),
+            'items': [dict(r) for r in items],
+        }
 
     async def insert_events(self, data):
-        t = self.request.match_info['method']
-        for hit in data['hits']['hits']:
-            r = await self.app['es'].get(
-                f'events/{t}/_search?filter_path=hits',
-                query={
-                    'term': {'message': hit['_id']}
-                },
-                size=100,
+        async with self.app['pg'].acquire() as conn:
+            msg_ids = [m['msg_id'] for m in data['items']]
+            events = await conn.fetch(
+                """
+                select status, message_id, iso_ts(ts, $2) ts, extra
+                from events where message_id = any($1)
+                """,
+                msg_ids,
+                self.get_dt_tz(),
             )
-            assert r.status == 200, r.status
-            event_data = await r.json()
-            hit['_source']['events'] = [self._event_data(e) for e in event_data['hits']['hits']]
+        event_lookup = {}
+        for event_ in events:
+            event = dict(event_)
+            msg_id = event.pop('message_id')
+            msg_events = event_lookup.get(msg_id)
+            event['extra'] = json.loads(event['extra'])
+            if msg_events:
+                msg_events.append(event)
+            else:
+                event_lookup[msg_id] = [event]
+        del events
+        for msg in data['items']:
+            msg['events'] = event_lookup.get(msg['msg_id'], [])
 
 
 class UserMessagesJsonView(_UserMessagesView):
@@ -335,31 +368,29 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
 
     async def call(self, request):
         msg_id = self.request.match_info['id']
-        data = await self.query(message_id=msg_id)
-        await self.insert_events(data)
-        if len(data['hits']['hits']) == 0:
+        data = await self.query(message_id=msg_id, pretty_ts=True)
+        if data['count'] == 0:
             raise HTTPNotFound(text='message not found')
-        data = data['hits']['hits'][0]
+        data = data['items'][0]
 
         preview_path = self.app.router['user-preview'].url_for(**self.request.match_info)
         return dict(
             base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
-            title='{_type} - {_id}'.format(**data),
-            id=data['_id'],
-            method=data['_type'],
+            title='{method} - {external_id}'.format(**data),
+            id=data['external_id'],
+            method=data['method'],
             details=self._details(data),
-            events=list(self._events(data)),
+            events=[e async for e in self._events(data['msg_id'])],
             preview_url=self.full_url(f'{preview_path}?{self.request.query_string}'),
             attachments=list(self._attachments(data)),
         )
 
     def _details(self, data):
-        yield 'ID', data['_id']
-        source = data['_source']
-        yield 'Status', source['status'].title()
+        yield 'ID', data['external_id']
+        yield 'Status', data['status'].title()
 
-        dst = f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
-        link = source.get('to_user_link')
+        dst = f'{data["to_first_name"] or ""} {data["to_last_name"] or ""} <{data["to_address"]}>'.strip(' ')
+        link = data.get('to_user_link')
         if link:
             yield 'To', dict(
                 href=link,
@@ -368,12 +399,13 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         else:
             yield 'To', dst
 
-        yield 'Subject', source.get('subject')
-        yield 'Send Time', self._strftime(source['send_ts'])
-        yield 'Last Updated', self._strftime(source['update_ts'])
+        yield 'Subject', data.get('subject')
+        # could do with using prettier timezones here
+        yield 'Send Time', data['send_ts']
+        yield 'Last Updated', data['update_ts']
 
     def _attachments(self, data):
-        for a in data['_source'].get('attachments', []):
+        for a in data['attachments']:
             name = None
             try:
                 doc_id, name = a.split('::')
@@ -383,13 +415,23 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             else:
                 yield f'/attachment-doc/{doc_id}/', name
 
-    def _events(self, data):
-        events = sorted(data['_source'].get('events', []), key=itemgetter('ts'), reverse=True)
+    async def _events(self, message_id):
+        async with self.app['pg'].acquire() as conn:
+            events = await conn.fetch(
+                """
+                select status, message_id, pretty_ts(ts, $2) as ts, extra
+                from events where message_id = $1
+                order by ts asc
+                limit 51
+                """,
+                message_id,
+                self.get_dt_tz(),
+            )
         for event in events[:50]:
             yield dict(
                 status=event['status'].title(),
-                datetime=self._strftime(event['ts']),
-                details=Markup(json.dumps(event['extra'], indent=2)),
+                datetime=event['ts'],
+                details=Markup(json.dumps(json.loads(event['extra']), indent=2)),
             )
         if len(events) > 50:
             yield dict(
@@ -410,9 +452,9 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         total_sms_spend = None
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
             total_sms_spend = '{:,.3f}'.format(await self.sender.check_sms_limit(self.session.company))
-        hits = data['hits']['hits']
+        hits = data['items']
         headings = ['To', 'Send Time', 'Status', 'Subject']
-        total = data['hits']['total']
+        total = data['count']
         size = 100
         offset = self.get_arg_int('from', 0)
         pagination = {}
@@ -441,17 +483,16 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             pagination=pagination,
         )
 
-    def _table_body(self, hits):
-        for msg in hits:
-            msg_source = msg['_source']
-            subject = msg_source.get('subject') or msg_source.get('body', '')
+    def _table_body(self, items):
+        for msg in items:
+            subject = msg.get('subject') or msg.get('body', '')
             yield [
                 {
-                    'href': msg['_id'],
-                    'text': msg_source['to_address'],
+                    'href': msg['external_id'],
+                    'text': msg['to_address'],
                 },
-                self._strftime((msg_source['send_ts'])),
-                msg_source['status'].title(),
+                msg['send_ts'],
+                msg['status'].title(),
                 truncate(subject, 40),
             ]
 
@@ -463,37 +504,94 @@ class UserMessagePreviewView(TemplateView, UserView):
     template = 'user/preview.jinja'
 
     async def call(self, request):
-        es_query = {
-            'bool': {
-                'filter': [
-                    {'match_all': {}}
-                    if self.session.company == '__all__' else
-                    {'term': {'company': self.session.company}},
-                ] + [
-                    {'term': {'_id': request.match_info['id']}}
-                ]
-            }
-        }
-        method = request.match_info['method']
-        r = await self.app['es'].get(
-            f'messages/{method}/_search?filter_path=hits', query=es_query
-        )
-        data = await r.json()
-        if data['hits']['total'] != 1:
+        method = self.request.match_info['method']
+        where = (Var('j.method') == method) & (Var('m.external_id') == request.match_info['id'])
+
+        if self.session.company != '__all__':
+            where &= (Var('j.company') == self.session.company)
+
+        async with self.app['pg'].acquire() as conn:
+            data = await conn.fetchrow_b(
+                """
+                select from_name, to_last_name, to_address, status, body, extra
+                from messages m
+                join message_groups j on m.group_id = j.id
+                where :where
+                """,
+                where=where
+            )
+
+        if not data:
             raise HTTPNotFound(text='message not found')
-        source = data['hits']['hits'][0]['_source']
-        body = source['body']
+
+        data = dict(data)
+        body = data['body']
+        extra = json.loads(data['extra']) if data.get('extra') else {}
         if method.startswith('sms'):
             # need to render the sms so it makes sense to users
             return {
-                'from': source['from_name'],
-                'to': source['to_last_name'] or source['to_address'],
-                'status': source['status'],
+                'from': data['from_name'],
+                'to': data['to_last_name'] or data['to_address'],
+                'status': data['status'],
                 'message': body,
-                'extra': source.get('extra') or {},
+                'extra': extra,
             }
         else:
             return {'raw': body}
+
+
+agg_sql = """
+select json_build_object(
+  'histogram', histogram,
+  'all_opened', all_opened,
+  'all_7_day', all_7_day,
+  'open_7_day', open_7_day,
+  'all_28_day', all_28_day,
+  'open_28_day', open_28_day
+)
+from (
+  select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') AS histogram from (
+    select count(*), day, status
+    from (
+      select date_trunc('day', m.send_ts) as day, status
+      from messages m
+      join message_groups j on m.group_id = j.id
+      where :where and m.send_ts > current_timestamp - '90 days'::interval
+    ) as t
+    group by day, status
+  ) as t
+) as histogram,
+(
+  select count(*) as all_opened
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp - '90 days'::interval and status = 'open'
+) as all_opened,
+(
+  select count(*) as all_7_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp - '7 days'::interval
+) as all_7_day,
+(
+  select count(*) as open_7_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp - '7 days'::interval and status = 'open'
+) as open_7_day,
+(
+  select count(*) as all_28_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp - '28 days'::interval
+) as all_28_day,
+(
+  select count(*) as open_28_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp - '28 days'::interval and status = 'open'
+) as open_28_day
+"""
 
 
 class UserAggregationView(UserView):
@@ -502,85 +600,13 @@ class UserAggregationView(UserView):
     """
     async def call(self, request):
         # TODO allow more filtering here, filter to last X days.
-        r = await self.app['es'].get(
-            'messages/{[method]}/_search?size=0&filter_path=hits.total,aggregations'.format(request.match_info),
-            query={
-                'bool': {
-                    'filter': [
-                        {'match_all': {}} if self.session.company == '__all__' else
-                        {'term': {'company': self.session.company}},
-                        {
-                            'range': {'send_ts': {'gte': 'now-90d'}}
-                        }
-                    ]
-                }
-            },
-            aggs={
-                'histogram': {
-                    'date_histogram': {
-                        'field': 'send_ts',
-                        'interval': 'day'
-                    },
-                    'aggs': {
-                        status: {
-                            'filter': {
-                                'term': {
-                                    'status': status
-                                }
-                            }
-                        } for status in MessageStatus
-                    },
-                },
-                'all_opened': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'term': {'status': MessageStatus.open}}
-                            ]
-                        }
-                    }
-                },
-                '7_days_all': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-7d'}}}
-                            ]
-                        }
-                    }
-                },
-                '7_days_opened': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-7d'}}},
-                                {'term': {'status': MessageStatus.open}}
-                            ]
-                        }
-                    }
-                },
-                '28_days_all': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-28d'}}}
-                            ]
-                        }
-                    }
-                },
-                '28_days_opened': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-28d'}}},
-                                {'term': {'status': MessageStatus.open}}
-                            ]
-                        }
-                    }
-                }
-            }
-        )
-        return Response(body=await r.text(), content_type='application/json')
+        where = Var('j.method') == self.request.match_info['method']
+        if self.session.company != '__all__':
+            where &= (Var('j.company') == self.session.company)
+
+        async with self.app['pg'].acquire() as conn:
+            data = await conn.fetchval_b(agg_sql, where=where)
+        return Response(text=data, content_type='application/json')
 
 
 class AdminAggregatedView(AdminView):

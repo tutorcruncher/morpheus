@@ -189,7 +189,6 @@ async def test_exceed_cost_limit(cli, tmpdir):
     assert len(tmpdir.listdir()) == 12
 
 
-@pytest.mark.xfail(strict=True)
 async def test_send_messagebird(cli, tmpdir, mock_external):
     data = {
         'uid': str(uuid.uuid4()),

@@ -12,11 +12,8 @@ def gen_headers():
 
 @pytest.mark.xfail(strict=True)
 async def test_aggregates(cli, send_email):
-    await cli.server.app['es'].create_indices(True)
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
-
-    await cli.server.app['es'].get('messages/_refresh')
 
     r = await cli.get('/admin/?method=email-test', headers=gen_headers())
     text = await r.text()

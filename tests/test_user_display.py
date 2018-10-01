@@ -3,11 +3,12 @@ import hmac
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import urlencode
 
 import pytest
 from arq.utils import to_unix_ms
+from pytest_toolbox.comparison import RegexStr
 
 
 def modify_url(url, settings, company='foobar'):
@@ -20,10 +21,7 @@ def modify_url(url, settings, company='foobar'):
     return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
 
 
-@pytest.mark.xfail(strict=True)
-async def test_user_list(cli, settings, send_email):
-    await cli.server.app['es'].create_indices(True)
-
+async def test_user_list(cli, settings, send_email, db_conn):
     expected_msg_ids = []
     for i in range(4):
         uid = str(uuid.uuid4())
@@ -32,25 +30,48 @@ async def test_user_list(cli, settings, send_email):
 
     await send_email(uid=str(uuid.uuid4()), company_code='different1')
     await send_email(uid=str(uuid.uuid4()), company_code='different2')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/messages.json', settings, 'whoever'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 4
-    msg_ids = [h['_id'] for h in data['hits']['hits']]
-    print(msg_ids)
+    # debug(data)
+    assert data['count'] == 4
+    msg_ids = [h['external_id'] for h in data['items']]
     assert msg_ids == list(reversed(expected_msg_ids))
-    assert len(data['hits']['hits']) == 4
-    hit = data['hits']['hits'][0]
-    assert hit['_source']['company'] == 'whoever'
-    assert hit['_source']['status'] == 'send'
+    first_item = data['items'][0]
+    assert first_item == {
+        'msg_id': await db_conn.fetchval('select id from messages where external_id=$1', expected_msg_ids[3]),
+        'external_id': expected_msg_ids[3],
+        'send_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
+        'update_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
+        'status': 'send',
+        'to_first_name': None,
+        'to_last_name': None,
+        'to_user_link': None,
+        'to_address': '3@t.com',
+        'company': 'whoever',
+        'method': 'email-test',
+        'subject': 'test message',
+        'body': (
+            '<body>\n'
+            'this is a test\n'
+            '</body>'
+        ),
+        'tags': [
+            expected_msg_ids[3][:-6],
+        ],
+        'attachments': [],
+        'from_name': 'Sender Name',
+        'cost': None,
+        'extra': None,
+        'events': [],
+
+    }
 
     r = await cli.get(modify_url('/user/email-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 6
+    assert data['count'] == 6
 
     r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()
@@ -59,7 +80,6 @@ async def test_user_list(cli, settings, send_email):
     assert text.count('.com</a>') == 6
 
 
-@pytest.mark.xfail(strict=True)
 async def test_user_search(cli, settings, send_email):
     msgs = {}
     for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):
@@ -69,26 +89,23 @@ async def test_user_search(cli, settings, send_email):
         msgs[subject] = f'{uid}-{i}tcom'
 
     await send_email(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
-    await cli.server.app['es'].get('messages/_refresh')
+
     r = await cli.get(modify_url('/user/email-test/messages.json?q=cherry', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 1
-    hit = data['hits']['hits'][0]
-    assert hit['_id'] == msgs['cherry']
-    assert hit['_index'] == 'messages'
-    assert hit['_source']['subject'] == 'cherry'
+    assert data['count'] == 1
+    item = data['items'][0]
+    # debug(item)
+    assert item['external_id'] == msgs['cherry']
+    assert item['subject'] == 'cherry'
     r = await cli.get(modify_url('/user/email-test/messages.json?q=eggplant', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 0
+    # debug(data)
+    assert data['count'] == 0
 
 
-@pytest.mark.xfail(strict=True)
 async def test_user_aggregate(cli, settings, send_email):
-    await cli.server.app['es'].create_indices(True)
-
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
     msg_id = await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
@@ -102,31 +119,37 @@ async def test_user_aggregate(cli, settings, send_email):
     await cli.post('/webhook/test/', json=data)
 
     await send_email(uid=str(uuid.uuid4()), company_code='different')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'user-aggs'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    buckets = data['aggregations']['histogram']['buckets']
-    assert len(buckets) == 1
-    assert buckets[0]['doc_count'] == 5
-    assert buckets[0]['send']['doc_count'] == 4
-    assert buckets[0]['open']['doc_count'] == 1
-    assert buckets[0]['render_failed']['doc_count'] == 0
-    assert data['aggregations']['all_opened']['doc_count'] == 1
-    assert data['aggregations']['7_days_all']['doc_count'] == 5
-    assert data['aggregations']['7_days_opened']['doc_count'] == 1
-    assert data['aggregations']['28_days_all']['doc_count'] == 5
-    assert data['aggregations']['28_days_opened']['doc_count'] == 1
+    today = date.today()
+    assert data == {
+        'histogram': [
+            {
+                'count': 4,
+                'day': f'{today:%Y-%m-%d}T00:00:00+00:00',
+                'status': 'send',
+            },
+            {
+                'count': 1,
+                'day': f'{today:%Y-%m-%d}T00:00:00+00:00',
+                'status': 'open',
+            },
+        ],
+        'all_opened': 1,
+        'all_7_day': 5,
+        'open_7_day': 1,
+        'all_28_day': 5,
+        'open_28_day': 1,
+    }
 
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['aggregations']['histogram']['buckets'][0]['doc_count'] == 6
+    assert sum(v['count'] for v in data['histogram']) == 6
 
 
-@pytest.mark.xfail(strict=True)
 async def test_user_tags(cli, settings, send_email):
     uid1 = str(uuid.uuid4())
     await send_email(
@@ -151,33 +174,31 @@ async def test_user_tags(cli, settings, send_email):
 
     await send_email(uid=str(uuid.uuid4()), company_code='different1')
     await send_email(uid=str(uuid.uuid4()), company_code='different2')
-    await cli.server.app['es'].get('messages/_refresh')
 
     url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')])
     r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 2, json.dumps(data, indent=2)
-    assert {h['_id'] for h in data['hits']['hits']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
+    assert data['count'] == 2, json.dumps(data, indent=2)
+    assert {h['external_id'] for h in data['items']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
 
     url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'user:2')])
     r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 1, json.dumps(data, indent=2)
-    assert data['hits']['hits'][0]['_id'] == f'{uid1}-2tcom'
+    assert data['count'] == 1, json.dumps(data, indent=2)
+    assert data['items'][0]['external_id'] == f'{uid1}-2tcom'
 
     query = [('tags', 'trigger:other'), ('tags', 'shoesize:8')]
     url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query(query)
     r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 1
-    assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
+    # debug(data)
+    assert data['count'] == 1
+    assert data['items'][0]['external_id'] == f'{uid2}-4tcom'
 
 
-@pytest.mark.xfail(strict=True)
 async def test_message_details(cli, settings, send_email):
     msg_id = await send_email(company_code='test-details')
 
@@ -189,9 +210,6 @@ async def test_message_details(cli, settings, send_email):
     }
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
-
-    await cli.server.app['es'].get('messages/_refresh')
-    await cli.server.app['es'].get('events/_refresh')
 
     r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
     assert r.status == 200, await r.text()
@@ -206,7 +224,6 @@ async def test_message_details(cli, settings, send_email):
     assert '"user_agent": "testincalls",' in text
 
 
-@pytest.mark.xfail(strict=True)
 async def test_message_details_link(cli, settings, send_email):
     msg_id = await send_email(
         company_code='test-details',
@@ -233,9 +250,6 @@ async def test_message_details_link(cli, settings, send_email):
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
-    await cli.server.app['es'].get('messages/_refresh')
-    await cli.server.app['es'].get('events/_refresh')
-
     url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 200, await r.text()
@@ -243,13 +257,13 @@ async def test_message_details_link(cli, settings, send_email):
     assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
     assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
     assert '<a href="#">different.pdf</a>' in text
-    assert 'Open &bull; Wed 2033-05-18 03:33' == re.search('Open &bull; .+', text).group(), text
+    assert 'Open &bull; Wed 2033-05-18 03:33 UTC' == re.search('Open &bull; .+', text).group(), text
     assert 'extra values not shown' not in text
 
     r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'Europe/London'}))
     assert r.status == 200, await r.text()
     text = await r.text()
-    assert 'Open &bull; 18/05/2033 04:33 BST' == re.search('Open &bull; .+', text).group()
+    assert 'Open &bull; Wed 2033-05-18 04:33 BST' == re.search('Open &bull; .+', text).group()
 
     r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'snap'}))
     assert r.status == 400, await r.text()
@@ -283,9 +297,6 @@ async def test_many_events(cli, settings, send_email):
             **event
         )
 
-    await cli.server.app['es'].get('messages/_refresh')
-    await cli.server.app['es'].get('events/_refresh')
-
     url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 200, await r.text()
@@ -294,7 +305,6 @@ async def test_many_events(cli, settings, send_email):
     assert '5 more &bull; ...' in text
 
 
-@pytest.mark.xfail(strict=True)
 async def test_message_details_missing(cli, settings):
     r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
@@ -303,43 +313,36 @@ async def test_message_details_missing(cli, settings):
     assert 'message not found' == text
 
 
-@pytest.mark.xfail(strict=True)
 async def test_message_preview(cli, settings, send_email):
     msg_id = await send_email(company_code='preview')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url(f'/user/email-test/{msg_id}/preview/', settings, 'preview'))
     assert r.status == 200, await r.text()
     assert '<body>\nthis is a test\n</body>' == await r.text()
 
 
-@pytest.mark.xfail(strict=True)
 async def test_user_sms(cli, settings, send_sms):
-    await cli.server.app['es'].create_indices(True)
     await send_sms(company_code='snapcrap')
 
     await send_sms(uid=str(uuid.uuid4()), company_code='flip')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, 'snapcrap'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    # print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 1
-    hit = data['hits']['hits'][0]
-    assert hit['_index'] == 'messages'
-    assert hit['_type'] == 'sms-test'
-    assert hit['_source']['company'] == 'snapcrap'
-    assert hit['_source']['status'] == 'send'
-    assert hit['_source']['from_name'] == 'FooBar'
-    assert hit['_source']['body'] == 'this is a test apples'
-    assert hit['_source']['cost'] == 0.012
-    assert hit['_source']['events'] == []
-    assert hit['_source']['extra'] == {'length': 21, 'parts': 1}
+    assert data['count'] == 1
+    item = data['items'][0]
+    assert item['method'] == 'sms-test'
+    assert item['company'] == 'snapcrap'
+    assert item['status'] == 'send'
+    assert item['from_name'] == 'FooBar'
+    assert item['body'] == 'this is a test apples'
+    assert item['cost'] == 0.012
+    assert item['events'] == []
+    assert json.loads(item['extra']) == {'length': 21, 'parts': 1}
     assert data['spend'] == 0.012
 
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 2
+    assert data['count'] == 2
 
     r = await cli.get(modify_url('/user/sms-test/messages.html', settings, 'snapcrap'))
     assert r.status == 200, await r.text()
@@ -347,13 +350,10 @@ async def test_user_sms(cli, settings, send_sms):
     assert '<caption>Total spend this month: <b>£0.012</b><span id="extra-spend-info"></span></caption>' in text, text
 
 
-@pytest.mark.xfail(strict=True)
-async def test_user_sms_preview(cli, settings, send_sms):
-    await cli.server.app['es'].create_indices(True)
+async def test_user_sms_preview(cli, settings, send_sms, db_conn):
     msg_id = await send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
 
     await send_sms(uid=str(uuid.uuid4()), company_code='flip')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url(f'/user/sms-test/{msg_id}/preview/', settings, 'smspreview'))
     text = await r.text()
     assert r.status == 200, text
@@ -362,12 +362,9 @@ async def test_user_sms_preview(cli, settings, send_sms):
     assert '<span class="metadata">Multipart:</span>2 parts' in text
 
 
-@pytest.mark.xfail(strict=True)
 async def test_user_list_lots(cli, settings, send_email):
     for i in range(110):
         await send_email(uid=str(uuid.uuid4()), company_code='list-lots', recipients=[{'address': f'{i}@t.com'}])
-
-    await cli.server.app['es'].get('messages/_refresh')
 
     r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()

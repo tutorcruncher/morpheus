@@ -41,6 +41,8 @@ async def _fix_db_conn(loop, settings, clean_db):
     tr = conn.transaction()
     await tr.start()
 
+    await conn.execute("set client_min_messages = 'log'")
+
     yield conn
 
     await tr.rollback()
