@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from urllib.parse import urlencode
 
+import pytest
 from arq.utils import to_unix_ms
 
 
@@ -19,6 +20,7 @@ def modify_url(url, settings, company='foobar'):
     return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
 
 
+@pytest.mark.xfail(strict=True)
 async def test_user_list(cli, settings, send_email):
     await cli.server.app['es'].create_indices(True)
 
@@ -57,6 +59,7 @@ async def test_user_list(cli, settings, send_email):
     assert text.count('.com</a>') == 6
 
 
+@pytest.mark.xfail(strict=True)
 async def test_user_search(cli, settings, send_email):
     msgs = {}
     for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):
@@ -82,6 +85,7 @@ async def test_user_search(cli, settings, send_email):
     assert data['hits']['total'] == 0
 
 
+@pytest.mark.xfail(strict=True)
 async def test_user_aggregate(cli, settings, send_email):
     await cli.server.app['es'].create_indices(True)
 
@@ -122,6 +126,7 @@ async def test_user_aggregate(cli, settings, send_email):
     assert data['aggregations']['histogram']['buckets'][0]['doc_count'] == 6
 
 
+@pytest.mark.xfail(strict=True)
 async def test_user_tags(cli, settings, send_email):
     uid1 = str(uuid.uuid4())
     await send_email(
@@ -172,6 +177,7 @@ async def test_user_tags(cli, settings, send_email):
     assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
 
 
+@pytest.mark.xfail(strict=True)
 async def test_message_details(cli, settings, send_email):
     msg_id = await send_email(company_code='test-details')
 
@@ -200,6 +206,7 @@ async def test_message_details(cli, settings, send_email):
     assert '"user_agent": "testincalls",' in text
 
 
+@pytest.mark.xfail(strict=True)
 async def test_message_details_link(cli, settings, send_email):
     msg_id = await send_email(
         company_code='test-details',
@@ -250,6 +257,7 @@ async def test_message_details_link(cli, settings, send_email):
     assert 'unknown timezone: "snap"' == text
 
 
+@pytest.mark.xfail(strict=True)
 async def test_many_events(cli, settings, send_email):
     msg_id = await send_email(
         company_code='test-details',
@@ -286,6 +294,7 @@ async def test_many_events(cli, settings, send_email):
     assert '5 more &bull; ...' in text
 
 
+@pytest.mark.xfail(strict=True)
 async def test_message_details_missing(cli, settings):
     r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
@@ -294,6 +303,7 @@ async def test_message_details_missing(cli, settings):
     assert 'message not found' == text
 
 
+@pytest.mark.xfail(strict=True)
 async def test_message_preview(cli, settings, send_email):
     msg_id = await send_email(company_code='preview')
     await cli.server.app['es'].get('messages/_refresh')
@@ -302,6 +312,7 @@ async def test_message_preview(cli, settings, send_email):
     assert '<body>\nthis is a test\n</body>' == await r.text()
 
 
+@pytest.mark.xfail(strict=True)
 async def test_user_sms(cli, settings, send_sms):
     await cli.server.app['es'].create_indices(True)
     await send_sms(company_code='snapcrap')
@@ -336,6 +347,7 @@ async def test_user_sms(cli, settings, send_sms):
     assert '<caption>Total spend this month: <b>£0.012</b><span id="extra-spend-info"></span></caption>' in text, text
 
 
+@pytest.mark.xfail(strict=True)
 async def test_user_sms_preview(cli, settings, send_sms):
     await cli.server.app['es'].create_indices(True)
     msg_id = await send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
@@ -350,6 +362,7 @@ async def test_user_sms_preview(cli, settings, send_sms):
     assert '<span class="metadata">Multipart:</span>2 parts' in text
 
 
+@pytest.mark.xfail(strict=True)
 async def test_user_list_lots(cli, settings, send_email):
     for i in range(110):
         await send_email(uid=str(uuid.uuid4()), company_code='list-lots', recipients=[{'address': f'{i}@t.com'}])

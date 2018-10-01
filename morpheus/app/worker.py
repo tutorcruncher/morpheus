@@ -13,8 +13,8 @@ from typing import Dict, List, NamedTuple, Optional
 import chevron
 import msgpack
 from aiohttp import ClientConnectionError, ClientError, ClientSession
-from arq import Actor, BaseWorker, Drain, concurrent, cron
-from arq.utils import from_unix_ms, to_unix_ms, truncate
+from arq import Actor, BaseWorker, Drain, concurrent
+from arq.utils import to_unix_ms, truncate
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
@@ -93,8 +93,8 @@ class SmsData(NamedTuple):
 class UpdateStatus(str, Enum):
     duplicate = 'duplicate'
     missing = 'missing'
-    updated = 'updated'
-    added = 'added'
+    added_newest = 'added-newest'
+    added_not_newest = 'added-not-newest'
 
 
 class Sender(Actor):
@@ -340,7 +340,7 @@ class Sender(Actor):
                                  from_name: str):
         async with self.pg.acquire() as conn:
             group_id = await conn.fetchval_b(
-                'INSERT INTO message_groups (:values__names) VALUES :values RETURNING id',
+                'insert into message_groups (:values__names) values :values returning id',
                 values=Values(
                     uuid=group_uuid,
                     company=company,
@@ -354,7 +354,7 @@ class Sender(Actor):
     async def _store_email(self, external_id, send_ts, j: EmailJob, email_info: EmailInfo):
         async with self.pg.acquire() as conn:
             message_id = await conn.fetchval_b(
-                'INSERT INTO messages (:values__names) VALUES :values RETURNING id',
+                'insert into messages (:values__names) values :values returning id',
                 values=Values(
                     external_id=external_id,
                     group_id=j.group_id,
@@ -372,7 +372,7 @@ class Sender(Actor):
             )
             if email_info.shortened_link:
                 await conn.execute_b(
-                    'INSERT INTO links (:values__names) VALUES :values',
+                    'insert into links (:values__names) values :values',
                     values=MultipleValues(*[
                         Values(
                             message_id=message_id,
@@ -385,7 +385,7 @@ class Sender(Actor):
     async def _store_email_failed(self, status: MessageStatus, j: EmailJob, error_msg):
         async with self.pg.acquire() as conn:
             await conn.execute_b(
-                'INSERT INTO messages (:values__names) VALUES :values',
+                'insert into messages (:values__names) values :values',
                 values=Values(
                     group_id=j.group_id,
                     status=status,
@@ -710,8 +710,8 @@ class Sender(Actor):
         )
         return await self.update_message_status(send_method, m)
 
-    async def update_message_status(self, es_type, m: BaseWebhook, log_each=True) -> UpdateStatus:
-        h = hashlib.md5(f'{to_unix_ms(m.ts)}-{m.status}-{json.dumps(m.extra(), sort_keys=True)}'.encode())
+    async def update_message_status(self, send_method, m: BaseWebhook, log_each=True) -> UpdateStatus:
+        h = hashlib.md5(f'{to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
         ref = f'event-{h.hexdigest()}'
         redis_pool = await self.get_redis()
         with await redis_pool as redis:
@@ -722,41 +722,46 @@ class Sender(Actor):
                 return UpdateStatus.duplicate
             await redis.expire(ref, 86400)
 
-        r = await self.es.get(f'messages/{es_type}/{m.message_id}', allowed_statuses=(200, 404))
-        if r.status == 404:
-            return UpdateStatus.missing
-        data = await r.json()
+        async with self.pg.acquire() as conn:
+            r = await conn.fetchrow(
+                """
+                select m.id, m.update_ts from messages m
+                join message_groups j on m.group_id = j.id
+                where j.method = $1 and m.external_id = $2
+                """,
+                send_method,
+                m.message_id
+            )
+            if not r:
+                return UpdateStatus.missing
 
-        old_update_ts = from_unix_ms(data['_source']['update_ts'])
-        if m.ts.tzinfo:
-            old_update_ts = old_update_ts.replace(tzinfo=timezone.utc)
+            message_id, old_update_ts = r
 
-        # give 1 second "lee way" for new event to have happened just before the old event
-        status = UpdateStatus.updated if m.ts >= (old_update_ts - timedelta(seconds=1)) else UpdateStatus.added
+            if not m.ts.tzinfo:
+                m.ts = m.ts.replace(tzinfo=timezone.utc)
 
-        log_each and main_logger.info('adding event %s, ts: %s, status: %s, updating status: %r',
-                                      m.message_id, m.ts, m.status, status == UpdateStatus.updated)
-        await self.es.post(
-            f'events/{es_type}/',
-            message=m.message_id,
-            ts=m.ts,
-            status=m.status,
-            extra=m.extra(),
-            timeout_=20,
-        )
-        if status == UpdateStatus.updated:
-            try:
-                await self.es.post(f'messages/{es_type}/{m.message_id}/_update?retry_on_conflict=5',
-                                   doc={'update_ts': m.ts, 'status': m.status}, timeout_=30)
-            except ApiError as e:  # pragma: no cover
-                # no error here if we know the problem
-                if e.status == 409:
-                    main_logger.info('ElasticSearch conflict for %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-                else:
-                    raise
-            except asyncio.TimeoutError:  # pragma: no cover
-                main_logger.info('timeout updating message %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-        return status
+            # give 1 second "lee way" for new event to have happened just before the old event
+            newest_update = m.ts >= (old_update_ts - timedelta(seconds=1))
+
+            log_each and main_logger.info('adding event %s, ts: %s, status: %s, updating status: %r',
+                                          m.message_id, m.ts, m.status, newest_update)
+
+            await conn.execute_b(
+                'insert into events (:values__names) values :values',
+                values=Values(
+                    message_id=message_id,
+                    status=m.status,
+                    ts=m.ts,
+                    extra=m.extra_json(),
+                )
+            )
+
+            if newest_update:
+                await conn.execute(
+                    'update messages set update_ts=$1, status=$2 where id=$3',
+                    m.ts, m.status, message_id
+                )
+        return UpdateStatus.added_newest if newest_update else UpdateStatus.added_not_newest
 
 
 class Worker(BaseWorker):  # pragma: no cover

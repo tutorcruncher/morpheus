@@ -65,7 +65,6 @@ def web(wait):
     # wait and sleep(4)
     _check_services_ready(settings)
 
-    _elasticsearch_setup(settings)
     logger.info('starting server...')
     asyncio.get_event_loop().close()
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())

@@ -1,5 +1,6 @@
+import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List
@@ -186,8 +187,14 @@ class BaseWebhook(WebModel):
     status: MessageStatus
     message_id: str
 
-    def extra(self):
+    def extra_json(self, sort_keys=False):
         raise NotImplementedError()
+
+    @validator('ts')
+    def add_tz(cls, v):
+        if v and not v.tzinfo:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 ID_REGEX = re.compile(r'[/<>= ]')
@@ -212,12 +219,12 @@ class MandrillSingleWebhook(BaseWebhook):
     location: dict = None
     msg: dict = {}
 
-    def extra(self):
-        return {
+    def extra_json(self, sort_keys=False):
+        return json.dumps({
             'user_agent': self.user_agent,
             'location': self.location,
             **{f: self.msg.get(f) for f in self.__config__.msg_fields},
-        }
+        }, sort_keys=sort_keys)
 
     class Config:
         ignore_extra = True
@@ -247,8 +254,8 @@ class MessageBirdWebHook(BaseWebhook):
     message_id: IDStr
     error_code: str = None
 
-    def extra(self):
-        return {'error_code': self.error_code} if self.error_code else {}
+    def extra_json(self, sort_keys=False):
+        return json.dumps({'error_code': self.error_code} if self.error_code else {}, sort_keys=sort_keys)
 
     class Config:
         ignore_extra = True
@@ -265,5 +272,5 @@ class ClickInfo(BaseWebhook):
     message_id: IDStr
     extra_: dict
 
-    def extra(self):
-        return self.extra_
+    def extra_json(self, sort_keys=False):
+        return json.dumps(self.extra_, sort_keys=sort_keys)

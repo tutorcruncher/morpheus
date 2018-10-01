@@ -6,7 +6,7 @@ from typing import Callable, NamedTuple, Union
 import asyncpg
 from async_timeout import timeout
 
-from .models import SendMethod, MessageStatus
+from .models import MessageStatus, SendMethod
 from .settings import Settings
 
 logger = logging.getLogger('morpheus.db')

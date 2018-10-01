@@ -2,12 +2,15 @@ import base64
 import re
 import uuid
 
+import pytest
+
 
 def gen_headers():
     token = base64.b64encode(b'whoever:testing').decode()
     return {'Authorization': f'Basic {token}'}
 
 
+@pytest.mark.xfail(strict=True)
 async def test_aggregates(cli, send_email):
     await cli.server.app['es'].create_indices(True)
     for i in range(4):
@@ -23,6 +26,7 @@ async def test_aggregates(cli, send_email):
     assert text.count('<td>0</td>') > 5  # to allow statuses to change
 
 
+@pytest.mark.xfail(strict=True)
 async def test_list(cli, send_email):
     # make sure at least two messages are sent
     await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'xx@t.com'}])
@@ -41,6 +45,7 @@ async def test_list(cli, send_email):
     assert '<td>xx@t.com</td>' in text
 
 
+@pytest.mark.xfail(strict=True)
 async def test_details(cli, send_email):
     message_id = await send_email()
 

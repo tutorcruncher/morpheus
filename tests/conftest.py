@@ -3,9 +3,9 @@ import re
 import uuid
 
 import pytest
-from buildpg import asyncpg
-from aiohttp.web import Application, HTTPForbidden, Response, json_response
 from aiohttp.test_utils import teardown_test_loop
+from aiohttp.web import Application, HTTPForbidden, Response, json_response
+from buildpg import asyncpg
 
 from morpheus.app.db import SimplePgPool, prepare_database
 from morpheus.app.main import create_app
@@ -157,7 +157,7 @@ async def logging_middleware(app, handler):
 
 
 @pytest.fixture
-def mock_external(loop, test_server):
+async def mock_external(test_server):
     app = Application(middlewares=[logging_middleware])
 
     app.router.add_post('/mandrill/messages/send.json', mandrill_send_view)
@@ -175,7 +175,7 @@ def mock_external(loop, test_server):
         request_log=[],
         mandrill_subaccounts={}
     )
-    server = loop.run_until_complete(test_server(app))
+    server = await test_server(app)
     app['server_name'] = f'http://localhost:{server.port}'
     return server
 

@@ -4,8 +4,8 @@ import logging
 import aiohttp_jinja2
 import async_timeout
 import jinja2
-from buildpg import asyncpg
 from aiohttp.web import Application
+from buildpg import asyncpg
 
 from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware, stats_middleware
