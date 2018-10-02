@@ -27,6 +27,10 @@ testcov:
 .PHONY: all
 all: testcov lint
 
+.PHONY: build
+build:
+	docker build morpheus -t morpheus
+
 .PHONY: clean
 clean:
 	rm -rf `find . -name __pycache__`
