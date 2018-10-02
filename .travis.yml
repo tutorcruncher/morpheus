@@ -15,10 +15,7 @@ python:
 
 install:
 - make install
-
-before_script:
 - pip freeze
-- curl -v localhost:9200
 
 script:
 - make lint
