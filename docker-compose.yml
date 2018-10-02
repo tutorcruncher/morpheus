@@ -1,4 +1,4 @@
-version: '2.1'
+version: '3.4'
 
 volumes:
   es_data: {}
@@ -23,34 +23,8 @@ services:
     - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: always
 
-  elastic:
-    build: elasticsearch
-    environment:
-    - cluster.name=docker-cluster
-    - xpack.security.enabled=false
-    - xpack.watcher.enabled=false
-    - xpack.monitoring.enabled=false
-    - xpack.graph.enabled=false
-    - xpack.ml.enabled=false
-    - bootstrap.memory_lock=true
-    - "path.repo=[\"/snapshots\"]"
-    - "ES_JAVA_OPTS=-Xms${ES_JAVA_MEM:-1500m} -Xmx${ES_JAVA_MEM:-1500m}"
-    restart: always
-    ulimits:
-      nproc: 3000
-      nofile: 65536
-      memlock:
-        soft: -1
-        hard: -1
-    mem_limit: ${ES_MEM_LIMIT:-2g}
-    volumes:
-    - es_data:/usr/share/elasticsearch/data
-    - es_snapshots:/snapshots
-    depends_on:
-    - logs
-
   redis:
-    image: redis:3.0-alpine
+    image: redis:4-alpine
     volumes:
     - redis_data:/data
     restart: always

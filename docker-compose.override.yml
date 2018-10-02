@@ -1,4 +1,4 @@
-version: '2.1'
+version: '3.4'
 
 services:
   logs:
@@ -13,3 +13,25 @@ services:
     - ./nginx/maintenance.html:/maintenance.html
     ports:
     - 5000:80
+
+  postgres:
+    image: postgres:10.3-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: docker
+    ports:
+    # to connect: `pgcli postgre://postgres:docker@localhost:54320/nosht`
+    - 54320:5432
+    volumes:
+    - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    depends_on:
+    - logs
+
+  web:
+    environment:
+      APP_PG_DSN: 'postgre://postgres:docker@localhost:5432/nosht'
+
+  worker:
+    environment:
+      APP_PG_DSN: 'postgre://postgres:docker@localhost:5432/nosht'
