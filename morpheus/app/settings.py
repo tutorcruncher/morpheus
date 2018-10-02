@@ -42,11 +42,6 @@ class Settings(BaseSettings):
     stats_token: str = ''
     max_request_stats = int(1e5)
 
-    # used for es snapshots
-    s3_access_key: str = None
-    s3_secret_key: str = None
-    snapshot_repo_name = 'morpheus'
-
     # message bird
     messagebird_key: str = ''
     messagebird_url: str = 'https://rest.messagebird.com'

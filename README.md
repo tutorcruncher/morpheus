@@ -58,8 +58,6 @@ Create `activate.prod.sh`:
 ```shell
 #!/usr/bin/env bash
 . env/bin/activate
-export SCALEWAY_ORGANIZATION='...1'
-export SCALEWAY_TOKEN='...'
 export LOGSPOUT_ENDPOINT='...'
 export RAVEN_DSN='...'
 export APP_AUTH_KEY='...'
@@ -68,8 +66,6 @@ export APP_USER_AUTH_KEY='...'
 export APP_HOST_NAME='...'
 export APP_PUBLIC_LOCAL_API_URL='...'
 export APP_ADMIN_BASIC_AUTH_PASSWORD='...'
-export APP_S3_ACCESS_KEY='...'
-export APP_S3_SECRET_KEY='...'
 
 export APP_MESSAGEBIRD_KEY='...'
 export APP_MESSAGEBIRD_PRICING_USERNAME='...'
