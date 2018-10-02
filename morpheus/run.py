@@ -48,6 +48,11 @@ def cli(ctx):
     pass
 
 
+def _set_loop():
+    asyncio.get_event_loop().close()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+
 @cli.command()
 @click.option('--wait/--no-wait', default=True)
 def web(wait):
@@ -63,8 +68,7 @@ def web(wait):
     _check_services_ready(settings)
 
     logger.info('starting server...')
-    asyncio.get_event_loop().close()
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    _set_loop()
     loop = asyncio.get_event_loop()
     app = create_app(loop, settings)
     run_app(app, port=8000, print=lambda v: None, access_log=None)
@@ -79,6 +83,7 @@ def worker(wait):
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
 
+    _set_loop()
     logger.info('waiting for postgres and redis to come up...')
     wait and sleep(4)
     _check_services_ready(settings)
