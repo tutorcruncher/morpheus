@@ -681,7 +681,6 @@ class Sender(Actor):
     @concurrent(Actor.LOW_QUEUE)
     async def update_mandrill_webhooks(self, events):
         mandrill_webhook = MandrillWebhook(events=events)
-        # do in a loop to avoid elastic search conflict
         statuses = {}
         for m in mandrill_webhook.events:
             status = await self.update_message_status('email-mandrill', m, log_each=False)

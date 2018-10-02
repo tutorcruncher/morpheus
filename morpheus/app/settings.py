@@ -1,5 +1,5 @@
+import re
 from pathlib import Path
-from urllib.parse import urlparse
 
 from arq import RedisSettings
 from pydantic import BaseSettings, NoneStr, PyObject, validator
@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     redis_password: str = None
 
     pg_dsn: str = 'postgres://postgres:waffle@localhost:5432/morpheus'
+    pg_host: str = None
+    pg_port: int = None
     pg_name: str = None
 
     auth_key: str = 'testing'
@@ -29,8 +31,6 @@ class Settings(BaseSettings):
     log_level = 'INFO'
     commit: str = '-'
     release_date: str = '-'
-    elastic_host = 'localhost'
-    elastic_port = 9200
     user_auth_key: bytes = b'insecure'
     admin_basic_auth_password = 'testing'
     test_output: Path = None
@@ -68,13 +68,17 @@ class Settings(BaseSettings):
             password=self.redis_password,
         )
 
-    @property
-    def elastic_url(self):
-        return f'http://{self.elastic_host}:{self.elastic_port}'
+    @validator('pg_host', always=True, pre=True)
+    def set_pg_host(cls, v, values, **kwargs):
+        return re.search('@(\w+)', values['pg_dsn']).group(1)
+
+    @validator('pg_port', always=True, pre=True)
+    def set_pg_port(cls, v, values, **kwargs):
+        return int(re.search(':(\d+)', values['pg_dsn']).group(1))
 
     @validator('pg_name', always=True, pre=True)
     def set_pg_name(cls, v, values, **kwargs):
-        return urlparse(values['pg_dsn']).path.lstrip('/')
+        return re.search('\d+/(\w+)$', values['pg_dsn']).group(1)
 
     @property
     def models_sql(self):

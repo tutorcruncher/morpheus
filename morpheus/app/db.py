@@ -55,15 +55,26 @@ async def prepare_database(settings: Settings, overwrite_existing: Union[bool, C
     :return: whether or not a database has been (re)created
     """
     conn = await lenient_conn(settings, with_db=False)
+
+    def check_overwrite():
+        nonlocal overwrite_existing
+        if callable(overwrite_existing):
+            overwrite_existing = overwrite_existing()
+
     try:
+        db_exists = await conn.fetchval('SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1', settings.pg_name)
+        if db_exists:
+            check_overwrite()
+            if not overwrite_existing:
+                logger.debug('database already exists, skipping table setup')
+                return False
+
         await conn.execute(DROP_CONNECTIONS, settings.pg_name)
         logger.debug('attempting to create database "%s"...', settings.pg_name)
         try:
             await conn.execute('CREATE DATABASE {}'.format(settings.pg_name))
         except (asyncpg.DuplicateDatabaseError, asyncpg.UniqueViolationError):
-            if callable(overwrite_existing):
-                overwrite_existing = overwrite_existing()
-
+            check_overwrite()
             if overwrite_existing:
                 logger.debug('database already exists...')
             else:

@@ -647,7 +647,7 @@ class UserAggregationView(UserView):
 
 class AdminAggregatedView(AdminView):
     async def get_context(self, morpheus_api):
-        method = self.request.query.get('method', SendMethod.email_mandrill)
+        method = self.request.query.get('method', SendMethod.email_mandrill.value)
         url = self.app.router['user-aggregation'].url_for(method=method)
 
         r = await morpheus_api.get(url)

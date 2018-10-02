@@ -9,6 +9,19 @@ def gen_headers():
     return {'Authorization': f'Basic {token}'}
 
 
+async def test_admin_root(cli):
+    r = await cli.get('/admin/', headers=gen_headers())
+    text = await r.text()
+    assert r.status == 200, text
+    assert (
+        '  <ul>\n'
+        '    <li><a href="/">index</a></li>\n'
+        '    <li><a href="/admin/?method=email-mandrill">admin - aggregated</a></li>\n'
+        '    <li><a href="/admin/list/?method=email-mandrill">admin - list</a></li>\n'
+        '  </ul>\n'
+    ) in text
+
+
 async def test_aggregates(cli, send_email):
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])

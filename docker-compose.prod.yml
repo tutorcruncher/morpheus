@@ -25,5 +25,6 @@ services:
       INFLUXDB_PASSWORD: ${INFLUXDB_PASSWORD}
       STATS_TOKEN: ${APP_STATS_TOKEN}
       STATS_HOST: ${APP_HOST_NAME}
+      APP_PG_DSN: ${APP_PG_DSN}
     pid: host
     restart: always

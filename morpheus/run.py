@@ -22,6 +22,7 @@ async def _check_port_open(host, port, loop):
         try:
             await loop.create_connection(lambda: asyncio.Protocol(), host=host, port=port)
         except OSError:
+            logger.info('waiting for connection to %s:%s %d', host, port, i)
             await asyncio.sleep(delay, loop=loop)
         else:
             logger.info('Connected successfully to %s:%s after %0.2fs', host, port, delay * i)
@@ -32,7 +33,7 @@ async def _check_port_open(host, port, loop):
 def _check_services_ready(settings: Settings):
     loop = asyncio.get_event_loop()
     coros = [
-        _check_port_open(settings.elastic_host, settings.elastic_port, loop),
+        _check_port_open(settings.pg_host, settings.pg_port, loop),
         _check_port_open(settings.redis_host, settings.redis_port, loop),
     ]
     loop.run_until_complete(asyncio.gather(*coros, loop=loop))
@@ -55,14 +56,10 @@ def web(wait):
     If the database doesn't already exist it will be created.
     """
     settings = Settings(sender_cls='app.worker.Sender')
-    print(settings.to_string(True), flush=True)
     setup_logging(settings)
 
-    logger.info('waiting for elasticsearch and redis to come up...')
-    # give es a chance to come up fully, this just prevents lots of es errors, create_indices is itself lenient
+    logger.info('waiting for postgres and redis to come up...')
 
-    # skip wait as es and redis are generally already up and delay is causing missed requests
-    # wait and sleep(4)
     _check_services_ready(settings)
 
     logger.info('starting server...')
@@ -82,7 +79,7 @@ def worker(wait):
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
 
-    logger.info('waiting for elasticsearch and redis to come up...')
+    logger.info('waiting for postgres and redis to come up...')
     wait and sleep(4)
     _check_services_ready(settings)
     # redis/the network occasionally hangs and gets itself in a mess if we try to connect too early,

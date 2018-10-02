@@ -1,8 +1,6 @@
 version: '3.4'
 
 volumes:
-  es_data: {}
-  es_snapshots: {}
   redis_data: {}
   pdf_data: {}
   test_data: {}
@@ -46,8 +44,8 @@ services:
       APP_AUTH_KEY: ${APP_AUTH_KEY}
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
       APP_USER_AUTH_KEY: ${APP_USER_AUTH_KEY}
+      APP_PG_DSN: ${APP_PG_DSN}
       APP_REDIS_HOST: redis
-      APP_ELASTIC_HOST: elastic
       APP_COMMIT: ${COMMIT}
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
@@ -68,7 +66,6 @@ services:
       default:
         ipv4_address: 172.20.0.101
     depends_on:
-    - elastic
     - redis
 
   worker:
@@ -81,8 +78,8 @@ services:
       APP_AUTH_KEY: ${APP_AUTH_KEY}
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
       APP_USER_AUTH_KEY: ${APP_USER_AUTH_KEY}
+      APP_PG_DSN: ${APP_PG_DSN}
       APP_REDIS_HOST: redis
-      APP_ELASTIC_HOST: elastic
       APP_COMMIT: ${COMMIT}
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
@@ -100,5 +97,4 @@ services:
     - test_data:/tmp/morpheus
     restart: always
     depends_on:
-    - elastic
     - redis

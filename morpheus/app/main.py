@@ -7,6 +7,7 @@ import jinja2
 from aiohttp.web import Application
 from buildpg import asyncpg
 
+from .db import prepare_database
 from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
@@ -68,8 +69,12 @@ async def app_startup(app):
         redis = await app['sender'].get_redis()
         info = await redis.info()
         logger.info('redis version: %s', info['server']['redis_version'])
+
+    settings: Settings = app['settings']
+    await prepare_database(settings, False)
+    app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=2)
+
     loop.create_task(get_mandrill_webhook_key(app))
-    app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=app['settings'].pg_dsn, min_size=2)
 
     # the Sender actor shares the same pg pool as the app
     app['sender'].pg = app['pg']

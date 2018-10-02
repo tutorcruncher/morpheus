@@ -47,7 +47,7 @@ You can also run either the web or worker with
     # OR
     ./morpheus/run.py worker
 
-You'll need elastic search and redis installed.
+You'll need postgres and redis installed.
 
 ### To prepare for deploy
 
@@ -82,16 +82,6 @@ export MODE='PRODUCTION'
 export PS1="PROD $PS1"
 ```
 
-### Setting up the machine
-
-you'll need to add
-
-```
-vm.max_map_count=262144
-```
-
-To the end of `/etc/sysctl.conf` to allow elastic search to boot.
-
 ### To deploy
 
 Set up your environment
@@ -109,23 +99,9 @@ That same command should also work to update the deployment after a change.
 
 ### To test
 
-Set up your environment. If you have ElasticSearch installed and running you're fine, or you can run it with:
-
-    ./run-es.sh
-
-then
+simply
 
     make
-
-### to monitor
-
-backup in progress (the pydf image has curl installed)
-
-    docker exec -it morpheus_pdf_1 curl elastic:9200/_cat/recovery?v
-
-indices
-    
-    docker exec -it morpheus_pdf_1 curl elastic:9200/_cat/indices/?v
 
 
 ### to backup redis
