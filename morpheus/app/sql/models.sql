@@ -50,8 +50,8 @@ CREATE INDEX message_external_id ON messages USING btree (external_id);
 CREATE INDEX message_status ON messages USING btree (status);
 CREATE INDEX message_send_ts ON messages USING btree (send_ts);
 CREATE INDEX message_update_ts ON messages USING btree (update_ts);
-CREATE INDEX message_tags ON messages USING gin (tags);  -- TODO check this index actually works, without gin__int_ops
-CREATE INDEX message_vector ON messages USING GIN (vector);
+CREATE INDEX message_tags ON messages USING gin (tags);
+CREATE INDEX message_vector ON messages USING gin (vector);
 
 
 CREATE TABLE events (

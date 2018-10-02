@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# run elasticsearch in docker. Useful for tests or when running morpheus locally without compose
-
-# "docker build . -f Dockerfile.es -t elasticsearch_s3" to create the image, also needs mkdir es_data
+# from this directory...
+docker build . -f Dockerfile.es -t elasticsearch_s3
 docker run --rm \
   -p 9200:9200 \
   -e "http.host=0.0.0.0" \

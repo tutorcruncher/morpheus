@@ -14,11 +14,12 @@ from buildpg import asyncpg, Values, MultipleValues
 from devtools import debug
 from tqdm import tqdm
 
-from morpheus.app.db import prepare_database
-from morpheus.app.logs import setup_logging
-from morpheus.app.models import SendMethod
-from morpheus.app.settings import Settings
-from morpheus.app.utils import ApiSession
+sys.path.append('./morpheus')
+from app.db import prepare_database
+from app.logs import setup_logging
+from app.models import SendMethod
+from app.settings import Settings
+from app.utils import ApiSession
 
 main_logger = logging.getLogger('morpheus.elastic')
 elastic_url = 'http://localhost:9200'
@@ -170,47 +171,41 @@ class ElasticSearch(ApiSession):  # pragma: no cover
             await self.post(f'{index_name}/_open')
 
 
-async def create_message_group(group_uuid, message, pg):
-    source = message['_source']
-    group_values = Values(
-        uuid=group_uuid,
-        company=source['company'],
-        method=message['_type'],
-        created_ts=from_unix_ms(source['send_ts']).replace(tzinfo=timezone.utc),
-        from_email=source.get('from_email'),
-        from_name=source.get('from_name'),
-    )
-    async with pg.acquire() as conn:
-        group_id = await conn.fetchval_b(
-            """
-            insert into message_groups (:values__names) values :values
-            on conflict (uuid) do nothing
-            returning id
-            """,
-            values=group_values,
-        )
-        if not group_id:
-            group_id = await conn.fetchval('select id from message_groups where uuid=$1', group_uuid)
-        return group_uuid, group_id
+message_group_lookup = {}
 
 
 async def process_messages(messages, pg):
     if not messages:
         return
-    coros = []
-    group_ids = set()
-    for message in messages:
-        group_id = message['_source']['group_id']
-        if group_id in group_ids:
-            continue
-        coros.append(create_message_group(group_id, message, pg))
 
-    del group_ids
-    group_ids_lookup = dict(await asyncio.gather(*coros))
+    for message in messages:
+        group_uuid = message['_source']['group_id']
+        if group_uuid in message_group_lookup:
+            continue
+        group_values = Values(
+            uuid=group_uuid,
+            company=message['_source']['company'],
+            method=message['_type'],
+            created_ts=from_unix_ms(message['_source']['send_ts']).replace(tzinfo=timezone.utc),
+            from_email=message['_source'].get('from_email'),
+            from_name=message['_source'].get('from_name'),
+        )
+        async with pg.acquire() as conn:
+            group_id = await conn.fetchval_b(
+                """
+                insert into message_groups (:values__names) values :values
+                on conflict (uuid) do nothing
+                returning id
+                """,
+                values=group_values,
+            )
+        if group_id:
+            message_group_lookup[group_uuid] = group_id
+
     values = MultipleValues(*[
         Values(
             external_id=msg['_id'],
-            group_id=group_ids_lookup[msg['_source']['group_id']],
+            group_id=message_group_lookup[msg['_source']['group_id']],
             send_ts=from_unix_ms(msg['_source']['send_ts']).replace(tzinfo=timezone.utc),
             update_ts=from_unix_ms(msg['_source']['update_ts']).replace(tzinfo=timezone.utc),
             status=msg['_source']['status'],
@@ -232,9 +227,10 @@ async def process_messages(messages, pg):
 
 async def transfer_messages(es, pg, loop):
     # clear the db before we begin
-    print('deleting everything the the db...')
+    print('deleting everything from the db...')
     await pg.execute('delete from message_groups')
     print('done')
+    global group_lookup
 
     for m in reversed(SendMethod):
         r = await es.get(f'messages/{m.value}/_search?scroll=10m', size=1000, sort=[{'send_ts': 'desc'}])
@@ -244,8 +240,8 @@ async def transfer_messages(es, pg, loop):
         hits = data['hits']['hits']
         tasks = [loop.create_task(process_messages(hits, pg))]
         hit_count = len(hits)
-        print('method: {}, messages: {}'.format(m.value, total))
-        for i in tqdm(range(total // 1000 + 1), smoothing=0.1):
+        print(f'method: {m.value}, events: {total}')
+        for i in tqdm(range(total // 1000 + 1), smoothing=0.01):
             es_query = {
                 'scroll': '10m',
                 'scroll_id': scroll_id,
@@ -263,39 +259,60 @@ async def transfer_messages(es, pg, loop):
                 await asyncio.gather(*tasks)
                 tasks = []
 
-        print('method: {}, total hits: {}, {} tasks to complete'.format(m.value, hit_count, len(tasks)))
+        print(f'method: {m.value}, total hits: {hit_count}, {len(tasks)} tasks to complete')
         await asyncio.gather(*tasks)
+        group_lookup = {}
 
 
 message_id_lookup = {}
 
 
 async def process_events(events, pg):
+    if not events:
+        return 0
+
     new_message_ids = set()
     for event in events:
-        message_id = event['_source']['message_id']
-        if message_id not in message_id_lookup:
-            new_message_ids.add(new_message_ids)
+        external_message_id = event['_source']['message']
+        if external_message_id not in message_id_lookup:
+            new_message_ids.add(external_message_id)
 
     if new_message_ids:
         async with pg.acquire() as conn:
             v = await conn.fetch('select external_id, id from messages where external_id=any($1)', new_message_ids)
             message_id_lookup.update(dict(v))
 
-    values = MultipleValues(*[
-        Values(
-            message_id=message_id_lookup[event['_source']['message_id']],
-            status=event['_source']['status'],
-            ts=from_unix_ms(event['_source']['ts']).replace(tzinfo=timezone.utc),
-            extra=json.dumps(event['_source'].get('extra')) if event['_source'].get('extra') else None,
-        ) for event in events
-    ])
-    async with pg.acquire() as conn:
-        await conn.execute_b('insert into events (:values__names) values :values', values=values)
+    values = []
+    missing = 0
+    for event in events:
+        external_message_id = event['_source']['message']
+        try:
+            message_id = message_id_lookup[external_message_id]
+        except KeyError:
+            missing += 1
+        else:
+            extra = event['_source'].get('extra')
+            values.append(
+                Values(
+                    message_id=message_id,
+                    status=event['_source']['status'],
+                    ts=from_unix_ms(event['_source']['ts']).replace(tzinfo=timezone.utc),
+                    extra=json.dumps(extra) if extra else None,
+                )
+            )
+
+    if values:
+        async with pg.acquire() as conn:
+            await conn.execute_b('insert into events (:values__names) values :values', values=MultipleValues(*values))
+    return missing
 
 
 async def transfer_events(es, pg, loop):
-    await pg.execute('DROP TRIGGER IF EXISTS update_message ON events;')
+    print('deleting events from the db...')
+    await pg.execute('delete from events')
+    print('done')
+    await pg.execute('DROP TRIGGER IF EXISTS update_message ON events')
+    global message_id_lookup
 
     try:
         for m in reversed(SendMethod):
@@ -306,7 +323,8 @@ async def transfer_events(es, pg, loop):
             hits = data['hits']['hits']
             tasks = [loop.create_task(process_events(hits, pg))]
             hit_count = len(hits)
-            print('method: {}, events: {}'.format(m.value, total))
+            missing = 0
+            print(f'method: {m.value}, events: {total}')
             for i in tqdm(range(total // 1000 + 1), smoothing=0.1):
                 es_query = {
                     'scroll': '10m',
@@ -322,19 +340,97 @@ async def transfer_events(es, pg, loop):
                     break
 
                 if i % 100 == 0:
-                    await asyncio.gather(*tasks)
+                    missing += sum(await asyncio.gather(*tasks))
                     tasks = []
 
-            print('method: {}, total hits: {}, {} tasks to complete'.format(m.value, hit_count, len(tasks)))
-            await asyncio.gather(*tasks)
+            print(f'method: {m.value}, total hits: {hit_count}, {len(tasks)} tasks to complete')
+            missing += sum(await asyncio.gather(*tasks))
+            if missing:
+                print(f'total of {missing} missing messages')
+            message_id_lookup = {}
     finally:
         await pg.execute('CREATE TRIGGER update_message AFTER INSERT ON events '
-                         'FOR EACH ROW EXECUTE PROCEDURE update_message();')
+                         'FOR EACH ROW EXECUTE PROCEDURE update_message()')
+
+
+async def process_links(links, pg):
+    if not links:
+        return 0
+
+    new_message_ids = set()
+    for link in links:
+        external_message_id = link['_source']['send_message_id']
+        if external_message_id not in message_id_lookup:
+            new_message_ids.add(external_message_id)
+
+    if new_message_ids:
+        async with pg.acquire() as conn:
+            v = await conn.fetch('select external_id, id from messages where external_id=any($1)', new_message_ids)
+            message_id_lookup.update(dict(v))
+
+    values = []
+    missing = 0
+    for link in links:
+        external_message_id = link['_source']['send_message_id']
+        try:
+            message_id = message_id_lookup[external_message_id]
+        except KeyError:
+            missing += 1
+        else:
+            values.append(
+                Values(
+                    message_id=message_id,
+                    token=link['_source']['token'],
+                    url=link['_source']['url'],
+                )
+            )
+    if values:
+        async with pg.acquire() as conn:
+            await conn.execute_b('insert into links (:values__names) values :values', values=MultipleValues(*values))
+    return missing
+
+
+async def transfer_links(es, pg, loop):
+    print('deleting links from the db...')
+    await pg.execute('delete from links')
+    print('done')
+
+    r = await es.get(f'links/_search?scroll=10m', size=1000, sort=[{'expires_ts': 'desc'}])
+    data = await r.json()
+    total = data['hits']['total']
+    scroll_id = data['_scroll_id']
+    hits = data['hits']['hits']
+    tasks = [loop.create_task(process_links(hits, pg))]
+    hit_count = len(hits)
+    missing = 0
+    print(f'total links: {total}')
+    for i in tqdm(range(total // 1000 + 1), smoothing=0.1):
+        es_query = {
+            'scroll': '10m',
+            'scroll_id': scroll_id,
+        }
+        r = await es.get(f'/_search/scroll', **es_query)
+        data = await r.json()
+        hits = data['hits']['hits']
+        hit_count += len(hits)
+        if hits:
+            tasks.append(loop.create_task(process_links(hits, pg)))
+        else:
+            break
+
+        if i % 100 == 0:
+            missing += sum(await asyncio.gather(*tasks))
+            tasks = []
+
+    print(f'total hits: {hit_count}, {len(tasks)} tasks to complete')
+    missing += sum(await asyncio.gather(*tasks))
+    if missing:
+        print(f'total of {missing} missing messages')
 
 
 async def main(loop):
     start = time()
-    settings = Settings()
+    settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
 
     es = ElasticSearch(settings=settings, loop=loop)
@@ -343,9 +439,11 @@ async def main(loop):
     pg = await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=100, max_size=400)
     try:
         if len(sys.argv) == 1:
-            action = 'restore_list'
-        else:
-            action = sys.argv[1]
+            print('please choose an action from "restore_list", "restore", "transfer_messages", '
+                  '"transfer_events" or "transfer_links"')
+            return
+
+        action = sys.argv[1]
         if action == 'restore_list':
             await es.create_indices()
             await es.create_snapshot_repo()
@@ -358,6 +456,8 @@ async def main(loop):
             await transfer_messages(es, pg, loop)
         elif action == 'transfer_events':
             await transfer_events(es, pg, loop)
+        elif action == 'transfer_links':
+            await transfer_links(es, pg, loop)
         else:
             raise RuntimeError(f'unknown action: "{action}"')
     finally:
