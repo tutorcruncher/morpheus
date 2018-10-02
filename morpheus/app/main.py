@@ -127,14 +127,15 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
     app.router.add_get('/user' + methods + 'messages.json', UserMessagesJsonView.view(), name='user-messages')
-    app.router.add_get('/user' + methods + 'message/{id}.html', UserMessageDetailView.view(), name='user-message-get')
+    app.router.add_get('/user' + methods + 'message/{id:\d+}.html', UserMessageDetailView.view(),
+                       name='user-message-get')
     app.router.add_get('/user' + methods + 'messages.html', UserMessageListView.view(), name='user-message-list')
 
     app.router.add_get('/user' + methods + 'aggregation.json', UserAggregationView.view(), name='user-aggregation')
-    app.router.add_get('/user' + methods + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')
+    app.router.add_get('/user' + methods + '{id:\d+}/preview/', UserMessagePreviewView.view(), name='user-preview')
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
-    app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')
+    app.router.add_get('/admin/get/{method}/{id:\d+}/', AdminGetView.view(), name='admin-get')
 
     app.router.add_get('/stats/requests/', RequestStatsView.view(), name='request-stats')
     app.router.add_get('/stats/messages/', MessageStatsView.view(), name='message-stats')

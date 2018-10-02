@@ -42,7 +42,7 @@ async def test_user_list(cli, settings, send_email, db_conn):
     assert msg_ids == list(reversed(expected_msg_ids))
     first_item = data['items'][0]
     assert first_item == {
-        'msg_id': await db_conn.fetchval('select id from messages where external_id=$1', expected_msg_ids[3]),
+        'id': await db_conn.fetchval('select id from messages where external_id=$1', expected_msg_ids[3]),
         'external_id': expected_msg_ids[3],
         'send_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
         'update_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
@@ -203,22 +203,23 @@ async def test_user_tags(cli, settings, send_email):
     assert data['items'][0]['external_id'] == f'{uid2}-4tcom'
 
 
-async def test_message_details(cli, settings, send_email):
-    msg_id = await send_email(company_code='test-details')
+async def test_message_details(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(company_code='test-details')
 
     data = {
         'ts': int(1e10),
         'event': 'open',
-        '_id': msg_id,
+        '_id': msg_ext_id,
         'user_agent': 'testincalls'
     }
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
-    r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
-    assert r.status == 200, await r.text()
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    r = await cli.get(modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details'))
     text = await r.text()
+    assert r.status == 200, text
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
     spaceless = re.sub('\n +', '\n', text)
     # print(spaceless)
     assert '<label>Subject:</label>\n<span>test message</span>' in spaceless
@@ -228,8 +229,8 @@ async def test_message_details(cli, settings, send_email):
     assert '"user_agent": "testincalls",' in text
 
 
-async def test_message_details_link(cli, settings, send_email):
-    msg_id = await send_email(
+async def test_message_details_link(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
         company_code='test-details',
         recipients=[
             {
@@ -248,13 +249,14 @@ async def test_message_details_link(cli, settings, send_email):
     data = {
         'ts': int(2e12),
         'event': 'open',
-        '_id': msg_id,
+        '_id': msg_ext_id,
         'user_agent': 'testincalls'
     }
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
-    url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    url = modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 200, await r.text()
     text = await r.text()
@@ -298,7 +300,7 @@ async def test_many_events(cli, settings, send_email, db_conn):
         ])
     )
 
-    url = modify_url(f'/user/email-test/message/{msg_ext_id}.html', settings, 'test-details')
+    url = modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 200, await r.text()
     text = await r.text()
@@ -307,16 +309,17 @@ async def test_many_events(cli, settings, send_email, db_conn):
 
 
 async def test_message_details_missing(cli, settings):
-    r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
+    r = await cli.get(modify_url(f'/user/email-test/message/123.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
     text = await r.text()
     assert 'message not found' == text
     assert 'message not found' == text
 
 
-async def test_message_preview(cli, settings, send_email):
-    msg_id = await send_email(company_code='preview')
-    r = await cli.get(modify_url(f'/user/email-test/{msg_id}/preview/', settings, 'preview'))
+async def test_message_preview(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(company_code='preview')
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    r = await cli.get(modify_url(f'/user/email-test/{message_id}/preview/', settings, 'preview'))
     assert r.status == 200, await r.text()
     assert '<body>\nthis is a test\n</body>' == await r.text()
 
@@ -352,13 +355,13 @@ async def test_user_sms(cli, settings, send_sms):
 
 
 async def test_user_sms_preview(cli, settings, send_sms, db_conn):
-    msg_id = await send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
+    msg_ext_id = await send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
 
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
     await send_sms(uid=str(uuid.uuid4()), company_code='flip')
-    r = await cli.get(modify_url(f'/user/sms-test/{msg_id}/preview/', settings, 'smspreview'))
+    r = await cli.get(modify_url(f'/user/sms-test/{message_id}/preview/', settings, 'smspreview'))
     text = await r.text()
     assert r.status == 200, text
-    print(text)
     assert '<span class="metadata">Length:</span>220' in text
     assert '<span class="metadata">Multipart:</span>2 parts' in text
 

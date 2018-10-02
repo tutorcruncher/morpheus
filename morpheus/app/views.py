@@ -262,7 +262,7 @@ class _UserMessagesView(UserView):
         pretty_ts = bool(self.pretty_ts or self.request.query.get('pretty_ts'))
         date_func = 'pretty_ts' if pretty_ts else 'iso_ts'
         return [
-            Var('m.id').as_('msg_id'),
+            Var('m.id').as_('id'),
             Func(date_func, Var('send_ts'), tz).as_('send_ts'),
             Func(date_func, Var('update_ts'), tz).as_('update_ts'),
             'external_id',
@@ -289,7 +289,11 @@ class _UserMessagesView(UserView):
             where &= (Var('j.company') == self.session.company)
 
         if message_id:
-            where &= (Var('m.external_id') == message_id)
+            try:
+                message_id = int(message_id)
+            except ValueError:
+                raise HTTPBadRequest(text=f'invalid message id: "{message_id}"')
+            where &= (Var('m.id') == message_id)
         elif tags:
             where &= (Var('tags').contains(tags))
         elif query:
@@ -349,7 +353,7 @@ class _UserMessagesView(UserView):
 
     async def insert_events(self, data):
         async with self.app['pg'].acquire() as conn:
-            msg_ids = [m['msg_id'] for m in data['items']]
+            msg_ids = [m['id'] for m in data['items']]
             events = await conn.fetch(
                 """
                 select status, message_id, iso_ts(ts, $2) ts, extra
@@ -370,7 +374,7 @@ class _UserMessagesView(UserView):
                 event_lookup[msg_id] = [event]
         del events
         for msg in data['items']:
-            msg['events'] = event_lookup.get(msg['msg_id'], [])
+            msg['events'] = event_lookup.get(msg['id'], [])
 
 
 class UserMessagesJsonView(_UserMessagesView):
@@ -392,8 +396,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
     pretty_ts = True
 
     async def call(self, request):
-        msg_id = self.request.match_info['id']
-        data = await self.query(message_id=msg_id)
+        data = await self.query(message_id=self.request.match_info['id'])
         if data['count'] == 0:
             raise HTTPNotFound(text='message not found')
         data = data['items'][0]
@@ -405,7 +408,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             id=data['external_id'],
             method=data['method'],
             details=self._details(data),
-            events=[e async for e in self._events(data['msg_id'])],
+            events=[e async for e in self._events(data['id'])],
             preview_url=self.full_url(f'{preview_path}?{self.request.query_string}'),
             attachments=list(self._attachments(data)),
         )
@@ -513,7 +516,7 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             subject = msg.get('subject') or msg.get('body', '')
             yield [
                 {
-                    'href': msg['external_id'],
+                    'href': msg['id'],
                     'text': msg['to_address'],
                 },
                 msg['send_ts'],
@@ -530,7 +533,7 @@ class UserMessagePreviewView(TemplateView, UserView):
 
     async def call(self, request):
         method = self.request.match_info['method']
-        where = (Var('j.method') == method) & (Var('m.external_id') == request.match_info['id'])
+        where = (Var('j.method') == method) & (Var('m.id') == int(request.match_info['id']))
 
         if self.session.company != '__all__':
             where &= (Var('j.company') == self.session.company)
@@ -696,17 +699,15 @@ class AdminListView(AdminView):
         headings = ['score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
         for i, message in enumerate(data['items']):
-            ext_id = message['external_id']
             subject = message.get('subject') or message.get('body', '')[:50]
             score = message.get('score') or None
             table_body.append([
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
                 {
-                    'href': self.app.router['admin-get'].url_for(method=method, id=ext_id),
-                    'text': ext_id,
+                    'href': self.app.router['admin-get'].url_for(method=method, id=str(message['id'])),
+                    'text': message['to_address'],
                 },
                 message['company'],
-                message['to_address'],
                 message['status'],
                 message['send_ts'],
                 message['update_ts'],

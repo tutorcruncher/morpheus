@@ -23,25 +23,28 @@ async def test_aggregates(cli, send_email):
 
 async def test_list(cli, send_email, db_conn):
     # make sure at least two messages are sent
-    await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'xx@t.com'}])
-    await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'xy@t.com'}])
+    await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': 'xx@t.com'}])
+    await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': 'xy@t.com'}])
 
     await db_conn.execute('update messages set update_ts=$1, send_ts=$1', datetime(2032, 6, 1, tzinfo=timezone.utc))
 
     r = await cli.get('/admin/list/?method=email-test', headers=gen_headers())
     text = await r.text()
+    debug(text)
     assert r.status == 200, text
     m = re.search('<h3>Total: (\d+)</h3>', text)
     assert m, text
     send_count = int(m.groups()[0])
     assert send_count > 1
-    assert '<td>xx@t.com</td>' in text
+    msg_id = await db_conn.fetchval('select id from messages where to_address=$1', 'xx@t.com')
+    assert f'<td><a href="/admin/get/email-test/{msg_id}/" class="short">xx@t.com</a></td>\n' in text
     assert '<td>Tue 2032-06-01 00:00 UTC</td>' in text
 
 
-async def test_details(cli, send_email):
-    message_id = await send_email()
+async def test_details(cli, send_email, db_conn):
+    msg_ext_id = await send_email()
 
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
     r = await cli.get(f'/admin/get/email-test/{message_id}/', headers=gen_headers())
     text = await r.text()
     assert r.status == 200, text
