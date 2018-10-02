@@ -234,7 +234,7 @@ class Sender(Actor):
                 attachments=attachments,
             ),
         }
-        send_ts = datetime.utcnow()
+        send_ts = utcnow()
         if j.address.endswith('@example.com'):
             _id = re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{j.address}')
             await self._store_email(_id, send_ts, j, email_info)
@@ -287,7 +287,7 @@ class Sender(Actor):
             attachments=[f'{a["name"]}:{base64.b64decode(a["content"]).decode(errors="ignore"):.40}' for a in attachs],
         )
         msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{j.group_uuid}-{j.address}')
-        send_ts = datetime.utcnow()
+        send_ts = utcnow()
         output = (
             f'to: {j.address}\n'
             f'msg id: {msg_id}\n'
@@ -471,12 +471,6 @@ class Sender(Actor):
                 if not raw_queue:
                     break
 
-                if cost_limit is not None:
-                    # FIXME, don't call check_sms_limit on every request, just increment value in loop
-                    spend = await self.check_sms_limit(company_code)
-                    if spend >= cost_limit:
-                        main_logger.warning('cost limit exceeded %0.2f >= %0.2f, %s', spend, cost_limit, company_code)
-                        break
                 msg_data = msgpack.unpackb(raw_data, encoding='utf8')
                 data = dict(
                     context=dict(context, **msg_data.pop('context')),
@@ -508,21 +502,20 @@ class Sender(Actor):
                     error = str(e)
 
         if error:
-            await self.es.post(
-                f'messages/{j.send_method}',
-                company=j.company_code,
-                send_ts=datetime.utcnow(),
-                update_ts=datetime.utcnow(),
-                status=MessageStatus.render_failed,
-                to_first_name=j.first_name,
-                to_last_name=j.last_name,
-                to_user_link=j.user_link,
-                to_address=number_info.number_formatted if number_info else j.number,
-                group_id=j.group_id,
-                from_name=j.from_name,
-                tags=j.tags,
-                body=error,
-            )
+            async with self.pg.acquire() as conn:
+                await conn.execute_b(
+                    'insert into messages (:values__names) values :values',
+                    values=Values(
+                        group_id=j.group_id,
+                        status=MessageStatus.render_failed,
+                        to_first_name=j.first_name,
+                        to_last_name=j.last_name,
+                        to_user_link=j.user_link,
+                        to_address=number_info.number_formatted if number_info else j.number,
+                        tags=j.tags,
+                        body=error,
+                    )
+                )
         else:
             return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
 
@@ -533,7 +526,7 @@ class Sender(Actor):
 
         # remove the + from the beginning of the number
         msg_id = f'{j.group_uuid}-{sms_data.number.number[1:]}'
-        send_ts = datetime.utcnow()
+        send_ts = utcnow()
         cost = 0.012 * sms_data.length.parts
         output = (
             f'to: {sms_data.number}\n'
@@ -613,7 +606,7 @@ class Sender(Actor):
         msg_cost = await self._messagebird_get_number_cost(sms_data.number)
 
         cost = sms_data.length.parts * msg_cost
-        send_ts = datetime.utcnow()
+        send_ts = utcnow()
         main_logger.info('sending SMS to %s, parts: %d, cost: %0.2fp',
                          sms_data.number.number, sms_data.length.parts, cost * 100)
         r = await self.messagebird.post(
@@ -674,7 +667,6 @@ class Sender(Actor):
                 )
 
     async def check_sms_limit(self, company_code):
-        # TODO this is called more often than necessary
         async with self.pg.acquire() as conn:
             return await conn.fetchval(
                 """
@@ -684,7 +676,7 @@ class Sender(Actor):
                 where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
                 """,
                 company_code
-            )
+            ) or 0
 
     @concurrent(Actor.LOW_QUEUE)
     async def update_mandrill_webhooks(self, events):
@@ -792,3 +784,7 @@ class Worker(BaseWorker):  # pragma: no cover
         d = await super().shadow_kwargs()
         d['settings'] = self.settings
         return d
+
+
+def utcnow():
+    return datetime.utcnow().replace(tzinfo=timezone.utc)

@@ -100,6 +100,18 @@ class SimplePgPool:
         await self._lock.acquire()
         return self.conn
 
+    async def execute(self, *args, **kwargs):
+        async with self._lock:
+            return await self.conn.execute(*args, **kwargs)
+
+    async def fetch(self, *args, **kwargs):
+        async with self._lock:
+            return await self.conn.fetch(*args, **kwargs)
+
+    async def fetchval(self, *args, **kwargs):
+        async with self._lock:
+            return await self.conn.fetchval(*args, **kwargs)
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self._lock.release()
 

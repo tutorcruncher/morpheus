@@ -6,7 +6,8 @@ import logging
 import re
 from datetime import datetime
 from html import escape
-from itertools import product
+from itertools import groupby
+from operator import itemgetter
 from statistics import mean, stdev
 from time import time
 
@@ -15,16 +16,17 @@ import pytz
 import ujson
 from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect, Response
 from aiohttp_jinja2 import template
-from arq.utils import from_unix_ms, truncate
-from buildpg import Var
+from arq.utils import truncate
+from buildpg import Func, Var
+from buildpg.clauses import Select, Where
 from markupsafe import Markup
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
-from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
-                     SmsNumbersModel, SmsSendModel, SubaccountModel)
+from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, SendMethod, SmsNumbersModel,
+                     SmsSendModel, SubaccountModel)
 from .utils import Mandrill  # noqa
 from .utils import AdminView, AuthView, ServiceView, TemplateView, UserView, View
 
@@ -245,6 +247,7 @@ class CreateSubaccountView(ServiceView):
 
 class _UserMessagesView(UserView):
     offset = True
+    pretty_ts = False
 
     def get_dt_tz(self):
         dt_tz = self.request.query.get('dttz') or 'utc'
@@ -254,43 +257,66 @@ class _UserMessagesView(UserView):
             raise HTTPBadRequest(text=f'unknown timezone: "{dt_tz}"')
         return dt_tz
 
-    async def query(self, *, message_id=None, tags=None, query=None, pretty_ts=False):
+    def _select_fields(self):
+        tz = self.get_dt_tz()
+        pretty_ts = bool(self.pretty_ts or self.request.query.get('pretty_ts'))
+        date_func = 'pretty_ts' if pretty_ts else 'iso_ts'
+        return [
+            Var('m.id').as_('msg_id'),
+            Func(date_func, Var('send_ts'), tz).as_('send_ts'),
+            Func(date_func, Var('update_ts'), tz).as_('update_ts'),
+            'external_id',
+            'status',
+            'to_first_name',
+            'to_last_name',
+            'to_user_link',
+            'to_address',
+            'company',
+            'method',
+            'subject',
+            'body',
+            'tags',
+            'attachments',
+            'from_name',
+            'from_name',
+            'cost',
+            'extra',
+        ]
+
+    async def query(self, *, message_id=None, tags=None, query=None):
         where = Var('j.method') == self.request.match_info['method']
         if self.session.company != '__all__':
             where &= (Var('j.company') == self.session.company)
 
-        if query:
-            return await self.query_general(where, query)
-        elif message_id:
+        if message_id:
             where &= (Var('m.external_id') == message_id)
         elif tags:
             where &= (Var('tags').contains(tags))
+        elif query:
+            return await self.query_general(where, query)
 
+        where = Where(where)
         async with self.app['pg'].acquire() as conn:
             count = await conn.fetchval_b(
                 """
                 select count(*)
                 from messages m
                 join message_groups j on m.group_id = j.id
-                where :where
+                :where
                 """,
                 where=where,
             )
             items = await conn.fetch_b(
                 """
-                select m.id as msg_id,
-                  external_id, :date_func(send_ts, :tz) send_ts, :date_func(update_ts, :tz) update_ts,
-                  status, to_first_name, to_last_name, to_user_link,
-                  to_address, company, method, subject, body, tags, attachments, from_name, from_name, cost, extra
+                :select
                 from messages m
                 join message_groups j on m.group_id = j.id
-                where :where
+                :where
                 order by send_ts
                 limit 100
                 offset :offset
                 """,
-                tz=self.get_dt_tz(),
-                date_func=Var('pretty_ts' if pretty_ts else 'iso_ts'),
+                select=Select(self._select_fields()),
                 where=where,
                 offset=self.get_arg_int('from', 0) if self.offset else 0,
             )
@@ -300,19 +326,18 @@ class _UserMessagesView(UserView):
         }
 
     async def query_general(self, where, query):
+        s = self._select_fields()
+        s.append(Func('ts_rank_cd', Var('vector'), Var('tsquery'), Var('16')).as_('ranking'))
         async with self.app['pg'].acquire() as conn:
             items = await conn.fetch_b(
                 """
-                select m.id as msg_id,
-                  external_id, iso_ts(send_ts, :tz) send_ts, iso_ts(update_ts, :tz) update_ts,
-                  status, to_first_name, to_last_name, to_user_link,
-                  to_address, company, ts_rank_cd(vector, tsquery, 16) ranking, subject
-                from messages m join message_groups j on m.group_id = j.id,
-                     to_tsquery(:query) tsquery
+                :select
+                from messages m join message_groups j on m.group_id = j.id, to_tsquery(:query) tsquery
                 where :where and vector @@ tsquery
                 order by ranking desc
                 limit 10
                 """,
+                select=Select(s),
                 tz=self.get_dt_tz(),
                 query=query,
                 where=where,
@@ -364,11 +389,11 @@ class UserMessagesJsonView(_UserMessagesView):
 
 class UserMessageDetailView(TemplateView, _UserMessagesView):
     template = 'user/details.jinja'
-    es_from = False
+    pretty_ts = True
 
     async def call(self, request):
         msg_id = self.request.match_info['id']
-        data = await self.query(message_id=msg_id, pretty_ts=True)
+        data = await self.query(message_id=msg_id)
         if data['count'] == 0:
             raise HTTPNotFound(text='message not found')
         data = data['items'][0]
@@ -416,17 +441,16 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
                 yield f'/attachment-doc/{doc_id}/', name
 
     async def _events(self, message_id):
-        async with self.app['pg'].acquire() as conn:
-            events = await conn.fetch(
-                """
-                select status, message_id, pretty_ts(ts, $2) as ts, extra
-                from events where message_id = $1
-                order by ts asc
-                limit 51
-                """,
-                message_id,
-                self.get_dt_tz(),
-            )
+        events = await self.app['pg'].fetch(
+            """
+            select status, message_id, pretty_ts(ts, $2) as ts, extra
+            from events where message_id = $1
+            order by ts asc
+            limit 51
+            """,
+            message_id,
+            self.get_dt_tz(),
+        )
         for event in events[:50]:
             yield dict(
                 status=event['status'].title(),
@@ -434,8 +458,9 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
                 details=Markup(json.dumps(json.loads(event['extra']), indent=2)),
             )
         if len(events) > 50:
+            extra = await self.app['pg'].fetchval('select count(*) - 50 from events where message_id = $1', message_id)
             yield dict(
-                status=f'{len(events) - 50} more',
+                status=f'{extra} more',
                 datetime='...',
                 details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2))
             )
@@ -543,6 +568,7 @@ class UserMessagePreviewView(TemplateView, UserView):
 agg_sql = """
 select json_build_object(
   'histogram', histogram,
+  'total', total,
   'all_opened', all_opened,
   'all_7_day', all_7_day,
   'open_7_day', open_7_day,
@@ -559,8 +585,15 @@ from (
       where :where and m.send_ts > current_timestamp - '90 days'::interval
     ) as t
     group by day, status
+    order by day
   ) as t
 ) as histogram,
+(
+  select count(*) as total
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp - '90 days'::interval
+) as total,
 (
   select count(*) as all_opened
   from messages m
@@ -616,23 +649,24 @@ class AdminAggregatedView(AdminView):
 
         r = await morpheus_api.get(url)
         data = await r.json()
-        bucket_data = data['aggregations']['histogram']['buckets']
         # ignore "click" and "unsub"
         headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
-        for period in reversed(bucket_data):
-            row = [datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
-            row += [period[h]['doc_count'] or '0' for h in headings[1:-1]]
-            was_sent = sum(period[h]['doc_count'] or 0 for h in was_sent_statuses)
-            opened = period['open']['doc_count']
+        for period, g in groupby(data['histogram'], key=itemgetter('day')):
+
+            row = [datetime.strptime(period[:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
+            counts = {v['status']: v['count'] for v in g}
+            row += [counts.get(h) or 0 for h in headings[1:-1]]
+            was_sent = sum(counts.get(h) or 0 for h in was_sent_statuses)
+            opened = counts.get('open') or 0
             if was_sent > 0:
                 row.append(f'{opened / was_sent * 100:0.2f}%')
             else:
                 row.append(f'{0:0.2f}%')
             table_body.append(row)
         return dict(
-            total=data['hits']['total'],
+            total=data['total'],
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'Aggregated {method} data',
@@ -649,6 +683,7 @@ class AdminListView(AdminView):
             'size': 100,
             'from': offset,
             'q': search,
+            'pretty_ts': '1',
         }
         # tags is a list so has to be processed separately
         if tags:
@@ -660,24 +695,25 @@ class AdminListView(AdminView):
 
         headings = ['score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
-        for i, message in enumerate(data['hits']['hits']):
-            score, source, id = message['_score'], message['_source'], message['_id']
-            subject = source.get('subject') or source.get('body', '')[:50]
+        for i, message in enumerate(data['items']):
+            ext_id = message['external_id']
+            subject = message.get('subject') or message.get('body', '')[:50]
+            score = message.get('score') or None
             table_body.append([
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
                 {
-                    'href': self.app.router['admin-get'].url_for(method=method, id=id),
-                    'text': id,
+                    'href': self.app.router['admin-get'].url_for(method=method, id=ext_id),
+                    'text': ext_id,
                 },
-                source['company'],
-                source['to_address'],
-                source['status'],
-                from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
-                from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
+                message['company'],
+                message['to_address'],
+                message['status'],
+                message['send_ts'],
+                message['update_ts'],
                 Markup(f'<span class="subject">{subject}</span>'),
             ])
 
-        if len(data['hits']['hits']) == 100:
+        if len(data['items']) == 100:
             next_offset = offset + 100
             query = {
                 'method': method,
@@ -693,7 +729,7 @@ class AdminListView(AdminView):
             next_page = None
         user_list_path = morpheus_api.modify_url(self.app.router['user-message-list'].url_for(method=method))
         return dict(
-            total=data['hits']['total'],
+            total=data['count'],
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'List {method} messages',
@@ -796,6 +832,17 @@ class RequestStatsView(AuthView):
         return Response(body=response_data, content_type='application/json')
 
 
+msg_stats_sql = """
+select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') from (
+  select count(*), extract(epoch from avg(update_ts - send_ts))::int as age, method, status
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where m.update_ts > current_timestamp - '10 mins'::interval
+  group by method, status
+) as t
+"""
+
+
 class MessageStatsView(AuthView):
     auth_token_field = 'stats_token'
 
@@ -803,61 +850,10 @@ class MessageStatsView(AuthView):
         cache_key = 'message-stats'
         redis_pool = await request.app['sender'].get_redis()
         with await redis_pool as redis:
-            response_data = await redis.get(cache_key)
-            if not response_data:
-                r = await self.app['es'].get(
-                    'messages/_search?size=0&filter_path=aggregations',
-                    query={
-                        'bool': {
-                            'filter': {
-                                'range': {
-                                    'update_ts': {'gte': 'now-10m'}
-                                }
-                            }
-                        }
-                    },
-                    aggs={
-                        f'{method}.{status}': {
-                            'aggs': {
-                                'age': {
-                                    'avg': {
-                                        'script': {
-                                            'source': 'doc.update_ts.value - doc.send_ts.value'
-                                        }
-                                    },
-                                },
-                                # 'event_count': {
-                                #     'avg': {
-                                #         'field': 'events',
-                                #         'script': {
-                                #             'inline': '_value.length',
-                                #         },
-                                #         'missing': 0,
-                                #     },
-                                # }
-                            },
-                            'filter': {
-                                'bool': {
-                                    'filter': [
-                                        {'type': {'value': method}},
-                                        {'term': {'status': status}},
-                                    ]
-                                }
-                            }
-                        } for method, status in product(SendMethod, MessageStatus)
-                    }
-                )
-                data = await r.json()
-                result = []
-                for k, v in data['aggregations'].items():
-                    method, status = k.split('.', 1)
-                    result.append(dict(
-                        method=method,
-                        status=status,
-                        count=v['doc_count'],
-                        age=round((v['age']['value'] or 0) / 1000),
-                        # events=int(v['event_count']['value'] or 0),
-                    ))
-                response_data = ujson.dumps(result).encode()
-                await redis.setex(cache_key, 598, response_data)
-        return Response(body=response_data, content_type='application/json')
+            results = await redis.get(cache_key)
+            if not results:
+                async with self.app['pg'].acquire() as conn:
+                    results = await conn.fetchval_b(msg_stats_sql)
+                debug(results)
+                await redis.setex(cache_key, 598, results)
+        return Response(body=results, content_type='application/json')

@@ -3,12 +3,14 @@ import hmac
 import json
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import urlencode
 
-import pytest
 from arq.utils import to_unix_ms
+from buildpg import MultipleValues, Values
 from pytest_toolbox.comparison import RegexStr
+
+from morpheus.app.models import MessageStatus
 
 
 def modify_url(url, settings, company='foobar'):
@@ -96,6 +98,7 @@ async def test_user_search(cli, settings, send_email):
     assert data['count'] == 1
     item = data['items'][0]
     # debug(item)
+    assert 0.05 < item['ranking'] < 0.2
     assert item['external_id'] == msgs['cherry']
     assert item['subject'] == 'cherry'
     r = await cli.get(modify_url('/user/email-test/messages.json?q=eggplant', settings, 'whoever'))
@@ -137,6 +140,7 @@ async def test_user_aggregate(cli, settings, send_email):
                 'status': 'open',
             },
         ],
+        'total': 5,
         'all_opened': 1,
         'all_7_day': 5,
         'open_7_day': 1,
@@ -271,9 +275,8 @@ async def test_message_details_link(cli, settings, send_email):
     assert 'unknown timezone: "snap"' == text
 
 
-@pytest.mark.xfail(strict=True)
-async def test_many_events(cli, settings, send_email):
-    msg_id = await send_email(
+async def test_many_events(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
         company_code='test-details',
         recipients=[
             {
@@ -282,22 +285,20 @@ async def test_many_events(cli, settings, send_email):
             }
         ]
     )
-    events = [
-        {
-            'ts': 1499786845,
-            'status': f'testing_{i}',
-            'extra': {}
-        }
-        for i in range(55)
-    ]
-    for event in events:
-        await cli.server.app['es'].post(
-            f'events/email-test/',
-            message=msg_id,
-            **event
-        )
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    await db_conn.execute_b(
+        'insert into events (:values__names) values :values',
+        values=MultipleValues(*[
+            Values(
+                ts=datetime(2032, 6, 1) + timedelta(days=i),
+                message_id=message_id,
+                status=MessageStatus.send,
+                extra=json.dumps({'foo': 'bar', 'v': i}),
+            ) for i in range(55)
+        ])
+    )
 
-    url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
+    url = modify_url(f'/user/email-test/message/{msg_ext_id}.html', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 200, await r.text()
     text = await r.text()

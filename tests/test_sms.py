@@ -1,14 +1,11 @@
 import re
-import uuid
 from urllib.parse import urlencode
+from uuid import uuid4
 
-import pytest
 
-
-@pytest.mark.xfail(strict=True)
 async def test_send_message(cli, tmpdir):
     data = {
-        'uid': 'x' * 20,
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d71',
         'company_code': 'foobar',
         'method': 'sms-test',
         'from_name': 'foobar send',
@@ -25,7 +22,7 @@ async def test_send_message(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    f = 'xxxxxxxxxxxxxxxxxxxx-447891123856.txt'
+    f = '69eb85e8-1504-40aa-94ff-75bb65fd8d71-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
@@ -36,10 +33,9 @@ async def test_send_message(cli, tmpdir):
     assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
 
 
-@pytest.mark.xfail(strict=True)
 async def test_send_message_usa(cli, settings, tmpdir):
     data = {
-        'uid': 'x' * 20,
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d72',
         'company_code': 'foobar',
         'country_code': 'US',
         'from_name': 'foobar send',
@@ -57,7 +53,7 @@ async def test_send_message_usa(cli, settings, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    f = 'xxxxxxxxxxxxxxxxxxxx-18183373095.txt'
+    f = '69eb85e8-1504-40aa-94ff-75bb65fd8d72-18183373095.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
@@ -112,10 +108,9 @@ async def test_validate_number(cli, tmpdir):
     } == data
 
 
-@pytest.mark.xfail(strict=True)
 async def test_repeat_uuid(cli, tmpdir):
     data = {
-        'uid': 'a' * 20,
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d73',
         'company_code': 'foobar',
         'method': 'sms-test',
         'main_template': 'this is a message',
@@ -124,16 +119,15 @@ async def test_repeat_uuid(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    assert str(tmpdir.listdir()[0]).endswith('aaaaaaaaaaaaaaaaaaaa-447891123856.txt')
+    assert str(tmpdir.listdir()[0]).endswith('69eb85e8-1504-40aa-94ff-75bb65fd8d73-447891123856.txt')
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 409, await r.text()
-    assert 'Send group with id "aaaaaaaaaaaaaaaaaaaa" already exists\n' in await r.text()
+    assert 'Send group with id "69eb85e8-1504-40aa-94ff-75bb65fd8d73" already exists\n' in await r.text()
 
 
-@pytest.mark.xfail(strict=True)
 async def test_invalid_number(cli, tmpdir):
     data = {
-        'uid': 'a' * 20,
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d74',
         'company_code': 'foobar',
         'country_code': 'US',
         'method': 'sms-test',
@@ -149,10 +143,12 @@ async def test_invalid_number(cli, tmpdir):
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 2
     files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
-    assert files == {'aaaaaaaaaaaaaaaaaaaa-18183373095.txt', 'aaaaaaaaaaaaaaaaaaaa-447891123856.txt'}
+    assert files == {
+        '69eb85e8-1504-40aa-94ff-75bb65fd8d74-18183373095.txt',
+        '69eb85e8-1504-40aa-94ff-75bb65fd8d74-447891123856.txt',
+    }
 
 
-@pytest.mark.xfail(strict=True)
 async def test_exceed_cost_limit(cli, tmpdir):
     d = {
         'company_code': 'cost-test',
@@ -161,27 +157,22 @@ async def test_exceed_cost_limit(cli, tmpdir):
         'main_template': 'this is a message',
         'recipients': [{'number': f'0789112385{i}'} for i in range(4)]
     }
-    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert {'status': 'enqueued', 'spend': 0.0} == await r.json()
     assert len(tmpdir.listdir()) == 4
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert {'status': 'enqueued', 'spend': 0.048} == await r.json()
     assert len(tmpdir.listdir()) == 8
 
-    await cli.server.app['es'].get('messages/_refresh')
-
-    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     obj = await r.json()
     assert 0.095 < obj['spend'] < 0.097
     assert len(tmpdir.listdir()) == 12
 
-    await cli.server.app['es'].get('messages/_refresh')
-
-    r = await cli.post('/send/sms/', json=dict(uid=str(uuid.uuid4()), **d), headers={'Authorization': 'testing-key'})
+    r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status == 402, await r.text()
     obj = await r.json()
     assert 0.143 < obj['spend'] < 0.145
@@ -191,7 +182,7 @@ async def test_exceed_cost_limit(cli, tmpdir):
 
 async def test_send_messagebird(cli, tmpdir, mock_external):
     data = {
-        'uid': str(uuid.uuid4()),
+        'uid': str(uuid4()),
         'company_code': 'foobar',
         'method': 'sms-messagebird',
         'main_template': 'this is a message',
@@ -208,7 +199,7 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
     mock_external.app['request_log'] = []
 
     # send again, this time hlr look and pricing requests shouldn't occur
-    data = dict(data, uid=str(uuid.uuid4()))
+    data = dict(data, uid=str(uuid4()))
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert [
@@ -216,10 +207,9 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
     ] == mock_external.app['request_log']
 
 
-@pytest.mark.xfail(strict=True)
-async def test_messagebird_webhook(cli, mock_external):
+async def test_messagebird_webhook(cli, db_conn, mock_external):
     data = {
-        'uid': str(uuid.uuid4()),
+        'uid': str(uuid4()),
         'company_code': 'webhook-test',
         'method': 'sms-messagebird',
         'main_template': 'this is a message',
@@ -235,27 +225,23 @@ async def test_messagebird_webhook(cli, mock_external):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get('messages/sms-messagebird/_search?q=company:webhook-test')
-    response_data = await r.json()
-    # import json
-    # print(json.dumps(response_data, indent=2))
-    assert response_data['hits']['total'] == 1
-    source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'send'
-    assert source['to_first_name'] == 'John'
-    assert source['to_last_name'] == 'Doe'
-    assert source['to_user_link'] == '4321'
-    assert source['to_address'] == '+44 7801 234567'
-    assert source['from_name'] == 'Morpheus'
-    assert source['body'] == 'this is a message'
-    assert source['cost'] == 0.02
-    assert len(source['tags']) == 1  # just group_id
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+    msg = await db_conn.fetchrow('select * from messages join message_groups j on messages.group_id = j.id')
+    # debug(dict(msg))
+    assert msg['status'] == 'send'
+    assert msg['to_first_name'] == 'John'
+    assert msg['to_last_name'] == 'Doe'
+    assert msg['to_user_link'] == '4321'
+    assert msg['to_address'] == '+44 7801 234567'
+    assert msg['from_name'] == 'Morpheus'
+    assert msg['body'] == 'this is a message'
+    assert msg['cost'] == 0.02
+    assert len(msg['tags']) == 1  # just group_id
     # events = await get_events(cli, response_data['hits']['hits'][0]['_id'], es_type='sms-messagebird')
     # assert events['hits']['total'] == 0
 
     url_args = {
-        'id': response_data['hits']['hits'][0]['_id'],
+        'id': msg['external_id'],
         'reference': 'morpheus',
         'recipient': '447801234567',
         'status': 'delivered',
@@ -264,22 +250,17 @@ async def test_messagebird_webhook(cli, mock_external):
     r = await cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
     assert r.status == 200, await r.text()
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get('messages/sms-messagebird/_search?q=company:webhook-test')
-    response_data = await r.json()
-    assert response_data['hits']['total'] == 1
-    source = response_data['hits']['hits'][0]['_source']
-
-    assert source['status'] == 'delivered'
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+    msg = await db_conn.fetchrow('select * from messages')
+    assert msg['status'] == 'delivered'
     # events = await get_events(cli, response_data['hits']['hits'][0]['_id'], es_type='sms-messagebird')
     # assert events['hits']['total'] == 1
     # assert events['hits']['hits'][0]['_source']['status'] == 'delivered'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_failed_render(cli, tmpdir):
+async def test_failed_render(cli, tmpdir, db_conn):
     data = {
-        'uid': 'x' * 20,
+        'uid': str(uuid4()),
         'company_code': 'test_failed_render',
         'method': 'sms-test',
         'context': {'foo': 'FOO'},
@@ -290,18 +271,14 @@ async def test_failed_render(cli, tmpdir):
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 0
 
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.server.app['es'].get('messages/sms-test/_search?q=company:test_failed_render')
-    response_data = await r.json()
-    assert response_data['hits']['total'] == 1
-    source = response_data['hits']['hits'][0]['_source']
-    assert source['status'] == 'render_failed'
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+    msg = await db_conn.fetchrow('select * from messages')
+    assert msg['status'] == 'render_failed'
 
 
-@pytest.mark.xfail(strict=True)
-async def test_link_shortening(cli, tmpdir):
+async def test_link_shortening(cli, tmpdir, db_conn):
     data = {
-        'uid': 'x' * 20,
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d75',
         'company_code': 'sms_test_link_shortening',
         'method': 'sms-test',
         'main_template': 'this is a message {{ foo }}',
@@ -315,7 +292,7 @@ async def test_link_shortening(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    f = 'xxxxxxxxxxxxxxxxxxxx-447891123856.txt'
+    f = '69eb85e8-1504-40aa-94ff-75bb65fd8d75-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
@@ -324,13 +301,10 @@ async def test_link_shortening(cli, tmpdir):
     token = re.search('message click.example.com/l(.+?)\n', msg_file).groups()[0]
     assert len(token) == 12
 
-    await cli.server.app['es'].get('links/_refresh')
-    r = await cli.server.app['es'].get('links/c/_search?q=company:sms_test_link_shortening')
-    response_data = await r.json()
-    assert response_data['hits']['total'] == 1
-    v = response_data['hits']['hits'][0]['_source']
-    assert v['url'] == 'http://whatever.com/foo/bar'
-    assert v['token'] == token
+    assert 1 == await db_conn.fetchval('select count(*) from links')
+    link = await db_conn.fetchrow('select * from links')
+    assert link['url'] == 'http://whatever.com/foo/bar'
+    assert link['token'] == token
 
     r = await cli.get(f'/l{token}', allow_redirects=False)
     assert r.status == 307, await r.text()
@@ -341,10 +315,9 @@ async def test_link_shortening(cli, tmpdir):
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
 
 
-@pytest.mark.xfail(strict=True)
 async def test_send_multi_part(cli, tmpdir):
     data = {
-        'uid': 'x' * 20,
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d76',
         'company_code': 'foobar',
         'method': 'sms-test',
         'main_template': 'this is a message {{ foo }}\n' * 10,
@@ -360,7 +333,7 @@ async def test_send_multi_part(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
-    f = 'xxxxxxxxxxxxxxxxxxxx-447891123856.txt'
+    f = '69eb85e8-1504-40aa-94ff-75bb65fd8d76-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file: str = tmpdir.join(f).read()
     print(msg_file)
@@ -368,10 +341,9 @@ async def test_send_multi_part(cli, tmpdir):
     assert msg_file.count('this is a message bar') == 10
 
 
-@pytest.mark.xfail(strict=True)
 async def test_send_too_long(cli, tmpdir):
     data = {
-        'uid': 'x' * 20,
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d77',
         'company_code': 'foobar',
         'method': 'sms-test',
         'main_template': 'x' * 1500,

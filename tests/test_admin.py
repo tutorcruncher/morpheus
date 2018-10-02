@@ -1,8 +1,7 @@
 import base64
 import re
 import uuid
-
-import pytest
+from datetime import datetime, timezone
 
 
 def gen_headers():
@@ -10,7 +9,6 @@ def gen_headers():
     return {'Authorization': f'Basic {token}'}
 
 
-@pytest.mark.xfail(strict=True)
 async def test_aggregates(cli, send_email):
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
@@ -23,30 +21,26 @@ async def test_aggregates(cli, send_email):
     assert text.count('<td>0</td>') > 5  # to allow statuses to change
 
 
-@pytest.mark.xfail(strict=True)
-async def test_list(cli, send_email):
+async def test_list(cli, send_email, db_conn):
     # make sure at least two messages are sent
     await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'xx@t.com'}])
     await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'xy@t.com'}])
 
-    await cli.server.app['es'].get('messages/_refresh')
+    await db_conn.execute('update messages set update_ts=$1, send_ts=$1', datetime(2032, 6, 1, tzinfo=timezone.utc))
 
     r = await cli.get('/admin/list/?method=email-test', headers=gen_headers())
     text = await r.text()
     assert r.status == 200, text
-    # print(text)
     m = re.search('<h3>Total: (\d+)</h3>', text)
     assert m, text
     send_count = int(m.groups()[0])
     assert send_count > 1
     assert '<td>xx@t.com</td>' in text
+    assert '<td>Tue 2032-06-01 00:00 UTC</td>' in text
 
 
-@pytest.mark.xfail(strict=True)
 async def test_details(cli, send_email):
     message_id = await send_email()
-
-    await cli.server.app['es'].get('messages/_refresh')
 
     r = await cli.get(f'/admin/get/email-test/{message_id}/', headers=gen_headers())
     text = await r.text()
