@@ -15,6 +15,7 @@ lint:
 	flake8 morpheus/ tests/
 	pytest morpheus -p no:sugar -q
 	python setup.py check -rms
+	./tests/check_debug.sh
 
 .PHONY: test
 test:

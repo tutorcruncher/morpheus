@@ -74,7 +74,6 @@ async def test_webhook(cli, send_email, db_conn):
     events = await db_conn.fetch('select * from events where message_id=$1', message['id'])
     events = [dict(e) for e in events]
     assert len(events) == 1
-    debug(events)
     assert events == [
         {
             'id': AnyInt(),

@@ -43,7 +43,6 @@ async def test_list(cli, send_email, db_conn):
 
     r = await cli.get('/admin/list/?method=email-test', headers=gen_headers())
     text = await r.text()
-    debug(text)
     assert r.status == 200, text
     m = re.search('<h3>Total: (\d+)</h3>', text)
     assert m, text

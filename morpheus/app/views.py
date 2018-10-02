@@ -855,6 +855,5 @@ class MessageStatsView(AuthView):
             if not results:
                 async with self.app['pg'].acquire() as conn:
                     results = await conn.fetchval_b(msg_stats_sql)
-                debug(results)
                 await redis.setex(cache_key, 598, results)
         return Response(body=results, content_type='application/json')
