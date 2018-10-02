@@ -16,7 +16,7 @@ CREATE TRIGGER update_message AFTER INSERT ON events FOR EACH ROW EXECUTE PROCED
 -- set client_min_messages to 'NOTICE';
 
 
-CREATE FUNCTION set_message_vector() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION set_message_vector() RETURNS trigger AS $$
   BEGIN
     RAISE NOTICE '%', NEW.external_id;
     NEW.vector := setweight(to_tsvector(coalesce(NEW.external_id, '')), 'A') ||
@@ -48,7 +48,6 @@ CREATE OR REPLACE FUNCTION pretty_ts(v TIMESTAMPTZ, tz VARCHAR(63)) RETURNS VARC
   DECLARE
   BEGIN
     PERFORM set_config('timezone', tz, true);
-    -- '%a %Y-%m-%d %H:%M'
     return to_char(v, 'Dy YYYY-MM-DD HH24:MI TZ');
   END;
 $$ LANGUAGE plpgsql;

@@ -69,7 +69,7 @@ CREATE TABLE links (
   id SERIAL PRIMARY KEY,
   message_id INT NOT NULL REFERENCES messages ON DELETE CASCADE,
   token VARCHAR(31),
-  url VARCHAR(255)
+  url TEXT
 );
 CREATE INDEX link_message_id ON links USING btree (message_id);
 CREATE INDEX link_token ON links USING btree (token);

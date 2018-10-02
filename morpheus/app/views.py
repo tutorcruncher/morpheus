@@ -316,7 +316,7 @@ class _UserMessagesView(UserView):
                 from messages m
                 join message_groups j on m.group_id = j.id
                 :where
-                order by send_ts
+                order by m.send_ts desc
                 limit 100
                 offset :offset
                 """,

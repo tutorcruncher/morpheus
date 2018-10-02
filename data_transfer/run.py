@@ -231,9 +231,10 @@ async def transfer_messages(es, pg, loop):
     await pg.execute('delete from message_groups')
     print('done')
     global group_lookup
+    scrl = 1000
 
     for m in reversed(SendMethod):
-        r = await es.get(f'messages/{m.value}/_search?scroll=10m', size=1000, sort=[{'send_ts': 'desc'}])
+        r = await es.get(f'messages/{m.value}/_search?scroll=10m', size=scrl, sort=[{'send_ts': 'desc'}])
         data = await r.json()
         total = data['hits']['total']
         scroll_id = data['_scroll_id']
@@ -241,7 +242,7 @@ async def transfer_messages(es, pg, loop):
         tasks = [loop.create_task(process_messages(hits, pg))]
         hit_count = len(hits)
         print(f'method: {m.value}, events: {total}')
-        for i in tqdm(range(total // 1000 + 1), smoothing=0.01):
+        for i in tqdm(range(total // scrl + 1), smoothing=0.01):
             es_query = {
                 'scroll': '10m',
                 'scroll_id': scroll_id,
@@ -313,10 +314,11 @@ async def transfer_events(es, pg, loop):
     print('done')
     await pg.execute('DROP TRIGGER IF EXISTS update_message ON events')
     global message_id_lookup
+    scrl = 5000
 
     try:
         for m in reversed(SendMethod):
-            r = await es.get(f'events/{m.value}/_search?scroll=10m', size=1000, sort=[{'ts': 'desc'}])
+            r = await es.get(f'events/{m.value}/_search?scroll=10m', size=scrl, sort=[{'ts': 'desc'}])
             data = await r.json()
             total = data['hits']['total']
             scroll_id = data['_scroll_id']
@@ -325,7 +327,7 @@ async def transfer_events(es, pg, loop):
             hit_count = len(hits)
             missing = 0
             print(f'method: {m.value}, events: {total}')
-            for i in tqdm(range(total // 1000 + 1), smoothing=0.1):
+            for i in tqdm(range(total // scrl + 1), smoothing=0.01):
                 es_query = {
                     'scroll': '10m',
                     'scroll_id': scroll_id,
@@ -394,8 +396,9 @@ async def transfer_links(es, pg, loop):
     print('deleting links from the db...')
     await pg.execute('delete from links')
     print('done')
+    scrl = 5000
 
-    r = await es.get(f'links/_search?scroll=10m', size=1000, sort=[{'expires_ts': 'desc'}])
+    r = await es.get(f'links/_search?scroll=10m', size=scrl, sort=[{'expires_ts': 'desc'}])
     data = await r.json()
     total = data['hits']['total']
     scroll_id = data['_scroll_id']
@@ -404,7 +407,7 @@ async def transfer_links(es, pg, loop):
     hit_count = len(hits)
     missing = 0
     print(f'total links: {total}')
-    for i in tqdm(range(total // 1000 + 1), smoothing=0.1):
+    for i in tqdm(range(total // scrl + 1), smoothing=0.01):
         es_query = {
             'scroll': '10m',
             'scroll_id': scroll_id,
