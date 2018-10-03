@@ -3,7 +3,6 @@ import base64
 import os
 import uuid
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -283,9 +282,14 @@ async def test_missing_url_with_arg_bad(cli):
     assert r.status == 404, await r.text()
 
 
-def test_api_error_json():
-    e = ApiError('GET', 'http://example.com', MagicMock(status=456))
-    assert 'GET http://example.com, unexpected response 456' == str(e)
+async def test_api_error(settings, loop, mock_external):
+    s = ApiSession(mock_external.app['server_name'], settings, loop)
+    try:
+        with pytest.raises(ApiError) as exc_info:
+            await s.get('/foobar')
+        assert str(exc_info.value) == 'GET {server_name}/foobar, unexpected response 404'.format(**mock_external.app)
+    finally:
+        await s.close()
 
 
 @pytest.mark.parametrize('input, result', [
