@@ -284,13 +284,8 @@ async def test_missing_url_with_arg_bad(cli):
 
 
 def test_api_error_json():
-    e = ApiError('GET', 'http://example.com', {'x': 'y'}, MagicMock(), '{"hello": 123}')
-    assert 'Response data: {\n' in str(e)
-
-
-def test_api_error_not_json():
-    e = ApiError('GET', 'http://example.com', {'x': 'y'}, MagicMock(), 'foobar')
-    assert str(e).endswith('Response data: foobar')
+    e = ApiError('GET', 'http://example.com', MagicMock(status=456))
+    assert 'GET http://example.com, unexpected response 456' == str(e)
 
 
 @pytest.mark.parametrize('input, result', [

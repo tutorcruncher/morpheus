@@ -42,6 +42,15 @@ class Session(WebModel):
 AWebModel = NewType('AWebModel', WebModel)
 
 
+def lenient_json(v):
+    if isinstance(v, (str, bytes)):
+        try:
+            return json.loads(v)
+        except (ValueError, TypeError):
+            pass
+    return v
+
+
 class View:
     headers = None
 
@@ -221,24 +230,13 @@ class AdminView(TemplateView, BasicAuthView):
 
 
 class ApiError(RuntimeError):
-    def __init__(self, method, url, request_data, response, response_text):
+    def __init__(self, method, url, response):
         self.method = method
         self.url = url
-        self.response = response
         self.status = response.status
-        self.request_data = request_data
-        try:
-            self.response_text = json.dumps(ujson.loads(response_text), indent=2)
-        except ValueError:
-            self.response_text = response_text
 
     def __str__(self):
-        return (
-            f'{self.method} {self.url}, bad response {self.status}\n'
-            f'Request data: {json.dumps(self.request_data, indent=2, cls=CustomJSONEncoder)}\n'
-            f'-----------------------------\n'
-            f'Response data: {self.response_text}'
-        )
+        return f'{self.method} {self.url}, unexpected response {self.status}'
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -290,7 +288,16 @@ class ApiSession:
         if isinstance(allowed_statuses, int):
             allowed_statuses = allowed_statuses,
         if allowed_statuses != '*' and r.status not in allowed_statuses:
-            raise ApiError(method, url, data, r, response_text)
+            data = {
+                'request_real_url': str(r.request_info.real_url),
+                'request_headers': dict(r.request_info.headers),
+                'request_data': data,
+                'response_headers': dict(r.headers),
+                'response_content': lenient_json(response_text),
+            }
+            api_logger.warning('%s unexpected response %s /%s -> %s', self.__class__.__name__, method, uri, r.status,
+                               extra={'data': data})
+            raise ApiError(method, url, r)
         else:
             api_logger.debug('%s /%s -> %s', method, uri, r.status)
             return r
