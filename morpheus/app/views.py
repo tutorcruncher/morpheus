@@ -686,7 +686,7 @@ class AdminAggregatedView(AdminView):
         headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
-        hist = sorted(data['histogram'], key=itemgetter('day'))
+        hist = sorted(data['histogram'], key=itemgetter('day'), reverse=True)
         for period, g in groupby(hist, key=itemgetter('day')):
             row = [period]
             counts = {v['status']: v['count'] for v in g}
