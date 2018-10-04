@@ -4,7 +4,6 @@ import hmac
 import json
 import logging
 import re
-from datetime import datetime
 from html import escape
 from itertools import groupby
 from operator import itemgetter
@@ -257,10 +256,13 @@ class _UserMessagesView(UserView):
             raise HTTPBadRequest(text=f'unknown timezone: "{dt_tz}"')
         return dt_tz
 
+    def get_date_func(self):
+        pretty_ts = bool(self.pretty_ts or self.request.query.get('pretty_ts'))
+        return 'pretty_ts' if pretty_ts else 'iso_ts'
+
     def _select_fields(self):
         tz = self.get_dt_tz()
-        pretty_ts = bool(self.pretty_ts or self.request.query.get('pretty_ts'))
-        date_func = 'pretty_ts' if pretty_ts else 'iso_ts'
+        date_func = self.get_date_func()
         return [
             Var('m.id').as_('id'),
             Func(date_func, Var('send_ts'), tz).as_('send_ts'),
@@ -304,9 +306,13 @@ class _UserMessagesView(UserView):
             count = await conn.fetchval_b(
                 """
                 select count(*)
-                from messages m
-                join message_groups j on m.group_id = j.id
-                :where
+                from (
+                  select 1
+                  from messages m
+                  join message_groups j on m.group_id = j.id
+                  :where
+                  limit 10000
+                ) as t
                 """,
                 where=where,
             )
@@ -378,6 +384,29 @@ class _UserMessagesView(UserView):
 
 
 class UserMessagesJsonView(_UserMessagesView):
+    def _select_fields(self):
+        tz = self.get_dt_tz()
+        date_func = self.get_date_func()
+        return [
+            Var('m.id'),
+            Func(date_func, Var('send_ts'), tz).as_('send_ts'),
+            Func(date_func, Var('update_ts'), tz).as_('update_ts'),
+            'external_id',
+            'method',
+            'subject',
+            'status',
+            'to_first_name',
+            'to_last_name',
+            'to_user_link',
+            'to_address',
+            'company',
+            'tags',
+            'from_name',
+            'from_name',
+            'cost',
+            'extra',
+        ]
+
     async def call(self, request):
         data = await self.query(
             message_id=request.query.get('message_id'),
@@ -571,8 +600,8 @@ class UserMessagePreviewView(TemplateView, UserView):
 agg_sql = """
 select json_build_object(
   'histogram', histogram,
-  'total', total,
-  'all_opened', all_opened,
+  'all_90_day', all_90_day,
+  'open_90_day', open_90_day,
   'all_7_day', all_7_day,
   'open_7_day', open_7_day,
   'all_28_day', all_28_day,
@@ -580,52 +609,52 @@ select json_build_object(
 )
 from (
   select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') AS histogram from (
-    select count(*), day, status
+    select count(*), to_char(day, 'Dy YYYY-MM-DD') as day, status
     from (
       select date_trunc('day', m.send_ts) as day, status
       from messages m
       join message_groups j on m.group_id = j.id
-      where :where and m.send_ts > current_timestamp - '90 days'::interval
+      where :where and m.send_ts > current_timestamp::date - '28 days'::interval
     ) as t
     group by day, status
     order by day
   ) as t
 ) as histogram,
 (
-  select count(*) as total
+  select count(*) as all_90_day
   from messages m
   join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp - '90 days'::interval
-) as total,
+  where :where and m.send_ts > current_timestamp::date - '90 days'::interval
+) as all_90_day,
 (
-  select count(*) as all_opened
+  select count(*) as open_90_day
   from messages m
   join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp - '90 days'::interval and status = 'open'
-) as all_opened,
+  where :where and m.send_ts > current_timestamp::date - '90 days'::interval and status = 'open'
+) as open_90_day,
 (
   select count(*) as all_7_day
   from messages m
   join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp - '7 days'::interval
+  where :where and m.send_ts > current_timestamp::date - '7 days'::interval
 ) as all_7_day,
 (
   select count(*) as open_7_day
   from messages m
   join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp - '7 days'::interval and status = 'open'
+  where :where and m.send_ts > current_timestamp::date - '7 days'::interval and status = 'open'
 ) as open_7_day,
 (
   select count(*) as all_28_day
   from messages m
   join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp - '28 days'::interval
+  where :where and m.send_ts > current_timestamp::date - '28 days'::interval
 ) as all_28_day,
 (
   select count(*) as open_28_day
   from messages m
   join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp - '28 days'::interval and status = 'open'
+  where :where and m.send_ts > current_timestamp::date - '28 days'::interval and status = 'open'
 ) as open_28_day
 """
 
@@ -657,8 +686,7 @@ class AdminAggregatedView(AdminView):
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
         for period, g in groupby(data['histogram'], key=itemgetter('day')):
-
-            row = [datetime.strptime(period[:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
+            row = [period]
             counts = {v['status']: v['count'] for v in g}
             row += [counts.get(h) or 0 for h in headings[1:-1]]
             was_sent = sum(counts.get(h) or 0 for h in was_sent_statuses)
@@ -669,7 +697,7 @@ class AdminAggregatedView(AdminView):
                 row.append(f'{0:0.2f}%')
             table_body.append(row)
         return dict(
-            total=data['total'],
+            total=data['all_28_day'],
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'Aggregated {method} data',

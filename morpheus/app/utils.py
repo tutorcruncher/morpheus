@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
 from pathlib import Path
-from typing import NewType, Optional, Type  # noqa
+from typing import Dict, NewType, Optional, Type  # noqa
 from urllib.parse import urlencode
 
 import msgpack
@@ -129,9 +129,11 @@ class View:
             raise HTTPBadRequest(text=f'invalid get argument "{name}": {v!r}')
 
     @classmethod
-    def json_response(cls, *, status_=200, list_=None, headers_=None, **data):
+    def json_response(cls, *, status_=200, json_str_=None, headers_=None, **data):
+        if not json_str_:
+            json_str_ = ujson.dumps(data)
         return Response(
-            body=json.dumps(data if list_ is None else list_).encode(),
+            text=json_str_,
             status=status_,
             content_type='application/json',
             headers=headers_,

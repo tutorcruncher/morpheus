@@ -54,15 +54,9 @@ async def test_user_list(cli, settings, send_email, db_conn):
         'company': 'whoever',
         'method': 'email-test',
         'subject': 'test message',
-        'body': (
-            '<body>\n'
-            'this is a test\n'
-            '</body>'
-        ),
         'tags': [
             expected_msg_ids[3][:-6],
         ],
-        'attachments': [],
         'from_name': 'Sender Name',
         'cost': None,
         'extra': None,
@@ -131,17 +125,17 @@ async def test_user_aggregate(cli, settings, send_email):
         'histogram': [
             {
                 'count': 4,
-                'day': f'{today:%Y-%m-%d}T00:00:00+00:00',
+                'day': f'{today:%a %Y-%m-%d}',
                 'status': 'send',
             },
             {
                 'count': 1,
-                'day': f'{today:%Y-%m-%d}T00:00:00+00:00',
+                'day': f'{today:%a %Y-%m-%d}',
                 'status': 'open',
             },
         ],
-        'total': 5,
-        'all_opened': 1,
+        'all_90_day': 5,
+        'open_90_day': 1,
         'all_7_day': 5,
         'open_7_day': 1,
         'all_28_day': 5,
@@ -337,7 +331,6 @@ async def test_user_sms(cli, settings, send_sms):
     assert item['company'] == 'snapcrap'
     assert item['status'] == 'send'
     assert item['from_name'] == 'FooBar'
-    assert item['body'] == 'this is a test apples'
     assert item['cost'] == 0.012
     assert item['events'] == []
     assert json.loads(item['extra']) == {'length': 21, 'parts': 1}

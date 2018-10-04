@@ -135,9 +135,9 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/user' + methods + 'message/{id:\d+}.html', UserMessageDetailView.view(),
                        name='user-message-get')
     app.router.add_get('/user' + methods + 'messages.html', UserMessageListView.view(), name='user-message-list')
-
     app.router.add_get('/user' + methods + 'aggregation.json', UserAggregationView.view(), name='user-aggregation')
     app.router.add_get('/user' + methods + '{id:\d+}/preview/', UserMessagePreviewView.view(), name='user-preview')
+
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
     app.router.add_get('/admin/get/{method}/{id:\d+}/', AdminGetView.view(), name='admin-get')
