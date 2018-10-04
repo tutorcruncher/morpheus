@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from morpheus.app.utils import ApiError, ApiSession
+from morpheus.app.ext import ApiError, ApiSession
 
 
 async def test_index(cli):
@@ -247,19 +247,6 @@ async def test_api_error(settings, loop, mock_external):
         assert str(exc_info.value) == 'GET {server_name}/foobar, unexpected response 404'.format(**mock_external.app)
     finally:
         await s.close()
-
-
-@pytest.mark.parametrize('input, result', [
-    ([1, 2, datetime(2032, 6, 1)], '[1, 2, 1969660800000]'),
-    ([1, 2, {1, 2, 3}], '[1, 2, [1, 2, 3]]'),
-])
-def test_custom_json_encoder(input, result):
-    assert ApiSession.encode_json(input) == result
-
-
-def test_custom_json_encoder_error():
-    with pytest.raises(TypeError):
-        ApiSession.encode_json([1, 2, {1: 2, 2: 4}.keys()])
 
 
 def test_settings(settings):

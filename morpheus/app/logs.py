@@ -1,7 +1,7 @@
 import logging
 import logging.config
-from functools import partial
 
+from raven import Client
 from raven_aiohttp import QueuedAioHttpTransport
 
 from .settings import Settings
@@ -11,6 +11,14 @@ def setup_logging(settings: Settings):
     """
     setup logging config for morpheus by updating the arq logging config
     """
+    client = None
+    if settings.raven_dsn:
+        client = Client(
+            transport=QueuedAioHttpTransport,
+            dsn=settings.raven_dsn,
+            release=settings.commit,
+            name=settings.deploy_name,
+        )
     config = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -28,11 +36,11 @@ def setup_logging(settings: Settings):
             'sentry': {
                 'level': 'WARNING',
                 'class': 'raven.handlers.logging.SentryHandler',
-                'transport': partial(QueuedAioHttpTransport, workers=5, qsize=1000),
-                'dsn': settings.raven_dsn,
-                'release': settings.commit,
-                'name': settings.deploy_name,
-            },
+                'client': client,
+            } if client else {
+                'level': 'WARNING',
+                'class': 'logging.NullHandler',
+            }
         },
         'loggers': {
             'morpheus': {

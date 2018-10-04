@@ -133,7 +133,7 @@ class SimplePgPool:
 
 
 def overwrite_existing_check():
-    return input('Confirm database reset? [yN] ') == 'y'
+    return input('Confirm database reset? THIS IS DESTRUCTIVE!!! [yN] ') == 'y'
 
 
 def reset_database(settings: Settings):

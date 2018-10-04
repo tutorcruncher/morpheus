@@ -8,11 +8,12 @@ from aiohttp.web import Application
 from buildpg import asyncpg
 
 from .db import prepare_database
+from .ext import Mandrill, MorpheusUserApi
 from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
 from .settings import Settings
-from .utils import THIS_DIR, Mandrill, MorpheusUserApi
+from .utils import THIS_DIR
 from .views import (AdminAggregatedView, AdminGetView, AdminListView, ClickRedirectView, CreateSubaccountView,
                     EmailSendView, MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView,
                     SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView, UserMessageDetailView,
@@ -72,7 +73,7 @@ async def app_startup(app):
 
     settings: Settings = app['settings']
     await prepare_database(settings, False)
-    app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=2)
+    app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=10, max_size=50)
 
     loop.create_task(get_mandrill_webhook_key(app))
 

@@ -51,6 +51,10 @@ async def test_list(cli, send_email, db_conn):
     msg_id = await db_conn.fetchval('select id from messages where to_address=$1', 'xx@t.com')
     assert f'<td><a href="/admin/get/email-test/{msg_id}/" class="short">xx@t.com</a></td>\n' in text
     assert '<td>Tue 2032-06-01 00:00 UTC</td>' in text
+    r = await cli.get('/admin/list/', headers=gen_headers())
+    text = await r.text()
+    assert r.status == 200, text
+    assert '<h3>Total: 0</h3>' in text
 
 
 async def test_details(cli, send_email, db_conn):

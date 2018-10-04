@@ -3,7 +3,6 @@ import base64
 import hashlib
 import hmac
 import json
-import logging
 import re
 import secrets
 from asyncio import shield
@@ -11,25 +10,21 @@ from datetime import datetime, timezone
 from functools import update_wrapper
 from pathlib import Path
 from typing import Dict, Optional, Type, TypeVar
-from urllib.parse import urlencode
 
 import ujson
-from aiohttp import ClientSession
-from aiohttp.hdrs import METH_DELETE, METH_GET, METH_HEAD, METH_OPTIONS, METH_POST, METH_PUT
+from aiohttp.hdrs import METH_GET, METH_HEAD, METH_OPTIONS
 from aiohttp.web import Application, HTTPClientError, Request, Response
 from aiohttp_jinja2 import render_template
-from arq.utils import to_unix_ms
 from dataclasses import dataclass
 from markupsafe import Markup
 from pydantic import BaseModel, ValidationError
 from pydantic.json import pydantic_encoder
 
+from .ext import ApiError
 from .models import SendMethod
 from .settings import Settings
 
 THIS_DIR = Path(__file__).parent.resolve()
-api_logger = logging.getLogger('morpheus.external')
-
 CONTENT_TYPE_JSON = 'application/json'
 AModel = TypeVar('AModel', bound=BaseModel)
 
@@ -292,125 +287,3 @@ class AdminView(TemplateView, BasicAuthView):
         except ApiError as e:
             raise JsonErrors.HTTPBadRequest(str(e))
         return ctx
-
-
-def lenient_json(v):
-    if isinstance(v, (str, bytes)):
-        try:
-            return json.loads(v)
-        except (ValueError, TypeError):
-            pass
-    return v
-
-
-class ApiError(RuntimeError):
-    def __init__(self, method, url, response):
-        self.method = method
-        self.url = url
-        self.status = response.status
-
-    def __str__(self):
-        return f'{self.method} {self.url}, unexpected response {self.status}'
-
-
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return to_unix_ms(obj)
-        elif isinstance(obj, set):
-            return sorted(obj)
-        return super().default(obj)
-
-
-class ApiSession:
-    def __init__(self, root_url, settings: Settings, loop=None):
-        self.settings = settings
-        self.loop = loop or asyncio.get_event_loop()
-        self.session = ClientSession(
-            loop=self.loop,
-            json_serialize=self.encode_json,
-        )
-        self.root = root_url.rstrip('/') + '/'
-
-    @classmethod
-    def encode_json(cls, data):
-        return json.dumps(data, cls=CustomJSONEncoder)
-
-    async def close(self):
-        await self.session.close()
-
-    async def get(self, uri, *, allowed_statuses=(200,), **data):
-        return await self._request(METH_GET, uri, allowed_statuses=allowed_statuses, **data)
-
-    async def delete(self, uri, *, allowed_statuses=(200,), **data):
-        return await self._request(METH_DELETE, uri, allowed_statuses=allowed_statuses, **data)
-
-    async def post(self, uri, *, allowed_statuses=(200, 201), **data):
-        return await self._request(METH_POST, uri, allowed_statuses=allowed_statuses, **data)
-
-    async def put(self, uri, *, allowed_statuses=(200, 201), **data):
-        return await self._request(METH_PUT, uri, allowed_statuses=allowed_statuses, **data)
-
-    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
-        method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)
-        headers = data.pop('headers_', {})
-        timeout = data.pop('timeout_', 300)
-        async with self.session.request(method, url, json=data or None, headers=headers, timeout=timeout) as r:
-            # always read entire response before closing the connection
-            response_text = await r.text()
-
-        if isinstance(allowed_statuses, int):
-            allowed_statuses = allowed_statuses,
-        if allowed_statuses != '*' and r.status not in allowed_statuses:
-            data = {
-                'request_real_url': str(r.request_info.real_url),
-                'request_headers': dict(r.request_info.headers),
-                'request_data': data,
-                'response_headers': dict(r.headers),
-                'response_content': lenient_json(response_text),
-            }
-            api_logger.warning('%s unexpected response %s /%s -> %s', self.__class__.__name__, method, uri, r.status,
-                               extra={'data': data})
-            raise ApiError(method, url, r)
-        else:
-            api_logger.debug('%s /%s -> %s', method, uri, r.status)
-            return r
-
-    def _modify_request(self, method, url, data):
-        return method, url, data
-
-
-class Mandrill(ApiSession):
-    def __init__(self, settings, loop):
-        super().__init__(settings.mandrill_url, settings, loop)
-
-    def _modify_request(self, method, url, data):
-        data['key'] = self.settings.mandrill_key
-        return method, url, data
-
-
-class MorpheusUserApi(ApiSession):
-    def __init__(self, settings, loop):
-        super().__init__(settings.local_api_url, settings, loop)
-
-    def _modify_request(self, method, url, data):
-        return method, self.modify_url(url), data
-
-    def modify_url(self, url):
-        args = dict(
-            company='__all__',
-            expires=to_unix_ms(datetime(2032, 1, 1))
-        )
-        body = '{company}:{expires}'.format(**args).encode()
-        args['signature'] = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
-        url = str(url)
-        return url + ('&' if '?' in url else '?') + urlencode(args)
-
-
-class MessageBird(ApiSession):
-    def __init__(self, settings, loop):
-        super().__init__(settings.messagebird_url, settings, loop)
-
-    def _modify_request(self, method, url, data):
-        data['headers_'] = {'Authorization': f'AccessKey {self.settings.messagebird_key}'}
-        return method, url, data

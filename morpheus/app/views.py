@@ -25,9 +25,10 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
+from .ext import Mandrill
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, SendMethod, SmsNumbersModel,
                      SmsSendModel, SubaccountModel)
-from .utils import AdminView, AuthView, JsonErrors, Mandrill, PreResponse, ServiceView, TemplateView, UserView, View
+from .utils import AdminView, AuthView, JsonErrors, PreResponse, ServiceView, TemplateView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
 
@@ -707,7 +708,7 @@ class AdminAggregatedView(AdminView):
 
 class AdminListView(AdminView):
     async def get_context(self, morpheus_api):
-        method = self.request.query.get('method', SendMethod.email_mandrill)
+        method = self.request.query.get('method', SendMethod.email_mandrill.value)
         offset = int(self.request.query.get('offset', '0'))
         search = self.request.query.get('search', '')
         tags = self.request.query.get('tags', '')

@@ -25,11 +25,11 @@ from phonenumbers.geocoder import country_name_for_number, description_for_numbe
 from pydantic.datetime_parse import parse_datetime
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
+from .ext import ApiError, Mandrill, MessageBird
 from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
 from .render import EmailInfo, render_email
 from .render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from .settings import Settings
-from .utils import ApiError, Mandrill, MessageBird
 
 test_logger = logging.getLogger('morpheus.worker.test')
 main_logger = logging.getLogger('morpheus.worker')
