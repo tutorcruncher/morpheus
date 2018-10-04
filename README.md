@@ -82,7 +82,7 @@ export PS1="PROD $PS1"
 
 Set up your environment
 
-    ./start-prod.sh
+    source activate.prod.sh
 
 (this assumes you have a `prod` gnome profile setup to differentiate commands going to the production server)
 

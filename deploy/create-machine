@@ -15,7 +15,10 @@ docker-machine create \
     --driver amazonec2 \
     --amazonec2-access-key $AWS_ACCESS_KEY \
     --amazonec2-secret-key $AWS_SECRET_KEY \
-    --amazonec2-instance-type t2.large \
-    --amazonec2-root-size 80 \
+    --amazonec2-instance-type t2.medium \
+    --amazonec2-root-size 20 \
     --amazonec2-region eu-west-1 \
-    morpheus2
+    --amazonec2-zone a \
+    morpheus4
+
+echo "you now need to attach an elastic IP to the machine and run 'docker-machine regenerate-certs morpheus4'"

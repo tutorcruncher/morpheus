@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # from this directory...
+mkdir -p es_data
 docker build . -f Dockerfile.es -t elasticsearch_s3
 docker run --rm \
   -p 9200:9200 \
