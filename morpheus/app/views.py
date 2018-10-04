@@ -617,9 +617,9 @@ from (
       from messages m
       join message_groups j on m.group_id = j.id
       where :where and m.send_ts > current_timestamp::date - '28 days'::interval
+      order by m.send_ts
     ) as t
     group by day, status
-    order by day
   ) as t
 ) as histogram,
 (
@@ -726,7 +726,7 @@ class AdminListView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
 
-        headings = ['score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
+        headings = ['score', 'to', 'company', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
         for i, message in enumerate(data['items']):
             subject = message.get('subject') or message.get('body', '')[:50]
