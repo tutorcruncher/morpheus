@@ -8,44 +8,77 @@ import re
 import secrets
 from asyncio import shield
 from datetime import datetime, timezone
-from enum import Enum
 from functools import update_wrapper
 from pathlib import Path
-from typing import Dict, Optional, Type, TypeVar  # noqa
+from typing import Dict, Optional, Type, TypeVar
 from urllib.parse import urlencode
 
-import msgpack
 import ujson
 from aiohttp import ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_HEAD, METH_OPTIONS, METH_POST, METH_PUT
-from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
+from aiohttp.web import Application, HTTPClientError, Request, Response
 from aiohttp_jinja2 import render_template
 from arq.utils import to_unix_ms
 from dataclasses import dataclass
 from markupsafe import Markup
+from pydantic import BaseModel, ValidationError
+from pydantic.json import pydantic_encoder
 
-from .models import SendMethod, WebModel
+from .models import SendMethod
 from .settings import Settings
 
 THIS_DIR = Path(__file__).parent.resolve()
 api_logger = logging.getLogger('morpheus.external')
 
-
-class ContentType(str, Enum):
-    JSON = 'application/json'
-    MSGPACK = 'application/msgpack'
+CONTENT_TYPE_JSON = 'application/json'
+AModel = TypeVar('AModel', bound=BaseModel)
 
 
-class Session(WebModel):
-    company: str = ...
-    expires: datetime = ...
+class Session(BaseModel):
+    company: str
+    expires: datetime
 
 
-AWebModel = TypeVar('AWebModel', bound=WebModel)
+def pretty_lenient_json(data):
+    return json.dumps(data, indent=2, default=pydantic_encoder) + '\n'
 
 
 class OkCancelError(asyncio.CancelledError):
     pass
+
+
+class JsonErrors:
+    class _HTTPClientErrorJson(HTTPClientError):
+        def __init__(self, message, *, details=None, headers=None):
+            data = {'message': message}
+            if details:
+                data['details'] = details
+            super().__init__(
+                text=pretty_lenient_json(data),
+                content_type=CONTENT_TYPE_JSON,
+                headers=headers,
+            )
+
+    class HTTPBadRequest(_HTTPClientErrorJson):
+        status_code = 400
+
+    class HTTPUnauthorized(_HTTPClientErrorJson):
+        status_code = 401
+
+    class HTTPPaymentRequired(_HTTPClientErrorJson):
+        status_code = 402
+
+    class HTTPForbidden(_HTTPClientErrorJson):
+        status_code = 403
+
+    class HTTPNotFound(_HTTPClientErrorJson):
+        status_code = 404
+
+    class HTTPConflict(_HTTPClientErrorJson):
+        status_code = 409
+
+    class HTTP470(_HTTPClientErrorJson):
+        status_code = 470
 
 
 @dataclass
@@ -96,6 +129,10 @@ class View:
         except asyncio.CancelledError as e:
             # either the request was shielded or request didn't need shielding
             raise OkCancelError from e
+        except HTTPClientError as e:
+            if self.headers:
+                e.headers.update(self.headers)
+            raise e
 
         return self._modify_response(request, r)
 
@@ -121,28 +158,23 @@ class View:
     async def call(self, request):
         raise NotImplementedError()
 
-    async def request_data(self, validator: Type[AWebModel]) -> AWebModel:
-        decoder = self.decode_json
-        content_type = self.request.headers.get('Content-Type')
-        if content_type == ContentType.MSGPACK:
-            decoder = self.decode_msgpack
-
+    async def request_data(self, model: Type[BaseModel]) -> AModel:
+        error_details = None
         try:
-            data = await decoder()
-        except ValueError as e:
-            raise HTTPBadRequest(text=f'invalid request data for {decoder.__name__}: {e}')
-
-        if not isinstance(data, dict):  # TODO is this necessary?
-            raise HTTPBadRequest(text='request data should be a dictionary')
-
-        if validator:
-            return validator(**data)
+            data = await self.request.json()
+        except ValueError:
+            error_msg = 'Error decoding JSON'
         else:
-            return data
+            try:
+                return model.parse_obj(data)
+            except ValidationError as e:
+                error_msg = 'Invalid Data'
+                error_details = e.errors()
 
-    async def decode_msgpack(self):
-        data = await self.request.read()
-        return msgpack.unpackb(data, encoding='utf8')
+        raise JsonErrors.HTTPBadRequest(
+            message=error_msg,
+            details=error_details,
+        )
 
     async def decode_json(self):
         return await self.request.json(loads=ujson.loads)
@@ -154,7 +186,7 @@ class View:
         try:
             return int(v)
         except ValueError:
-            raise HTTPBadRequest(text=f'invalid get argument "{name}": {v!r}')
+            raise JsonErrors.HTTPBadRequest(f'invalid get argument "{name}": {v!r}')
 
     @classmethod
     def json_response(cls, *, status_=200, json_str_=None, headers_=None, **data):
@@ -163,7 +195,7 @@ class View:
         return Response(
             text=json_str_,
             status=status_,
-            content_type='application/json',
+            content_type=CONTENT_TYPE_JSON,
             headers=headers_,
         )
 
@@ -177,7 +209,7 @@ class AuthView(View):
     async def authenticate(self, request):
         auth_token = getattr(self.settings, self.auth_token_field)
         if not secrets.compare_digest(auth_token, request.headers.get('Authorization', '')):
-            raise HTTPForbidden(text='Invalid Authorization header')
+            raise JsonErrors.HTTPForbidden('Invalid Authorization header')
 
 
 class ServiceView(AuthView):
@@ -200,14 +232,17 @@ class UserView(View):
         expected_sig = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
         signature = request.query.get('signature', '-')
         if not secrets.compare_digest(expected_sig, signature):
-            raise HTTPForbidden(text='Invalid token')
+            raise JsonErrors.HTTPForbidden('Invalid token')
 
-        self.session = Session(
-            company=company,
-            expires=expires,
-        )
+        try:
+            self.session = Session(
+                company=company,
+                expires=expires,
+            )
+        except ValidationError as e:
+            raise JsonErrors.HTTPBadRequest(message='Invalid Data', details=e.errors())
         if self.session.expires < datetime.utcnow().replace(tzinfo=timezone.utc):
-            raise HTTPForbidden(text='token expired')
+            raise JsonErrors.HTTPForbidden('token expired')
 
 
 class BasicAuthView(View):
@@ -222,7 +257,7 @@ class BasicAuthView(View):
             password = ''
 
         if not secrets.compare_digest(password, self.settings.admin_basic_auth_password):
-            raise HTTPUnauthorized(text='Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
+            raise JsonErrors.HTTPUnauthorized('Invalid basic auth', headers={'WWW-Authenticate': 'Basic'})
 
 
 class TemplateView(View):
@@ -255,7 +290,7 @@ class AdminView(TemplateView, BasicAuthView):
         try:
             ctx.update(await self.get_context(morpheus_api))
         except ApiError as e:
-            raise HTTPBadRequest(text=str(e))
+            raise JsonErrors.HTTPBadRequest(str(e))
         return ctx
 
 

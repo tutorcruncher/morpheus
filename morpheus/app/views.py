@@ -13,7 +13,7 @@ from time import time
 import msgpack
 import pytz
 import ujson
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect
+from aiohttp.web import HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
 from arq.utils import truncate
 from buildpg import Func, Var
@@ -26,7 +26,7 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, SendMethod, SmsNumbersModel,
                      SmsSendModel, SubaccountModel)
-from .utils import AdminView, AuthView, Mandrill, PreResponse, ServiceView, TemplateView, UserView, View  # noqa
+from .utils import AdminView, AuthView, JsonErrors, Mandrill, PreResponse, ServiceView, TemplateView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
 
@@ -90,7 +90,7 @@ class EmailSendView(ServiceView):
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
-                raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+                raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
             recipients_key = f'recipients:{m.uid}'
             data = m.dict(exclude={'recipients', 'from_address'})
             data.update(
@@ -116,7 +116,7 @@ class SmsSendView(ServiceView):
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
-                raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+                raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
             if m.cost_limit is not None:
                 spend = await self.sender.check_sms_limit(m.company_code)
                 if spend >= m.cost_limit:
@@ -173,7 +173,7 @@ class MandrillWebhookView(View):
         try:
             event_data = (await request.post())['mandrill_events']
         except KeyError:
-            raise HTTPBadRequest(text='"mandrill_events" not found in post data')
+            raise JsonErrors.HTTPBadRequest('"mandrill_events" not found in post data')
 
         sig_generated = base64.b64encode(
             hmac.new(
@@ -184,11 +184,11 @@ class MandrillWebhookView(View):
         )
         sig_given = request.headers.get('X-Mandrill-Signature', '<missing>').encode()
         if not hmac.compare_digest(sig_generated, sig_given):
-            raise HTTPForbidden(text='invalid signature')
+            raise JsonErrors.HTTPForbidden('invalid signature')
         try:
             events = ujson.loads(event_data)
         except ValueError as e:
-            raise HTTPBadRequest(text=f'invalid json data: {e}')
+            raise JsonErrors.HTTPBadRequest(f'invalid json data: {e}')
 
         await self.sender.update_mandrill_webhooks(events)
         return PreResponse(text='message status updated\n')
@@ -252,7 +252,7 @@ class _UserMessagesView(UserView):
         try:
             pytz.timezone(dt_tz)
         except KeyError:
-            raise HTTPBadRequest(text=f'unknown timezone: "{dt_tz}"')
+            raise JsonErrors.HTTPBadRequest(f'unknown timezone: "{dt_tz}"')
         return dt_tz
 
     def get_date_func(self):
@@ -293,7 +293,7 @@ class _UserMessagesView(UserView):
             try:
                 message_id = int(message_id)
             except ValueError:
-                raise HTTPBadRequest(text=f'invalid message id: "{message_id}"')
+                raise JsonErrors.HTTPBadRequest(f'invalid message id: "{message_id}"')
             where &= (Var('m.id') == message_id)
         elif tags:
             where &= (Var('tags').contains(tags))
@@ -427,7 +427,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
     async def call(self, request):
         data = await self.query(message_id=self.request.match_info['id'])
         if data['count'] == 0:
-            raise HTTPNotFound(text='message not found')
+            raise JsonErrors.HTTPNotFound('message not found')
         data = data['items'][0]
 
         preview_path = self.app.router['user-preview'].url_for(**self.request.match_info)
@@ -579,7 +579,7 @@ class UserMessagePreviewView(TemplateView, UserView):
             )
 
         if not data:
-            raise HTTPNotFound(text='message not found')
+            raise JsonErrors.HTTPNotFound('message not found')
 
         data = dict(data)
         body = data['body']

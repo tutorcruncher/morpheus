@@ -267,8 +267,8 @@ async def test_message_details_link(cli, settings, send_email, db_conn):
 
     r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'snap'}))
     assert r.status == 400, await r.text()
-    text = await r.text()
-    assert 'unknown timezone: "snap"' == text
+    assert r.headers.get('Access-Control-Allow-Origin') == '*'
+    assert {'message': 'unknown timezone: "snap"'} == await r.json()
 
 
 async def test_many_events(cli, settings, send_email, db_conn):
@@ -305,9 +305,10 @@ async def test_many_events(cli, settings, send_email, db_conn):
 async def test_message_details_missing(cli, settings):
     r = await cli.get(modify_url(f'/user/email-test/message/123.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
-    text = await r.text()
-    assert 'message not found' == text
-    assert 'message not found' == text
+    data = await r.json()
+    assert {
+        'message': 'message not found',
+    } == data
 
 
 async def test_message_preview(cli, settings, send_email, db_conn):

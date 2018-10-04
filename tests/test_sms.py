@@ -122,7 +122,10 @@ async def test_repeat_uuid(cli, tmpdir):
     assert str(tmpdir.listdir()[0]).endswith('69eb85e8-1504-40aa-94ff-75bb65fd8d73-447891123856.txt')
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 409, await r.text()
-    assert 'Send group with id "69eb85e8-1504-40aa-94ff-75bb65fd8d73" already exists\n' in await r.text()
+    data = await r.json()
+    assert {
+        'message': 'Send group with id "69eb85e8-1504-40aa-94ff-75bb65fd8d73" already exists\n',
+    } == data
 
 
 async def test_invalid_number(cli, tmpdir):

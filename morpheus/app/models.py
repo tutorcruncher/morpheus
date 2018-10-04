@@ -6,23 +6,10 @@ from pathlib import Path
 from typing import Dict, List
 from uuid import UUID
 
-from aiohttp.web_exceptions import HTTPBadRequest
-from pydantic import BaseModel, NameEmail, ValidationError, constr, validator
+from pydantic import BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
 
 THIS_DIR = Path(__file__).parent.resolve()
-
-
-class WebModel(BaseModel):
-    def _process_values(self, values):
-        try:
-            return super()._process_values(values)
-        except ValidationError as e:
-            v = {
-                'error': 'validation error',
-                'details': e.errors()
-            }
-            raise HTTPBadRequest(text=json.dumps(v), content_type='application/json')
 
 
 class SendMethod(str, Enum):
@@ -104,8 +91,8 @@ class MessageStatus(str, Enum):
 
 
 class PDFAttachmentModel(BaseModel):
-    name: str = ...
-    html: str = ...
+    name: str
+    html: str
     id: int = None
 
     class Config:
@@ -133,8 +120,8 @@ class EmailRecipientModel(BaseModel):
         max_anystr_length = int(1e7)
 
 
-class EmailSendModel(WebModel):
-    uid: UUID = ...
+class EmailSendModel(BaseModel):
+    uid: UUID
     main_template: str = (THIS_DIR / 'extra' / 'default-email-template.mustache').read_text()
     mustache_partials: Dict[str, str] = None
     macros: Dict[str, str] = None
@@ -154,7 +141,7 @@ class EmailSendModel(WebModel):
         return str(v)
 
 
-class SubaccountModel(WebModel):
+class SubaccountModel(BaseModel):
     company_code: str = ...
     company_name: str = None
 
@@ -168,10 +155,10 @@ class SmsRecipientModel(BaseModel):
     context: dict = {}
 
 
-class SmsSendModel(WebModel):
-    uid: constr(min_length=20, max_length=40) = ...
-    main_template: str = ...
-    company_code: str = ...
+class SmsSendModel(BaseModel):
+    uid: constr(min_length=20, max_length=40)
+    main_template: str
+    company_code: str
     cost_limit: float = None
     country_code: constr(min_length=2, max_length=2) = 'GB'
     from_name: constr(min_length=1, max_length=11) = 'Morpheus'
@@ -181,12 +168,12 @@ class SmsSendModel(WebModel):
     recipients: List[SmsRecipientModel] = ...
 
 
-class SmsNumbersModel(WebModel):
-    numbers: Dict[int, str] = ...
+class SmsNumbersModel(BaseModel):
+    numbers: Dict[int, str]
     country_code: constr(min_length=2, max_length=2) = 'GB'
 
 
-class BaseWebhook(WebModel):
+class BaseWebhook(BaseModel):
     ts: datetime
     status: MessageStatus
     message_id: str
@@ -248,8 +235,8 @@ class MandrillSingleWebhook(BaseWebhook):
         )
 
 
-class MandrillWebhook(WebModel):
-    events: List[MandrillSingleWebhook] = ...
+class MandrillWebhook(BaseModel):
+    events: List[MandrillSingleWebhook]
 
 
 class MessageBirdWebHook(BaseWebhook):
