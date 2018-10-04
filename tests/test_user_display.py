@@ -125,12 +125,12 @@ async def test_user_aggregate(cli, settings, send_email):
         'histogram': [
             {
                 'count': 4,
-                'day': f'{today:%a %Y-%m-%d}',
+                'day': f'{today:%Y-%m-%d}',
                 'status': 'send',
             },
             {
                 'count': 1,
-                'day': f'{today:%a %Y-%m-%d}',
+                'day': f'{today:%Y-%m-%d}',
                 'status': 'open',
             },
         ],

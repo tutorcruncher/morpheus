@@ -611,13 +611,12 @@ select json_build_object(
 )
 from (
   select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') AS histogram from (
-    select count(*), to_char(day, 'Dy YYYY-MM-DD') as day, status
+    select count(*), to_char(day, 'YYYY-MM-DD') as day, status
     from (
       select date_trunc('day', m.send_ts) as day, status
       from messages m
       join message_groups j on m.group_id = j.id
       where :where and m.send_ts > current_timestamp::date - '28 days'::interval
-      order by m.send_ts
     ) as t
     group by day, status
   ) as t
@@ -687,7 +686,8 @@ class AdminAggregatedView(AdminView):
         headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
-        for period, g in groupby(data['histogram'], key=itemgetter('day')):
+        hist = sorted(data['histogram'], key=itemgetter('day'))
+        for period, g in groupby(hist, key=itemgetter('day')):
             row = [period]
             counts = {v['status']: v['count'] for v in g}
             row += [counts.get(h) or 0 for h in headings[1:-1]]
