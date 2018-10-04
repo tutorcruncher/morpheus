@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import os
-from typing import Callable, NamedTuple, Union
+from typing import Callable, Union
 
 import asyncpg
 from async_timeout import timeout
+from dataclasses import dataclass
 
 from .models import MessageStatus, SendMethod
 from .settings import Settings
@@ -13,7 +14,8 @@ logger = logging.getLogger('morpheus.db')
 patches = []
 
 
-class Patch(NamedTuple):
+@dataclass
+class Patch:
     func: Callable
     direct: bool = False
 

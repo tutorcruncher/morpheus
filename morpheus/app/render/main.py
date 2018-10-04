@@ -2,18 +2,20 @@ import logging
 import re
 import secrets
 from base64 import urlsafe_b64encode
-from typing import Dict, NamedTuple
+from typing import Dict
 
 import chevron
 import sass
 from chevron import ChevronError
+from dataclasses import dataclass
 from misaka import HtmlRenderer, Markdown
 
 markdown = Markdown(HtmlRenderer(flags=['hard-wrap']), extensions=['no-intra-emphasis'])
 logger = logging.getLogger('morpheus.render')
 
 
-class MessageDef(NamedTuple):
+@dataclass
+class MessageDef:
     first_name: str
     last_name: str
     main_template: str
@@ -24,7 +26,8 @@ class MessageDef(NamedTuple):
     headers: dict
 
 
-class EmailInfo(NamedTuple):
+@dataclass
+class EmailInfo:
     full_name: str
     subject: str
     html_body: str
@@ -172,7 +175,8 @@ MULTIPART_LENGTHS = [
 ]
 
 
-class SmsLength(NamedTuple):
+@dataclass
+class SmsLength:
     length: int
     parts: int
 

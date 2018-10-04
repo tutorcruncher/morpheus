@@ -1,6 +1,6 @@
 import pytest
 
-from morpheus.app.render.main import MessageTooLong, sms_length
+from morpheus.app.render.main import MessageTooLong, SmsLength, sms_length
 
 
 def idfn(v):
@@ -23,7 +23,7 @@ def idfn(v):
     ('{' * 100, 200, 2),
 ], ids=idfn)
 def test_sms_lengths(msg, length, sms_count):
-    assert sms_length(msg) == (length, sms_count)
+    assert sms_length(msg) == SmsLength(length, sms_count)
 
 
 def test_sms_too_long():

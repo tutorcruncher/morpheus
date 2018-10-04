@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from itertools import chain
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, Optional
 
 import chevron
 import msgpack
@@ -17,6 +17,7 @@ from arq import Actor, BaseWorker, Drain, concurrent
 from arq.utils import to_unix_ms, truncate
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
+from dataclasses import asdict, dataclass
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
                           number_type)
 from phonenumbers import parse as parse_number
@@ -37,7 +38,8 @@ ONE_DAY = 86400
 ONE_YEAR = ONE_DAY * 365
 
 
-class EmailJob(NamedTuple):
+@dataclass
+class EmailJob:
     group_id: int
     group_uuid: str
     send_method: str
@@ -61,7 +63,8 @@ class EmailJob(NamedTuple):
     headers: dict
 
 
-class SmsJob(NamedTuple):
+@dataclass
+class SmsJob:
     group_id: str
     group_uuid: str
     send_method: str
@@ -77,7 +80,8 @@ class SmsJob(NamedTuple):
     context: dict
 
 
-class Number(NamedTuple):
+@dataclass
+class Number:
     number: str
     country_code: str
     number_formatted: str
@@ -85,7 +89,8 @@ class Number(NamedTuple):
     is_mobile: bool
 
 
-class SmsData(NamedTuple):
+@dataclass
+class SmsData:
     number: Number
     message: str
     shortened_link: dict
@@ -651,7 +656,7 @@ class Sender(Actor):
                     tags=j.tags,
                     body=sms_data.message,
                     cost=cost,
-                    extra=json.dumps(sms_data.length._asdict()),
+                    extra=json.dumps(asdict(sms_data.length)),
                 )
             )
             if sms_data.shortened_link:

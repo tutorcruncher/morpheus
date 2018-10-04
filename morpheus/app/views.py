@@ -18,6 +18,7 @@ from aiohttp_jinja2 import template
 from arq.utils import truncate
 from buildpg import Func, Var
 from buildpg.clauses import Select, Where
+from dataclasses import asdict
 from markupsafe import Markup
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
@@ -150,7 +151,7 @@ class SmsValidateView(ServiceView):
 
     @classmethod
     def to_dict(cls, v):
-        return v and dict(v._asdict())
+        return v and asdict(v)
 
 
 class TestWebhookView(View):

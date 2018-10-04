@@ -78,9 +78,7 @@ async def test_validate_number(cli, tmpdir):
     r = await cli.get('/validate/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
     data = await r.json()
-    # json keys are always strings
-    import json
-    print(json.dumps(data, indent=2))
+    # debug(data)
     assert {
         '123': None,
         '234': {
