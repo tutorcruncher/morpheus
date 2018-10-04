@@ -260,3 +260,9 @@ def test_custom_json_encoder(input, result):
 def test_custom_json_encoder_error():
     with pytest.raises(TypeError):
         ApiSession.encode_json([1, 2, {1: 2, 2: 4}.keys()])
+
+
+def test_settings(settings):
+    assert settings.pg_host == 'localhost'
+    assert settings.pg_port == 5432
+    assert settings.pg_name == 'morpheus_test'

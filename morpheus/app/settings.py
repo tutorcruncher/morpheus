@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     @validator('pg_host', always=True, pre=True)
     def set_pg_host(cls, v, values, **kwargs):
-        return re.search('@(\w+)', values['pg_dsn']).group(1)
+        return re.search('@(.+?):', values['pg_dsn']).group(1)
 
     @validator('pg_port', always=True, pre=True)
     def set_pg_port(cls, v, values, **kwargs):
