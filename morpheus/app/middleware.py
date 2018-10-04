@@ -3,7 +3,9 @@ import logging
 from time import time
 
 from aiohttp.web import middleware
-from aiohttp.web_exceptions import HTTPException, HTTPInternalServerError
+from aiohttp.web_exceptions import HTTPException
+
+from .utils import OkCancelError
 
 
 async def _save_request(time_taken, request, response_status):
@@ -79,17 +81,9 @@ class ErrorLoggingMiddleware:
         })
 
     async def log_exception(self, exc, request, start):
-        # ignore CancelledError from browser disconnects
-        duration = time() - start
-        if (isinstance(exc, asyncio.CancelledError) and
-                request.method == 'GET' and
-                duration < 2 and
-                'mozilla' in request.headers.get('User-Agent', '').lower()):
-            self.logger.info('browser disconnect after %0.2fs at "%s"', duration, request.rel_url)
-        else:
-            self.logger.exception('%s: %s', exc.__class__.__name__, exc, extra={
-                'data': await self.log_extra_data(request, duration)
-            })
+        self.logger.exception('%s: %s', exc.__class__.__name__, exc, extra={
+            'data': await self.log_extra_data(request, time() - start)
+        })
 
     def should_warning(self, req, resp):
         return (
@@ -122,13 +116,15 @@ class ErrorLoggingMiddleware:
                 raise http_exception
             else:
                 r = await handler(request)
+        except OkCancelError:
+            raise
         except HTTPException as e:
             if self.should_warning(request, e):
                 await self.log_warning(request, e, start)
             raise
         except BaseException as e:
             await self.log_exception(e, request, start)
-            raise HTTPInternalServerError()
+            raise
         else:
             if self.should_warning(request, r):
                 await self.log_warning(request, r, start)

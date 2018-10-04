@@ -13,7 +13,7 @@ from time import time
 import msgpack
 import pytz
 import ujson
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect, Response
+from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
 from arq.utils import truncate
 from buildpg import Func, Var
@@ -26,8 +26,7 @@ from pygments.lexers.data import JsonLexer
 
 from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, SendMethod, SmsNumbersModel,
                      SmsSendModel, SubaccountModel)
-from .utils import Mandrill  # noqa
-from .utils import AdminView, AuthView, ServiceView, TemplateView, UserView, View
+from .utils import AdminView, AuthView, Mandrill, PreResponse, ServiceView, TemplateView, UserView, View  # noqa
 
 logger = logging.getLogger('morpheus.web')
 
@@ -105,7 +104,7 @@ class EmailSendView(ServiceView):
             await pipe.execute()
             await self.sender.send_emails(recipients_key, **data)
             logger.info('%s sending %d emails', m.company_code, len(m.recipients))
-        return Response(text='201 job enqueued\n', status=201)
+        return PreResponse(text='201 job enqueued\n', status=201)
 
 
 class SmsSendView(ServiceView):
@@ -162,7 +161,7 @@ class TestWebhookView(View):
     async def call(self, request):
         m = await self.request_data(MandrillSingleWebhook)
         await self.sender.update_message_status('email-test', m)
-        return Response(text='message status updated\n')
+        return PreResponse(text='message status updated\n')
 
 
 class MandrillWebhookView(View):
@@ -192,7 +191,7 @@ class MandrillWebhookView(View):
             raise HTTPBadRequest(text=f'invalid json data: {e}')
 
         await self.sender.update_mandrill_webhooks(events)
-        return Response(text='message status updated\n')
+        return PreResponse(text='message status updated\n')
 
 
 class MessageBirdWebhookView(View):
@@ -203,17 +202,17 @@ class MessageBirdWebhookView(View):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
         await self.sender.update_message_status('sms-messagebird', m)
-        return Response(text='message status updated\n')
+        return PreResponse(text='message status updated\n')
 
 
 class CreateSubaccountView(ServiceView):
     """
     Create a new subaccount with mandrill for new sending company
     """
-    async def call(self, request) -> Response:
+    async def call(self, request) -> PreResponse:
         method = request.match_info['method']
         if method != SendMethod.email_mandrill:
-            return Response(text=f'no subaccount creation required for "{method}"\n')
+            return PreResponse(text=f'no subaccount creation required for "{method}"\n')
 
         m = await self.request_data(SubaccountModel)
         mandrill: Mandrill = self.app['mandrill']
@@ -227,21 +226,21 @@ class CreateSubaccountView(ServiceView):
         )
         data = await r.json()
         if r.status == 200:
-            return Response(text='subaccount created\n', status=201)
+            return PreResponse(text='subaccount created\n', status=201)
 
         assert r.status == 500, r.status
         if f'A subaccount with id {m.company_code} already exists' not in data.get('message', ''):
-            return Response(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
+            return PreResponse(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
 
         r = await mandrill.get('subaccounts/info.json', id=m.company_code, timeout_=12)
         data = await r.json()
         total_sent = data['sent_total']
         if total_sent > 100:
-            return Response(text=f'subaccount already exists with {total_sent} emails sent, '
-                                 f'reuse of subaccount id not permitted\n', status=409)
+            return PreResponse(text=f'subaccount already exists with {total_sent} emails sent, '
+                               f'reuse of subaccount id not permitted\n', status=409)
         else:
-            return Response(text=f'subaccount already exists with only {total_sent} emails sent, '
-                                 f'reuse of subaccount id permitted\n')
+            return PreResponse(text=f'subaccount already exists with only {total_sent} emails sent, '
+                               f'reuse of subaccount id permitted\n')
 
 
 class _UserMessagesView(UserView):
@@ -303,6 +302,7 @@ class _UserMessagesView(UserView):
 
         where = Where(where)
         async with self.app['pg'].acquire() as conn:
+            # count is limited to 10,000 as it speeds up the query massively
             count = await conn.fetchval_b(
                 """
                 select count(*)
@@ -671,7 +671,7 @@ class UserAggregationView(UserView):
 
         async with self.app['pg'].acquire() as conn:
             data = await conn.fetchval_b(agg_sql, where=where)
-        return Response(text=data, content_type='application/json')
+        return PreResponse(text=data, content_type='application/json')
 
 
 class AdminAggregatedView(AdminView):
@@ -858,7 +858,7 @@ class RequestStatsView(AuthView):
                 request_count, request_list, _ = await tr.execute()
                 response_data = self.process_values(request_count, request_list)
                 await redis.setex(stats_cache_key, 8, response_data)
-        return Response(body=response_data, content_type='application/json')
+        return PreResponse(body=response_data, content_type='application/json')
 
 
 msg_stats_sql = """
@@ -884,4 +884,4 @@ class MessageStatsView(AuthView):
                 async with self.app['pg'].acquire() as conn:
                     results = await conn.fetchval_b(msg_stats_sql)
                 await redis.setex(cache_key, 598, results)
-        return Response(body=results, content_type='application/json')
+        return PreResponse(body=results, content_type='application/json')

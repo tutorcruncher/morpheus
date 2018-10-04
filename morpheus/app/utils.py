@@ -6,20 +6,22 @@ import json
 import logging
 import re
 import secrets
+from asyncio import shield
 from datetime import datetime, timezone
 from enum import Enum
 from functools import update_wrapper
 from pathlib import Path
-from typing import Dict, NewType, Optional, Type  # noqa
+from typing import Dict, Optional, Type, TypeVar  # noqa
 from urllib.parse import urlencode
 
 import msgpack
 import ujson
 from aiohttp import ClientSession
-from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
+from aiohttp.hdrs import METH_DELETE, METH_GET, METH_HEAD, METH_OPTIONS, METH_POST, METH_PUT
 from aiohttp.web import Application, HTTPBadRequest, HTTPForbidden, HTTPUnauthorized, Request, Response  # noqa
 from aiohttp_jinja2 import render_template
 from arq.utils import to_unix_ms
+from dataclasses import dataclass
 from markupsafe import Markup
 
 from .models import SendMethod, WebModel
@@ -39,16 +41,20 @@ class Session(WebModel):
     expires: datetime = ...
 
 
-AWebModel = NewType('AWebModel', WebModel)
+AWebModel = TypeVar('AWebModel', bound=WebModel)
 
 
-def lenient_json(v):
-    if isinstance(v, (str, bytes)):
-        try:
-            return json.loads(v)
-        except (ValueError, TypeError):
-            pass
-    return v
+class OkCancelError(asyncio.CancelledError):
+    pass
+
+
+@dataclass
+class PreResponse:
+    text: str = None
+    body: bytes = None
+    status: int = 200
+    content_type: str = 'text/plain'
+    headers: Dict[str, str] = None
 
 
 class View:
@@ -70,7 +76,7 @@ class View:
         async def view(request):
             self = cls(request)
             await self.authenticate(request)
-            return cls._modify_response(request, await self.call(request))
+            return await self._raw_call(request)
 
         view.view_class = cls
 
@@ -81,8 +87,30 @@ class View:
         update_wrapper(view, cls.call, assigned=())
         return view
 
+    async def _raw_call(self, request):
+        try:
+            if request.method in {METH_GET, METH_OPTIONS, METH_HEAD}:
+                r = await self.call(request)
+            else:
+                r = await shield(self.call(request))
+        except asyncio.CancelledError as e:
+            # either the request was shielded or request didn't need shielding
+            raise OkCancelError from e
+
+        return self._modify_response(request, r)
+
     @classmethod
     def _modify_response(cls, request, response):
+        if isinstance(response, PreResponse):
+            if response.text:
+                body = response.text.encode()
+            elif response.body:
+                body = response.body
+            else:
+                raise RuntimeError('either body or text are required on PreResponse')
+            response = Response(body=body, status=response.status, headers=response.headers,
+                                content_type=response.content_type)
+
         if cls.headers:
             response.headers.update(cls.headers)
         return response
@@ -229,6 +257,15 @@ class AdminView(TemplateView, BasicAuthView):
         except ApiError as e:
             raise HTTPBadRequest(text=str(e))
         return ctx
+
+
+def lenient_json(v):
+    if isinstance(v, (str, bytes)):
+        try:
+            return json.loads(v)
+        except (ValueError, TypeError):
+            pass
+    return v
 
 
 class ApiError(RuntimeError):
