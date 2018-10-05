@@ -97,9 +97,9 @@ async def _fix_cli(loop, test_client, settings, db_conn):
     )
     app.on_startup.append(modify_startup)
     app.on_shutdown.append(shutdown)
-    cli_ = await test_client(app)
-    cli_.server.app['morpheus_api'].root = f'http://localhost:{cli_.server.port}/'
-    return cli_
+    cli = await test_client(app)
+    cli.server.app['morpheus_api'].root = f'http://localhost:{cli.server.port}/'
+    return cli
 
 
 @pytest.fixture

@@ -318,7 +318,7 @@ async def test_invalid_message_id(cli, settings):
     assert r.status == 400, await r.text()
     data = await r.json()
     assert data == {
-        'message': 'invalid message id: "foobar"',
+        'message': "invalid get argument 'message_id': 'foobar'",
     }
 
 
@@ -432,3 +432,69 @@ async def test_user_list_lots(cli, settings, send_email):
     text = await r.text()
     assert f'1 - 100' in text
     assert f'101 - {min(results, 150)}' not in text
+
+
+async def test_valid_signature(cli, settings):
+    args = dict(
+        company='whatever',
+        expires=to_unix_ms(datetime(2032, 1, 1))
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+
+
+async def test_invalid_signature(cli, settings):
+    args = dict(
+        company='whatever',
+        expires=to_unix_ms(datetime(2032, 1, 1))
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest() + 'xxx'
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 403, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    assert {
+        'message': 'Invalid token'
+    } == await r.json()
+
+
+async def test_invalid_expiry(cli, settings):
+    args = dict(
+        company='whatever',
+        expires='xxx',
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 400, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    assert {
+        'message': 'Invalid Data',
+        'details': [
+            {
+                'loc': [
+                    'expires',
+                ],
+                'msg': 'invalid datetime format',
+                'type': 'type_error.datetime',
+            },
+        ],
+    } == await r.json()
+
+
+async def test_sig_expired(cli, settings):
+    args = dict(
+        company='whatever',
+        expires=to_unix_ms(datetime(2000, 1, 1))
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 403, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    assert {
+        'message': 'token expired',
+    } == await r.json()

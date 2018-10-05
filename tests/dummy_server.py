@@ -44,6 +44,26 @@ async def mandrill_sub_account_info(request):
         })
 
 
+async def mandrill_webhook_list(request):
+    return json_response([
+        {
+            'url': 'https://example.com/webhook/mandrill/',
+            'auth_key': 'existing-auth-key',
+            'description': 'testing existing key'
+        }
+    ])
+
+
+async def mandrill_webhook_add(request):
+    data = await request.json()
+    if 'fail' in data['url']:
+        return Response(status=400)
+    return json_response({
+        'auth_key': 'new-auth-key',
+        'description': 'testing new key',
+    })
+
+
 async def messagebird_hlr_post(request):
     assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
     return Response(status=201)
@@ -114,6 +134,8 @@ def create_external_app():
     app.router.add_post('/mandrill/messages/send.json', mandrill_send_view)
     app.router.add_post('/mandrill/subaccounts/add.json', mandrill_sub_account_add)
     app.router.add_get('/mandrill/subaccounts/info.json', mandrill_sub_account_info)
+    app.router.add_get('/mandrill/webhooks/list.json', mandrill_webhook_list)
+    app.router.add_post('/mandrill/webhooks/add.json', mandrill_webhook_add)
 
     app.router.add_post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post)
     app.router.add_get('/messagebird/lookup/{number}', messagebird_lookup)

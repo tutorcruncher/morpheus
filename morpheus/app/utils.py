@@ -171,9 +171,6 @@ class View:
             details=error_details,
         )
 
-    async def decode_json(self):
-        return await self.request.json(loads=ujson.loads)
-
     def get_arg_int(self, name, default=None):
         v = self.request.query.get(name)
         if v is None:
@@ -181,7 +178,7 @@ class View:
         try:
             return int(v)
         except ValueError:
-            raise JsonErrors.HTTPBadRequest(f'invalid get argument "{name}": {v!r}')
+            raise JsonErrors.HTTPBadRequest(f"invalid get argument '{name}': {v!r}")
 
     @classmethod
     def json_response(cls, *, status_=200, json_str_=None, headers_=None, **data):
@@ -227,7 +224,7 @@ class UserView(View):
         expected_sig = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
         signature = request.query.get('signature', '-')
         if not secrets.compare_digest(expected_sig, signature):
-            raise JsonErrors.HTTPForbidden('Invalid token')
+            raise JsonErrors.HTTPForbidden('Invalid token', headers=self.headers)
 
         try:
             self.session = Session(
@@ -235,9 +232,9 @@ class UserView(View):
                 expires=expires,
             )
         except ValidationError as e:
-            raise JsonErrors.HTTPBadRequest(message='Invalid Data', details=e.errors())
+            raise JsonErrors.HTTPBadRequest(message='Invalid Data', details=e.errors(), headers=self.headers)
         if self.session.expires < datetime.utcnow().replace(tzinfo=timezone.utc):
-            raise JsonErrors.HTTPForbidden('token expired')
+            raise JsonErrors.HTTPForbidden('token expired', headers=self.headers)
 
 
 class BasicAuthView(View):

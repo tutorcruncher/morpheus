@@ -83,3 +83,10 @@ async def test_details(cli, send_email, db_conn):
     assert r.status == 200, text
     # print(text)
     assert f'<h2>Message {message_id}</h2>' in text
+
+
+async def test_no_password(cli):
+    r = await cli.get('/admin/')
+    text = await r.text()
+    assert r.status == 401, text
+    assert r.headers['WWW-Authenticate'] == 'Basic'

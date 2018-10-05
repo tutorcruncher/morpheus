@@ -290,10 +290,6 @@ class _UserMessagesView(UserView):
             where &= (Var('j.company') == self.session.company)
 
         if message_id:
-            try:
-                message_id = int(message_id)
-            except ValueError:
-                raise JsonErrors.HTTPBadRequest(f'invalid message id: "{message_id}"')
             where &= (Var('m.id') == message_id)
         elif tags:
             where &= (Var('tags').contains(tags))
@@ -384,7 +380,7 @@ class UserMessagesJsonView(_UserMessagesView):
 
     async def call(self, request):
         data = await self.query(
-            message_id=request.query.get('message_id'),
+            message_id=self.get_arg_int('message_id'),
             tags=request.query.getall('tags', None),
             query=request.query.get('q')
         )
@@ -413,7 +409,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
     pretty_ts = True
 
     async def call(self, request):
-        data = await self.query(message_id=self.request.match_info['id'])
+        data = await self.query(message_id=int(self.request.match_info['id']))
         if data['count'] == 0:
             raise JsonErrors.HTTPNotFound('message not found')
         data = data['items'][0]

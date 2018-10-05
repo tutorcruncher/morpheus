@@ -25,7 +25,7 @@ logger = logging.getLogger('morpheus.main')
 async def get_mandrill_webhook_key(app):
     try:
         settings, mandrill_webhook_url = app['settings'], app['mandrill_webhook_url']
-        if not (settings.mandrill_key and settings.host_name not in (None, 'localhost')):
+        if not settings.mandrill_key or settings.host_name in {None, 'localhost'}:
             return
 
         mandrill = app['mandrill']
@@ -51,10 +51,8 @@ async def get_mandrill_webhook_key(app):
                 ),
             }
             logger.info('about to create webhook entry via API, wait for morpheus API to be up...')
-            await asyncio.sleep(5)
+            await asyncio.sleep(app['server_up_wait'])
             r = await mandrill.post('webhooks/add.json', **data)
-            if r.status != 200:
-                raise RuntimeError('invalid mandrill webhook list response {}:\n{}'.format(r.status, await r.text()))
             data = await r.json()
             webhook_auth_key = data['auth_key']
             logger.info('created new mandrill webhook "%s", key %s', data['description'], webhook_auth_key)
@@ -112,6 +110,7 @@ def create_app(loop, settings: Settings=None):
         morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
         stats_request_count='request-stats-count',
         stats_request_list='request-stats-list',
+        server_up_wait=5,
     )
 
     app.on_startup.append(app_startup)

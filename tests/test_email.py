@@ -6,8 +6,12 @@ import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
 from aiohttp import ClientError, ClientOSError
 from pytest_toolbox.comparison import AnyInt, RegexStr
+
+from morpheus.app.ext import ApiError
+from morpheus.app.main import create_app, get_mandrill_webhook_key
 
 
 async def test_send_email(cli, tmpdir):
@@ -884,3 +888,85 @@ async def test_link_shortening_not_image(send_email, tmpdir, cli):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{mid}.txt').read()
     assert re.search('<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
+
+
+async def test_mandrill_key_not_setup(settings, loop):
+    app = create_app(loop, settings)
+    try:
+        assert app['webhook_auth_key'] is None
+        await get_mandrill_webhook_key(app)
+        assert app['webhook_auth_key'] is None
+    finally:
+        await app['mandrill'].close()
+        await app['morpheus_api'].close()
+
+
+async def test_mandrill_key_existing(settings, loop):
+    settings.host_name = 'example.com'
+    app = create_app(loop, settings)
+    try:
+        assert app['webhook_auth_key'] is None
+        await get_mandrill_webhook_key(app)
+        assert app['webhook_auth_key'] == b'existing-auth-key'
+    finally:
+        await app['mandrill'].close()
+        await app['morpheus_api'].close()
+
+
+async def test_mandrill_key_new(settings, loop):
+    settings.host_name = 'different.com'
+    app = create_app(loop, settings)
+    app['server_up_wait'] = 0
+    try:
+        assert app['webhook_auth_key'] is None
+        await get_mandrill_webhook_key(app)
+        assert app['webhook_auth_key'] == b'new-auth-key'
+    finally:
+        await app['mandrill'].close()
+        await app['morpheus_api'].close()
+
+
+async def test_mandrill_key_fail(settings, loop):
+    settings.host_name = 'fail.com'
+    app = create_app(loop, settings)
+    app['server_up_wait'] = 0
+    try:
+        assert app['webhook_auth_key'] is None
+        with pytest.raises(ApiError):
+            await get_mandrill_webhook_key(app)
+        assert app['webhook_auth_key'] is None
+    finally:
+        await app['mandrill'].close()
+        await app['morpheus_api'].close()
+
+
+async def test_not_json(cli, tmpdir):
+    r = await cli.post('/send/email/', data='xxx', headers={'Authorization': 'testing-key'})
+    assert r.status == 400, await r.text()
+    assert {
+        'message': 'Error decoding JSON',
+    } == await r.json()
+
+
+async def test_invalid_json(cli, tmpdir):
+    data = {
+        'uid': 'xxx',
+        'company_code': 'foobar',
+        'from_address': 'Samuel <s@muelcolvin.com>',
+        'method': 'email-test',
+        'subject_template': 'test email {{ a }}',
+        'context': {},
+        'recipients': [{'address': 'foobar_a@testing.com'}]
+    }
+    r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 400, await r.text()
+    assert {
+        'message': 'Invalid Data',
+        'details': [
+            {
+                'loc': ['uid'],
+                'msg': 'value is not a valid uuid',
+                'type': 'type_error.uuid',
+            },
+        ],
+    } == await r.json()
