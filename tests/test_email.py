@@ -697,6 +697,40 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker, db_con
             raise ClientOSError('foobar')
 
         class FakeResponse:
+            status = 200
+
+            async def json(self):
+                return [dict(email='foobar_a@testing.com', _id='abc')]
+        return FakeResponse()
+
+    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
+    mock_mandrill_post.side_effect = fake_response
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+
+    await send_email(
+        method='email-mandrill',
+        company_code='mandrill-error-ok-test',
+        recipients=[{'address': 'foobar_a@testing.com'}]
+    )
+
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+
+    m = await db_conn.fetchrow('select * from messages')
+    assert m['status'] == 'send'
+    assert m['body'] == '<body>\nthis is a test\n</body>'
+
+
+async def test_mandrill_send_502_ok(cli, send_email, mocker, db_conn):
+    request = 0
+
+    async def fake_response(url, **data):
+        nonlocal request
+        request += 1
+
+        class FakeResponse:
+            status = 504 if request == 1 else 200
+
             async def json(self):
                 return [dict(email='foobar_a@testing.com', _id='abc')]
         return FakeResponse()

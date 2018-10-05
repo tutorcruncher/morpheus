@@ -14,7 +14,7 @@ import chevron
 import msgpack
 from aiohttp import ClientConnectionError, ClientError, ClientSession
 from arq import Actor, BaseWorker, Drain, concurrent
-from arq.utils import to_unix_ms, truncate
+from arq.utils import to_unix_ms
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
 from dataclasses import asdict, dataclass
@@ -207,9 +207,7 @@ class Sender(Actor):
         email_info = await self._render_email(j)
         if not email_info:
             return
-        main_logger.info('%s: send to "%s" subject="%s" body=%d attachments=[%s]',
-                         j.group_id, j.address, truncate(email_info.subject, 40), len(email_info.html_body),
-                         ', '.join(f'{a["name"]}:{len(a["html"])}' for a in j.pdf_attachments))
+
         attachments = [a async for a in self._generate_base64_pdf(j.pdf_attachments)]
         attachments += [a async for a in self._generate_base64(j.attachments)]
         data = {
@@ -246,14 +244,20 @@ class Sender(Actor):
             return
 
         response, exc = None, None
-        for i in range(3):
+        for i in range(5):
+            if i > 0:
+                await asyncio.sleep(0.5 * i)
             try:
                 response = await self.mandrill.post('messages/send.json', **data)
             except ClientConnectionError as e:
                 exc = e
-                main_logger.info('%s: client connection error, email: "%s", retrying...', j.group_id, j.address)
-                await asyncio.sleep(0.5)
-            except (ClientError, ApiError) as e:
+                main_logger.info('%s: client connection error, retrying %d...', j.group_id, i)
+            except ApiError as e:
+                exc = e
+                if e.status not in {502, 504}:
+                    # if the status is not 502 or 504 break immediately
+                    break
+            except ClientError as e:
                 exc = e
                 break
             else:

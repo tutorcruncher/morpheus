@@ -6,9 +6,8 @@ import logging
 from urllib.parse import urlencode
 
 import ujson
-from aiohttp import ClientSession
+from aiohttp import ClientResponse, ClientSession
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
-from aiohttp.web import Response
 
 from .settings import Settings
 
@@ -59,10 +58,10 @@ class ApiSession:
     async def put(self, uri, *, allowed_statuses=(200, 201), **data):
         return await self._request(METH_PUT, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
+    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> ClientResponse:
         method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)
         headers = data.pop('headers_', {})
-        timeout = data.pop('timeout_', 300)
+        timeout = data.pop('timeout_', 30)
         async with self.session.request(method, url, json=data or None, headers=headers, timeout=timeout) as r:
             # always read entire response before closing the connection
             response_text = await r.text()
