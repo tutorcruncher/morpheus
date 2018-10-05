@@ -47,7 +47,8 @@ async def test_list(cli, send_email, db_conn):
     m = re.search('<h3>Total: (\d+)</h3>', text)
     assert m, text
     send_count = int(m.groups()[0])
-    assert send_count > 1
+    assert send_count == 2
+    assert 'Next: 100 - 200</a>' not in text
     msg_id = await db_conn.fetchval('select id from messages where to_address=$1', 'xx@t.com')
     assert f'<td><a href="/admin/get/email-test/{msg_id}/" class="short">xx@t.com</a></td>\n' in text
     assert '<td>Tue 2032-06-01 00:00 UTC</td>' in text
@@ -55,6 +56,22 @@ async def test_list(cli, send_email, db_conn):
     text = await r.text()
     assert r.status == 200, text
     assert '<h3>Total: 0</h3>' in text
+
+
+async def test_list_many(cli, send_email, db_conn):
+    # make sure at least two messages are sent
+    for i in range(105):
+        await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'xx+{i}@t.com'}])
+
+    r = await cli.get('/admin/list/?method=email-test', headers=gen_headers())
+    text = await r.text()
+    assert r.status == 200, text
+    m = re.search('<h3>Total: (\d+)</h3>', text)
+    assert m, text
+    send_count = int(m.groups()[0])
+    assert send_count == 105
+    assert text.count('<td><a href="/admin/get/email-test/') == 100
+    assert 'Next: 100 - 200</a>' in text
 
 
 async def test_details(cli, send_email, db_conn):

@@ -6,9 +6,11 @@
     {% for name, value in details %}
       <span class="col-md-6 item">
         <label>{{ name }}:</label>
-        <span>
+        <span{% if value.class %} class="{{ value.class }}"{% endif %}>
           {%- if value.href -%}
               <a href="{{ value.href|safe }}">{{ value.value }}</a>
+          {%- elif value.value -%}
+            {{ value.value }}
           {%- elif value -%}
             {{ value }}
           {%- else -%}
@@ -40,7 +42,10 @@
           <div class="panel-heading">
             <h4 class="panel-title">
               <a role="button" data-toggle="collapse" data-parent="#morpheus-accordion" href="#m-event-{{ loop.index }}">
-                {{ event.status }} &bull; {{ event.datetime }}
+                {{ event.status }} &bull;
+                {%- if event.datetime %} <span class="datetime">{{ event.datetime }}</span>
+                {%- else %} ...
+                {% endif %}
               </a>
             </h4>
           </div>

@@ -3,7 +3,7 @@ import hmac
 import json
 import re
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from arq.utils import to_unix_ms
@@ -60,8 +60,6 @@ async def test_user_list(cli, settings, send_email, db_conn):
         'from_name': 'Sender Name',
         'cost': None,
         'extra': None,
-        'events': [],
-
     }
 
     r = await cli.get(modify_url('/user/email-test/messages.json', settings, '__all__'))
@@ -221,6 +219,7 @@ async def test_message_details(cli, settings, send_email, db_conn):
 
     assert 'Open &bull;' in text
     assert '"user_agent": "testincalls",' in text
+    assert text.count('<span class="datetime">') == 3
 
 
 async def test_message_details_link(cli, settings, send_email, db_conn):
@@ -257,18 +256,70 @@ async def test_message_details_link(cli, settings, send_email, db_conn):
     assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
     assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
     assert '<a href="#">different.pdf</a>' in text
-    assert 'Open &bull; Wed 2033-05-18 03:33 UTC' == re.search('Open &bull; .+', text).group(), text
+    d = re.search('Open &bull; .+', text).group()
+    assert 'Open &bull; <span class="datetime">Wed 2033-05-18 03:33 UTC</span>' == d, text
     assert 'extra values not shown' not in text
 
-    r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'Europe/London'}))
+    r = await cli.get(url + '&' + urlencode({'dttz': 'Europe/London'}))
     assert r.status == 200, await r.text()
     text = await r.text()
-    assert 'Open &bull; Wed 2033-05-18 04:33 BST' == re.search('Open &bull; .+', text).group()
+    d = re.search('Open &bull; .+', text).group()
+    assert 'Open &bull; <span class="datetime">Wed 2033-05-18 04:33 BST</span>' == d, text
 
-    r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'snap'}))
+    r = await cli.get(url + '&' + urlencode({'dttz': 'snap'}))
     assert r.status == 400, await r.text()
     assert r.headers.get('Access-Control-Allow-Origin') == '*'
     assert {'message': 'unknown timezone: "snap"'} == await r.json()
+
+
+async def test_single_item_events(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
+        company_code='test-details',
+        recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}],
+    )
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    await db_conn.execute_b(
+        'insert into events (:values__names) values :values',
+        values=MultipleValues(*[
+            Values(
+                ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+                message_id=message_id,
+                status=MessageStatus.send,
+            ) for i in range(3)
+        ])
+    )
+
+    url = modify_url(f'/user/email-test/messages.json?message_id={message_id}', settings, 'test-details')
+    r = await cli.get(url)
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['events'] == [
+        {
+            'status': 'send',
+            'ts': '2032-06-01T00:00:00+00',
+            'extra': None,
+        },
+        {
+            'status': 'send',
+            'ts': '2032-06-02T02:00:00+00',
+            'extra': None,
+        },
+        {
+            'status': 'send',
+            'ts': '2032-06-03T04:00:00+00',
+            'extra': None,
+        },
+    ]
+
+
+async def test_invalid_message_id(cli, settings):
+    url = modify_url(f'/user/email-test/messages.json?message_id=foobar', settings, 'test-details')
+    r = await cli.get(url)
+    assert r.status == 400, await r.text()
+    data = await r.json()
+    assert data == {
+        'message': 'invalid message id: "foobar"',
+    }
 
 
 async def test_many_events(cli, settings, send_email, db_conn):
@@ -286,7 +337,7 @@ async def test_many_events(cli, settings, send_email, db_conn):
         'insert into events (:values__names) values :values',
         values=MultipleValues(*[
             Values(
-                ts=datetime(2032, 6, 1) + timedelta(days=i),
+                ts=(datetime(2032, 6, 1) + timedelta(days=i)).replace(tzinfo=timezone.utc),
                 message_id=message_id,
                 status=MessageStatus.send,
                 extra=json.dumps({'foo': 'bar', 'v': i}),
@@ -299,6 +350,7 @@ async def test_many_events(cli, settings, send_email, db_conn):
     assert r.status == 200, await r.text()
     text = await r.text()
     assert text.count('#morpheus-accordion') == 51
+    assert 'Send &bull; <span class="datetime">Wed 2032-06-16 00:00 UTC</span>\n' in text, text
     assert '5 more &bull; ...' in text
 
 
@@ -333,7 +385,7 @@ async def test_user_sms(cli, settings, send_sms):
     assert item['status'] == 'send'
     assert item['from_name'] == 'FooBar'
     assert item['cost'] == 0.012
-    assert item['events'] == []
+    assert 'events' not in item
     assert json.loads(item['extra']) == {'length': 21, 'parts': 1}
     assert data['spend'] == 0.012
 

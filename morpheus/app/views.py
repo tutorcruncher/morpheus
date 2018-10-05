@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import json
 import logging
-import re
 from html import escape
 from itertools import groupby
 from operator import itemgetter
@@ -20,7 +19,6 @@ from buildpg import Func, Var
 from buildpg.clauses import Select, Where
 from dataclasses import asdict
 from markupsafe import Markup
-from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
@@ -359,31 +357,6 @@ class _UserMessagesView(UserView):
             'items': [dict(r) for r in items],
         }
 
-    async def insert_events(self, data):
-        async with self.app['pg'].acquire() as conn:
-            msg_ids = [m['id'] for m in data['items']]
-            events = await conn.fetch(
-                """
-                select status, message_id, iso_ts(ts, $2) ts, extra
-                from events where message_id = any($1)
-                """,
-                msg_ids,
-                self.get_dt_tz(),
-            )
-        event_lookup = {}
-        for event_ in events:
-            event = dict(event_)
-            msg_id = event.pop('message_id')
-            msg_events = event_lookup.get(msg_id)
-            event['extra'] = json.loads(event['extra'])
-            if msg_events:
-                msg_events.append(event)
-            else:
-                event_lookup[msg_id] = [event]
-        del events
-        for msg in data['items']:
-            msg['events'] = event_lookup.get(msg['id'], [])
-
 
 class UserMessagesJsonView(_UserMessagesView):
     def _select_fields(self):
@@ -418,8 +391,21 @@ class UserMessagesJsonView(_UserMessagesView):
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
             data['spend'] = await self.sender.check_sms_limit(self.session.company)
 
-        await self.insert_events(data)
+        if len(data['items']) == 1:
+            data['events'] = await self.events(data)
         return self.json_response(**data)
+
+    async def events(self, data):
+        async with self.app['pg'].acquire() as conn:
+            events = await conn.fetch(
+                """
+                select status, iso_ts(ts, $2) ts, extra
+                from events where message_id = $1
+                """,
+                data['items'][0]['id'],
+                self.get_dt_tz(),
+            )
+        return [dict(e) for e in events]
 
 
 class UserMessageDetailView(TemplateView, _UserMessagesView):
@@ -460,8 +446,8 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
 
         yield 'Subject', data.get('subject')
         # could do with using prettier timezones here
-        yield 'Send Time', data['send_ts']
-        yield 'Last Updated', data['update_ts']
+        yield 'Send Time', {'class': 'datetime', 'value': data['send_ts']}
+        yield 'Last Updated', {'class': 'datetime', 'value': data['update_ts']}
 
     def _attachments(self, data):
         for a in data['attachments']:
@@ -495,7 +481,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             extra = await self.app['pg'].fetchval('select count(*) - 50 from events where message_id = $1', message_id)
             yield dict(
                 status=f'{extra} more',
-                datetime='...',
+                datetime=None,
                 details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2))
             )
 
@@ -548,9 +534,12 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             yield [
                 {
                     'href': msg['id'],
-                    'text': msg['to_address'],
+                    'value': msg['to_address'],
                 },
-                msg['send_ts'],
+                {
+                    'class': 'datetime',
+                    'value': msg['send_ts']
+                },
                 msg['status'].title(),
                 truncate(subject, 40),
             ]
@@ -774,12 +763,6 @@ class AdminListView(AdminView):
 class AdminGetView(AdminView):
     template = 'admin-get.jinja'
 
-    @staticmethod
-    def replace_data(m):
-        dt = parse_datetime(m.group())
-        # WARNING: this means the output is not valid json, but is more readable
-        return f'{m.group()} ({dt:%a %Y-%m-%d %H:%M})'
-
     async def get_context(self, morpheus_api):
         method = self.request.match_info['method']
         message_id = self.request.match_info['id']
@@ -788,7 +771,6 @@ class AdminGetView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
         data = json.dumps(data, indent=2)
-        data = re.sub('14\d{8,11}', self.replace_data, data)
 
         preview_path = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
         deets_path = morpheus_api.modify_url(self.app.router['user-message-get'].url_for(method=method, id=message_id))
