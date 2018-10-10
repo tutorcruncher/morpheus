@@ -363,22 +363,24 @@ class Sender(Actor):
 
     async def _store_email(self, external_id, send_ts, j: EmailJob, email_info: EmailInfo):
         async with self.pg.acquire() as conn:
+            data = dict(
+                external_id=external_id,
+                group_id=j.group_id,
+                send_ts=send_ts,
+                status=MessageStatus.send,
+                to_first_name=j.first_name,
+                to_last_name=j.last_name,
+                to_user_link=j.user_link,
+                to_address=j.address,
+                tags=j.tags,
+                subject=email_info.subject,
+                body=email_info.html_body,
+            )
+            attachments = [f'{a.get("id") or ""}::{a["name"]}' for a in chain(j.pdf_attachments, j.attachments)]
+            if attachments:
+                data['attachments'] = attachments
             message_id = await conn.fetchval_b(
-                'insert into messages (:values__names) values :values returning id',
-                values=Values(
-                    external_id=external_id,
-                    group_id=j.group_id,
-                    send_ts=send_ts,
-                    status=MessageStatus.send,
-                    to_first_name=j.first_name,
-                    to_last_name=j.last_name,
-                    to_user_link=j.user_link,
-                    to_address=j.address,
-                    tags=j.tags,
-                    subject=email_info.subject,
-                    body=email_info.html_body,
-                    attachments=[f'{a.get("id") or ""}::{a["name"]}' for a in chain(j.pdf_attachments, j.attachments)],
-                )
+                'insert into messages (:values__names) values :values returning id', values=Values(**data)
             )
             if email_info.shortened_link:
                 await conn.execute_b(

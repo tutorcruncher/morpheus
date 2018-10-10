@@ -446,15 +446,17 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         yield 'Last Updated', {'class': 'datetime', 'value': data['update_ts']}
 
     def _attachments(self, data):
-        for a in data['attachments']:
-            name = None
-            try:
-                doc_id, name = a.split('::')
-                doc_id = int(doc_id)
-            except ValueError:
-                yield '#', name or a
-            else:
-                yield f'/attachment-doc/{doc_id}/', name
+        attachments = data['attachments']
+        if attachments:
+            for a in attachments:
+                name = None
+                try:
+                    doc_id, name = a.split('::')
+                    doc_id = int(doc_id)
+                except ValueError:
+                    yield '#', name or a
+                else:
+                    yield f'/attachment-doc/{doc_id}/', name
 
     async def _events(self, message_id):
         events = await self.app['pg'].fetch(
