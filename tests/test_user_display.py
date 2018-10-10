@@ -371,8 +371,8 @@ async def test_message_preview(cli, settings, send_email, db_conn):
     assert '<body>\nthis is a test\n</body>' == await r.text()
 
 
-async def test_message_preview_disable_links(send_email, settings, cli):
-    msg_id = await send_email(
+async def test_message_preview_disable_links(cli, send_email, settings, db_conn):
+    msg_ext_id = await send_email(
         company_code='preview',
         context={
             'message__render': ('Hi, <a href="https://lp.example.com/">\n<span class="class">Look at '
@@ -383,15 +383,15 @@ async def test_message_preview_disable_links(send_email, settings, cli):
             {'address': f'1@example.org'},
         ]
     )
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url(f'/user/email-test/{msg_id}/preview/', settings, 'preview'))
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    r = await cli.get(modify_url(f'/user/email-test/{message_id}/preview/', settings, 'preview'))
     assert r.status == 200, await r.text()
     msg = await r.text()
     assert '<p>Hi, <a href="#"><br>\n<span class="class">Look at this link that needs removed</span></a></p>' in msg
 
 
-async def test_message_preview_disable_links_md(send_email, settings, cli):
-    msg_id = await send_email(
+async def test_message_preview_disable_links_md(send_email, settings, cli, db_conn):
+    msg_ext_id = await send_email(
         company_code='preview',
         main_template='testing {{{ foobar }}}',
         context={
@@ -399,8 +399,8 @@ async def test_message_preview_disable_links_md(send_email, settings, cli):
             'foobar__md': '[hello](www.example.org/hello)'
         },
     )
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url(f'/user/email-test/{msg_id}/preview/', settings, 'preview'))
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    r = await cli.get(modify_url(f'/user/email-test/{message_id}/preview/', settings, 'preview'))
     assert r.status == 200, await r.text()
     assert 'testing <p><a href="#">hello</a></p>\n' == await r.text()
 

@@ -574,7 +574,7 @@ class UserMessagePreviewView(TemplateView, UserView):
         data = dict(data)
         body = data['body']
         # Remove links from preview
-        body = re.sub('(href=").*?"', '\1#"', body, re.I)
+        body = re.sub('(href=").*?"', r'\1#"', body, flags=re.S | re.I)
 
         extra = json.loads(data['extra']) if data.get('extra') else {}
         if method.startswith('sms'):
