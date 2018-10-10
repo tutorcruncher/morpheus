@@ -5,13 +5,15 @@ import aiohttp_jinja2
 import async_timeout
 import jinja2
 from aiohttp.web import Application
+from buildpg import asyncpg
 
-from .es import ElasticSearch
+from .db import prepare_database
+from .ext import Mandrill, MorpheusUserApi
 from .logs import setup_logging
 from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
 from .settings import Settings
-from .utils import THIS_DIR, Mandrill, MorpheusUserApi
+from .utils import THIS_DIR
 from .views import (AdminAggregatedView, AdminGetView, AdminListView, ClickRedirectView, CreateSubaccountView,
                     EmailSendView, MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView,
                     SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView, UserMessageDetailView,
@@ -23,7 +25,7 @@ logger = logging.getLogger('morpheus.main')
 async def get_mandrill_webhook_key(app):
     try:
         settings, mandrill_webhook_url = app['settings'], app['mandrill_webhook_url']
-        if not (settings.mandrill_key and settings.host_name not in (None, 'localhost')):
+        if not settings.mandrill_key or settings.host_name in {None, 'localhost'}:
             return
 
         mandrill = app['mandrill']
@@ -49,10 +51,8 @@ async def get_mandrill_webhook_key(app):
                 ),
             }
             logger.info('about to create webhook entry via API, wait for morpheus API to be up...')
-            await asyncio.sleep(5)
+            await asyncio.sleep(app['server_up_wait'])
             r = await mandrill.post('webhooks/add.json', **data)
-            if r.status != 200:
-                raise RuntimeError('invalid mandrill webhook list response {}:\n{}'.format(r.status, await r.text()))
             data = await r.json()
             webhook_auth_key = data['auth_key']
             logger.info('created new mandrill webhook "%s", key %s', data['description'], webhook_auth_key)
@@ -68,15 +68,24 @@ async def app_startup(app):
         redis = await app['sender'].get_redis()
         info = await redis.info()
         logger.info('redis version: %s', info['server']['redis_version'])
-    app['sender'].es = app['es']
+
+    settings: Settings = app['settings']
+    await prepare_database(settings, False)
+    app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=10, max_size=50)
+
     loop.create_task(get_mandrill_webhook_key(app))
+
+    # the Sender actor shares the same pg pool as the app
+    app['sender'].pg = app['pg']
 
 
 async def app_cleanup(app):
-    await app['sender'].close()
-    await app['es'].close()
-    await app['morpheus_api'].close()
-    await app['mandrill'].close()
+    await asyncio.gather(
+        app['pg'].close(),
+        app['sender'].close(),
+        app['morpheus_api'].close(),
+        app['mandrill'].close(),
+    )
 
 
 def create_app(loop, settings: Settings=None):
@@ -95,13 +104,13 @@ def create_app(loop, settings: Settings=None):
     app.update(
         settings=settings,
         sender=settings.sender_cls(settings=settings, loop=loop),
-        es=ElasticSearch(settings=settings, loop=loop),
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
         mandrill=Mandrill(settings=settings, loop=loop),
         webhook_auth_key=None,
         morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
         stats_request_count='request-stats-count',
         stats_request_list='request-stats-list',
+        server_up_wait=5,
     )
 
     app.on_startup.append(app_startup)
@@ -123,14 +132,15 @@ def create_app(loop, settings: Settings=None):
     app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
     app.router.add_get('/user' + methods + 'messages.json', UserMessagesJsonView.view(), name='user-messages')
-    app.router.add_get('/user' + methods + 'message/{id}.html', UserMessageDetailView.view(), name='user-message-get')
+    app.router.add_get('/user' + methods + 'message/{id:\d+}.html', UserMessageDetailView.view(),
+                       name='user-message-get')
     app.router.add_get('/user' + methods + 'messages.html', UserMessageListView.view(), name='user-message-list')
-
     app.router.add_get('/user' + methods + 'aggregation.json', UserAggregationView.view(), name='user-aggregation')
-    app.router.add_get('/user' + methods + '{id}/preview/', UserMessagePreviewView.view(), name='user-preview')
+    app.router.add_get('/user' + methods + '{id:\d+}/preview/', UserMessagePreviewView.view(), name='user-preview')
+
     app.router.add_get('/admin/', AdminAggregatedView.view(), name='admin')
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
-    app.router.add_get('/admin/get/{method}/{id}/', AdminGetView.view(), name='admin-get')
+    app.router.add_get('/admin/get/{method}/{id:\d+}/', AdminGetView.view(), name='admin-get')
 
     app.router.add_get('/stats/requests/', RequestStatsView.view(), name='request-stats')
     app.router.add_get('/stats/messages/', MessageStatsView.view(), name='message-stats')

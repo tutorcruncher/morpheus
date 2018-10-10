@@ -3,10 +3,14 @@ import hmac
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from arq.utils import to_unix_ms
+from buildpg import MultipleValues, Values
+from pytest_toolbox.comparison import RegexStr
+
+from morpheus.app.models import MessageStatus
 
 
 def modify_url(url, settings, company='foobar'):
@@ -19,9 +23,7 @@ def modify_url(url, settings, company='foobar'):
     return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
 
 
-async def test_user_list(cli, settings, send_email):
-    await cli.server.app['es'].create_indices(True)
-
+async def test_user_list(cli, settings, send_email, db_conn):
     expected_msg_ids = []
     for i in range(4):
         uid = str(uuid.uuid4())
@@ -30,25 +32,40 @@ async def test_user_list(cli, settings, send_email):
 
     await send_email(uid=str(uuid.uuid4()), company_code='different1')
     await send_email(uid=str(uuid.uuid4()), company_code='different2')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/messages.json', settings, 'whoever'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 4
-    msg_ids = [h['_id'] for h in data['hits']['hits']]
-    print(msg_ids)
+    # debug(data)
+    assert data['count'] == 4
+    msg_ids = [h['external_id'] for h in data['items']]
     assert msg_ids == list(reversed(expected_msg_ids))
-    assert len(data['hits']['hits']) == 4
-    hit = data['hits']['hits'][0]
-    assert hit['_source']['company'] == 'whoever'
-    assert hit['_source']['status'] == 'send'
+    first_item = data['items'][0]
+    assert first_item == {
+        'id': await db_conn.fetchval('select id from messages where external_id=$1', expected_msg_ids[3]),
+        'external_id': expected_msg_ids[3],
+        'send_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
+        'update_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
+        'status': 'send',
+        'to_first_name': None,
+        'to_last_name': None,
+        'to_user_link': None,
+        'to_address': '3@t.com',
+        'company': 'whoever',
+        'method': 'email-test',
+        'subject': 'test message',
+        'tags': [
+            expected_msg_ids[3][:-6],
+        ],
+        'from_name': 'Sender Name',
+        'cost': None,
+        'extra': None,
+    }
 
     r = await cli.get(modify_url('/user/email-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 6
+    assert data['count'] == 6
 
     r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()
@@ -66,25 +83,24 @@ async def test_user_search(cli, settings, send_email):
         msgs[subject] = f'{uid}-{i}tcom'
 
     await send_email(uid=str(uuid.uuid4()), company_code='different1', subject_template='eggplant')
-    await cli.server.app['es'].get('messages/_refresh')
+
     r = await cli.get(modify_url('/user/email-test/messages.json?q=cherry', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 1
-    hit = data['hits']['hits'][0]
-    assert hit['_id'] == msgs['cherry']
-    assert hit['_index'] == 'messages'
-    assert hit['_source']['subject'] == 'cherry'
+    assert data['count'] == 1
+    item = data['items'][0]
+    # debug(item)
+    assert 0.05 < item['ranking'] < 0.2
+    assert item['external_id'] == msgs['cherry']
+    assert item['subject'] == 'cherry'
     r = await cli.get(modify_url('/user/email-test/messages.json?q=eggplant', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 0
+    # debug(data)
+    assert data['count'] == 0
 
 
 async def test_user_aggregate(cli, settings, send_email):
-    await cli.server.app['es'].create_indices(True)
-
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
     msg_id = await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
@@ -98,28 +114,36 @@ async def test_user_aggregate(cli, settings, send_email):
     await cli.post('/webhook/test/', json=data)
 
     await send_email(uid=str(uuid.uuid4()), company_code='different')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'user-aggs'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    buckets = data['aggregations']['histogram']['buckets']
-    assert len(buckets) == 1
-    assert buckets[0]['doc_count'] == 5
-    assert buckets[0]['send']['doc_count'] == 4
-    assert buckets[0]['open']['doc_count'] == 1
-    assert buckets[0]['render_failed']['doc_count'] == 0
-    assert data['aggregations']['all_opened']['doc_count'] == 1
-    assert data['aggregations']['7_days_all']['doc_count'] == 5
-    assert data['aggregations']['7_days_opened']['doc_count'] == 1
-    assert data['aggregations']['28_days_all']['doc_count'] == 5
-    assert data['aggregations']['28_days_opened']['doc_count'] == 1
+    today = date.today()
+    assert data == {
+        'histogram': [
+            {
+                'count': 4,
+                'day': f'{today:%Y-%m-%d}',
+                'status': 'send',
+            },
+            {
+                'count': 1,
+                'day': f'{today:%Y-%m-%d}',
+                'status': 'open',
+            },
+        ],
+        'all_90_day': 5,
+        'open_90_day': 1,
+        'all_7_day': 5,
+        'open_7_day': 1,
+        'all_28_day': 5,
+        'open_28_day': 1,
+    }
 
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['aggregations']['histogram']['buckets'][0]['doc_count'] == 6
+    assert sum(v['count'] for v in data['histogram']) == 6
 
 
 async def test_user_tags(cli, settings, send_email):
@@ -146,51 +170,48 @@ async def test_user_tags(cli, settings, send_email):
 
     await send_email(uid=str(uuid.uuid4()), company_code='different1')
     await send_email(uid=str(uuid.uuid4()), company_code='different2')
-    await cli.server.app['es'].get('messages/_refresh')
 
     url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')])
     r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 2, json.dumps(data, indent=2)
-    assert {h['_id'] for h in data['hits']['hits']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
+    assert data['count'] == 2, json.dumps(data, indent=2)
+    assert {h['external_id'] for h in data['items']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
 
     url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'user:2')])
     r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 1, json.dumps(data, indent=2)
-    assert data['hits']['hits'][0]['_id'] == f'{uid1}-2tcom'
+    assert data['count'] == 1, json.dumps(data, indent=2)
+    assert data['items'][0]['external_id'] == f'{uid1}-2tcom'
 
     query = [('tags', 'trigger:other'), ('tags', 'shoesize:8')]
     url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query(query)
     r = await cli.get(modify_url(url, settings, 'tagtest'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 1
-    assert data['hits']['hits'][0]['_id'] == f'{uid2}-4tcom'
+    # debug(data)
+    assert data['count'] == 1
+    assert data['items'][0]['external_id'] == f'{uid2}-4tcom'
 
 
-async def test_message_details(cli, settings, send_email):
-    msg_id = await send_email(company_code='test-details')
+async def test_message_details(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(company_code='test-details')
 
     data = {
         'ts': int(1e10),
         'event': 'open',
-        '_id': msg_id,
+        '_id': msg_ext_id,
         'user_agent': 'testincalls'
     }
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
-    await cli.server.app['es'].get('messages/_refresh')
-    await cli.server.app['es'].get('events/_refresh')
-
-    r = await cli.get(modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details'))
-    assert r.status == 200, await r.text()
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    r = await cli.get(modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details'))
     text = await r.text()
+    assert r.status == 200, text
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
     spaceless = re.sub('\n +', '\n', text)
     # print(spaceless)
     assert '<label>Subject:</label>\n<span>test message</span>' in spaceless
@@ -198,10 +219,11 @@ async def test_message_details(cli, settings, send_email):
 
     assert 'Open &bull;' in text
     assert '"user_agent": "testincalls",' in text
+    assert text.count('<span class="datetime">') == 3
 
 
-async def test_message_details_link(cli, settings, send_email):
-    msg_id = await send_email(
+async def test_message_details_link(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
         company_code='test-details',
         recipients=[
             {
@@ -220,38 +242,88 @@ async def test_message_details_link(cli, settings, send_email):
     data = {
         'ts': int(2e12),
         'event': 'open',
-        '_id': msg_id,
+        '_id': msg_ext_id,
         'user_agent': 'testincalls'
     }
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
-    await cli.server.app['es'].get('messages/_refresh')
-    await cli.server.app['es'].get('events/_refresh')
-
-    url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    url = modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 200, await r.text()
     text = await r.text()
     assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
     assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
     assert '<a href="#">different.pdf</a>' in text
-    assert 'Open &bull; Wed 2033-05-18 03:33' == re.search('Open &bull; .+', text).group(), text
+    d = re.search('Open &bull; .+', text).group()
+    assert 'Open &bull; <span class="datetime">Wed 2033-05-18 03:33 UTC</span>' == d, text
     assert 'extra values not shown' not in text
 
-    r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'Europe/London'}))
+    r = await cli.get(url + '&' + urlencode({'dttz': 'Europe/London'}))
     assert r.status == 200, await r.text()
     text = await r.text()
-    assert 'Open &bull; 18/05/2033 04:33 BST' == re.search('Open &bull; .+', text).group()
+    d = re.search('Open &bull; .+', text).group()
+    assert 'Open &bull; <span class="datetime">Wed 2033-05-18 04:33 BST</span>' == d, text
 
-    r = await cli.get(url + '&' + urlencode({'dtfmt': '%d/%m/%Y %H:%M %Z', 'dttz': 'snap'}))
+    r = await cli.get(url + '&' + urlencode({'dttz': 'snap'}))
     assert r.status == 400, await r.text()
-    text = await r.text()
-    assert 'unknown timezone: "snap"' == text
+    assert r.headers.get('Access-Control-Allow-Origin') == '*'
+    assert {'message': 'unknown timezone: "snap"'} == await r.json()
 
 
-async def test_many_events(cli, settings, send_email):
-    msg_id = await send_email(
+async def test_single_item_events(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
+        company_code='test-details',
+        recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}],
+    )
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    await db_conn.execute_b(
+        'insert into events (:values__names) values :values',
+        values=MultipleValues(*[
+            Values(
+                ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+                message_id=message_id,
+                status=MessageStatus.send,
+            ) for i in range(3)
+        ])
+    )
+
+    url = modify_url(f'/user/email-test/messages.json?message_id={message_id}', settings, 'test-details')
+    r = await cli.get(url)
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['events'] == [
+        {
+            'status': 'send',
+            'ts': '2032-06-01T00:00:00+00',
+            'extra': None,
+        },
+        {
+            'status': 'send',
+            'ts': '2032-06-02T02:00:00+00',
+            'extra': None,
+        },
+        {
+            'status': 'send',
+            'ts': '2032-06-03T04:00:00+00',
+            'extra': None,
+        },
+    ]
+
+
+async def test_invalid_message_id(cli, settings):
+    url = modify_url(f'/user/email-test/messages.json?message_id=foobar', settings, 'test-details')
+    r = await cli.get(url)
+    assert r.status == 400, await r.text()
+    data = await r.json()
+    assert data == {
+        'message': "invalid get argument 'message_id': 'foobar'",
+    }
+
+
+async def test_many_events(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
         company_code='test-details',
         recipients=[
             {
@@ -260,75 +332,67 @@ async def test_many_events(cli, settings, send_email):
             }
         ]
     )
-    events = [
-        {
-            'ts': 1499786845,
-            'status': f'testing_{i}',
-            'extra': {}
-        }
-        for i in range(55)
-    ]
-    for event in events:
-        await cli.server.app['es'].post(
-            f'events/email-test/',
-            message=msg_id,
-            **event
-        )
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    await db_conn.execute_b(
+        'insert into events (:values__names) values :values',
+        values=MultipleValues(*[
+            Values(
+                ts=(datetime(2032, 6, 1) + timedelta(days=i)).replace(tzinfo=timezone.utc),
+                message_id=message_id,
+                status=MessageStatus.send,
+                extra=json.dumps({'foo': 'bar', 'v': i}),
+            ) for i in range(55)
+        ])
+    )
 
-    await cli.server.app['es'].get('messages/_refresh')
-    await cli.server.app['es'].get('events/_refresh')
-
-    url = modify_url(f'/user/email-test/message/{msg_id}.html', settings, 'test-details')
+    url = modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 200, await r.text()
     text = await r.text()
     assert text.count('#morpheus-accordion') == 51
+    assert 'Send &bull; <span class="datetime">Wed 2032-06-16 00:00 UTC</span>\n' in text, text
     assert '5 more &bull; ...' in text
 
 
 async def test_message_details_missing(cli, settings):
-    r = await cli.get(modify_url(f'/user/email-test/message/missing.html', settings, 'test-details'))
+    r = await cli.get(modify_url(f'/user/email-test/message/123.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
-    text = await r.text()
-    assert 'message not found' == text
-    assert 'message not found' == text
+    data = await r.json()
+    assert {
+        'message': 'message not found',
+    } == data
 
 
-async def test_message_preview(cli, settings, send_email):
-    msg_id = await send_email(company_code='preview')
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url(f'/user/email-test/{msg_id}/preview/', settings, 'preview'))
+async def test_message_preview(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(company_code='preview')
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    r = await cli.get(modify_url(f'/user/email-test/{message_id}/preview/', settings, 'preview'))
     assert r.status == 200, await r.text()
     assert '<body>\nthis is a test\n</body>' == await r.text()
 
 
 async def test_user_sms(cli, settings, send_sms):
-    await cli.server.app['es'].create_indices(True)
     await send_sms(company_code='snapcrap')
 
     await send_sms(uid=str(uuid.uuid4()), company_code='flip')
-    await cli.server.app['es'].get('messages/_refresh')
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, 'snapcrap'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    # print(json.dumps(data, indent=2))
-    assert data['hits']['total'] == 1
-    hit = data['hits']['hits'][0]
-    assert hit['_index'] == 'messages'
-    assert hit['_type'] == 'sms-test'
-    assert hit['_source']['company'] == 'snapcrap'
-    assert hit['_source']['status'] == 'send'
-    assert hit['_source']['from_name'] == 'FooBar'
-    assert hit['_source']['body'] == 'this is a test apples'
-    assert hit['_source']['cost'] == 0.012
-    assert hit['_source']['events'] == []
-    assert hit['_source']['extra'] == {'length': 21, 'parts': 1}
+    assert data['count'] == 1
+    item = data['items'][0]
+    assert item['method'] == 'sms-test'
+    assert item['company'] == 'snapcrap'
+    assert item['status'] == 'send'
+    assert item['from_name'] == 'FooBar'
+    assert item['cost'] == 0.012
+    assert 'events' not in item
+    assert json.loads(item['extra']) == {'length': 21, 'parts': 1}
     assert data['spend'] == 0.012
 
     r = await cli.get(modify_url('/user/sms-test/messages.json', settings, '__all__'))
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data['hits']['total'] == 2
+    assert data['count'] == 2
 
     r = await cli.get(modify_url('/user/sms-test/messages.html', settings, 'snapcrap'))
     assert r.status == 200, await r.text()
@@ -336,16 +400,14 @@ async def test_user_sms(cli, settings, send_sms):
     assert '<caption>Total spend this month: <b>£0.012</b><span id="extra-spend-info"></span></caption>' in text, text
 
 
-async def test_user_sms_preview(cli, settings, send_sms):
-    await cli.server.app['es'].create_indices(True)
-    msg_id = await send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
+async def test_user_sms_preview(cli, settings, send_sms, db_conn):
+    msg_ext_id = await send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
 
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
     await send_sms(uid=str(uuid.uuid4()), company_code='flip')
-    await cli.server.app['es'].get('messages/_refresh')
-    r = await cli.get(modify_url(f'/user/sms-test/{msg_id}/preview/', settings, 'smspreview'))
+    r = await cli.get(modify_url(f'/user/sms-test/{message_id}/preview/', settings, 'smspreview'))
     text = await r.text()
     assert r.status == 200, text
-    print(text)
     assert '<span class="metadata">Length:</span>220' in text
     assert '<span class="metadata">Multipart:</span>2 parts' in text
 
@@ -353,8 +415,6 @@ async def test_user_sms_preview(cli, settings, send_sms):
 async def test_user_list_lots(cli, settings, send_email):
     for i in range(110):
         await send_email(uid=str(uuid.uuid4()), company_code='list-lots', recipients=[{'address': f'{i}@t.com'}])
-
-    await cli.server.app['es'].get('messages/_refresh')
 
     r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()
@@ -372,3 +432,69 @@ async def test_user_list_lots(cli, settings, send_email):
     text = await r.text()
     assert f'1 - 100' in text
     assert f'101 - {min(results, 150)}' not in text
+
+
+async def test_valid_signature(cli, settings):
+    args = dict(
+        company='whatever',
+        expires=to_unix_ms(datetime(2032, 1, 1))
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+
+
+async def test_invalid_signature(cli, settings):
+    args = dict(
+        company='whatever',
+        expires=to_unix_ms(datetime(2032, 1, 1))
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest() + 'xxx'
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 403, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    assert {
+        'message': 'Invalid token'
+    } == await r.json()
+
+
+async def test_invalid_expiry(cli, settings):
+    args = dict(
+        company='whatever',
+        expires='xxx',
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 400, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    assert {
+        'message': 'Invalid Data',
+        'details': [
+            {
+                'loc': [
+                    'expires',
+                ],
+                'msg': 'invalid datetime format',
+                'type': 'type_error.datetime',
+            },
+        ],
+    } == await r.json()
+
+
+async def test_sig_expired(cli, settings):
+    args = dict(
+        company='whatever',
+        expires=to_unix_ms(datetime(2000, 1, 1))
+    )
+    body = '{company}:{expires}'.format(**args).encode()
+    args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
+    r = await cli.get('/user/email-test/messages.json?' + urlencode(args))
+    assert r.status == 403, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    assert {
+        'message': 'token expired',
+    } == await r.json()

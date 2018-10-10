@@ -1,4 +1,10 @@
-version: '2.1'
+version: '3.4'
+
+volumes:
+  pg_data: {}
+  redis_data: {}
+  pdf_data: {}
+  test_data: {}
 
 services:
   logs:
@@ -6,10 +12,32 @@ services:
     - 5001:80
 
   nginx:
-    image: nginx:1.13-alpine
+    image: nginx:1.15-alpine
     restart: always
     volumes:
     - ./nginx/dev.nginx.conf:/etc/nginx/nginx.conf
     - ./nginx/maintenance.html:/maintenance.html
     ports:
     - 5000:80
+
+  postgres:
+    image: postgres:10.5-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: docker
+    ports:
+    # to connect: `pgcli postgre://postgres:docker@localhost:54320/morpheus`
+    - 54320:5432
+    volumes:
+    - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    depends_on:
+    - logs
+
+  web:
+    environment:
+      APP_PG_DSN: 'postgres://postgres:docker@postgres:5432/morpheus'
+
+  worker:
+    environment:
+      APP_PG_DSN: 'postgres://postgres:docker@postgres:5432/morpheus'

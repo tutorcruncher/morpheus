@@ -3,146 +3,56 @@ import re
 import uuid
 
 import pytest
-from aiohttp.web import Application, HTTPForbidden, Response, json_response
+from aiohttp.test_utils import teardown_test_loop
+from buildpg import asyncpg
 
-from morpheus.app.es import ElasticSearch
+from morpheus.app.db import SimplePgPool, prepare_database
 from morpheus.app.main import create_app
 from morpheus.app.settings import Settings
 
+from .dummy_server import create_external_app
 
-@pytest.fixture(scope='session')
-def setup_elastic_search():
+
+def pytest_addoption(parser):
+    parser.addoption(
+        '--reuse-db', action='store_true', default=False, help='keep the existing database if it exists'
+    )
+
+
+pg_settings = dict(
+    pg_dsn='postgres://postgres:waffle@localhost:5432/morpheus_test',
+    pg_name=None,
+)
+
+
+@pytest.fixture(scope='session', name='clean_db')
+def _fix_clean_db(request):
+    # loop fixture has function scope so can't be used here.
+    settings = Settings(**pg_settings)
     loop = asyncio.new_event_loop()
-    es = ElasticSearch(settings=Settings(auth_key='x', mandrill_key='x'), loop=loop)
-    loop.run_until_complete(es.create_indices(True))
-    es.close()
+    loop.run_until_complete(prepare_database(settings, not request.config.getoption('--reuse-db')))
+    teardown_test_loop(loop)
 
 
-async def mandrill_send_view(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    to_email = data['message']['to'][0]['email']
-    return json_response([
-        {
-            'email': to_email,
-            '_id': re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{to_email}'),
-            'status': 'queued',
-        }
-    ])
+@pytest.fixture(name='db_conn')
+async def _fix_db_conn(loop, settings, clean_db):
+    conn = await asyncpg.connect_b(dsn=settings.pg_dsn, loop=loop)
 
+    tr = conn.transaction()
+    await tr.start()
 
-async def mandrill_sub_account_add(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    sa_id = data['id']
-    if sa_id == 'broken':
-        return json_response({'error': 'snap something unknown went wrong'}, status=500)
-    elif sa_id in request.app['mandrill_subaccounts']:
-        return json_response({'message': f'A subaccount with id {sa_id} already exists'}, status=500)
-    else:
-        request.app['mandrill_subaccounts'][sa_id] = data
-        return json_response({'message': "subaccount created (this isn't the same response as mandrill)"})
+    await conn.execute("set client_min_messages = 'log'")
 
+    yield conn
 
-async def mandrill_sub_account_info(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    sa_id = data['id']
-    sa_info = request.app['mandrill_subaccounts'].get(sa_id)
-    if sa_info:
-        return json_response({
-            'subaccount_info': sa_info,
-            'sent_total': 200 if sa_id == 'lots-sent' else 42,
-        })
-
-
-async def messagebird_hlr_post(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    return Response(status=201)
-
-
-async def messagebird_lookup(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    return json_response({
-        'hlr': {
-            'status': 'active',
-            'network': 23430,
-        }
-    })
-
-
-async def messagebird_send(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    data = await request.json()
-    return json_response({
-        'id': '6a23b2037595620ca8459a3b00026003',
-        'recipients': {
-            'totalCount': len(data['recipients']),
-        }
-    }, status=201)
-
-
-async def messagebird_pricing(request):
-    if not request.query.get('username') == 'mb-username':
-        raise HTTPForbidden(text='bad username')
-    if not request.query.get('password') == 'mb-password':
-        raise HTTPForbidden(text='bad password')
-    return json_response([
-        {
-            'mcc': '0',
-            'country_name': 'Default rate',
-            'rate': '0.0400',
-        },
-        {
-            'mcc': '234',
-            'country_name': 'United Kingdom',
-            'rate': '0.0200',
-        },
-    ])
-
-
-async def generate_pdf(request):
-    assert request.headers['pdf_zoom'] == '1.25'
-    data = await request.read()
-    if not data:
-        return Response(text='request was empty', status=400)
-    elif b'binary' in data:
-        return Response(body=b'binary-\xfe', content_type='application/pdf')
-    else:
-        return Response(body=data, content_type='application/pdf')
-
-
-async def logging_middleware(app, handler):
-    async def _handler(request):
-        r = await handler(request)
-        request.app['request_log'].append(f'{request.method} {request.path_qs} > {r.status}')
-        return r
-    return _handler
+    await tr.rollback()
+    await conn.close()
 
 
 @pytest.fixture
-def mock_external(loop, test_server):
-    app = Application(middlewares=[logging_middleware])
-
-    app.router.add_post('/mandrill/messages/send.json', mandrill_send_view)
-    app.router.add_post('/mandrill/subaccounts/add.json', mandrill_sub_account_add)
-    app.router.add_get('/mandrill/subaccounts/info.json', mandrill_sub_account_info)
-
-    app.router.add_post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post)
-    app.router.add_get('/messagebird/lookup/{number}', messagebird_lookup)
-    app.router.add_post('/messagebird/messages', messagebird_send)
-
-    app.router.add_get('/messagebird-pricing', messagebird_pricing)
-
-    app.router.add_route('*', '/generate.pdf', generate_pdf)
-    app.update(
-        request_log=[],
-        mandrill_subaccounts={}
-    )
-    server = loop.run_until_complete(test_server(app))
+async def mock_external(test_server):
+    app = create_external_app()
+    server = await test_server(app)
     app['server_name'] = f'http://localhost:{server.port}'
     return server
 
@@ -150,6 +60,7 @@ def mock_external(loop, test_server):
 @pytest.fixture
 def settings(tmpdir, mock_external):
     return Settings(
+        **pg_settings,
         auth_key='testing-key',
         test_output=str(tmpdir),
         pdf_generation_url=mock_external.app['server_name'] + '/generate.pdf',
@@ -158,9 +69,6 @@ def settings(tmpdir, mock_external):
         mandrill_url=mock_external.app['server_name'] + '/mandrill',
         host_name=None,
         click_host_name='click.example.com',
-        s3_access_key=None,
-        s3_secret_key=None,
-        snapshot_repo_name='morpheus-testing',
         messagebird_key='good-messagebird-testing-key',
         messagebird_url=mock_external.app['server_name'] + '/messagebird',
         messagebird_pricing_api=mock_external.app['server_name'] + '/messagebird-pricing',
@@ -171,12 +79,11 @@ def settings(tmpdir, mock_external):
     )
 
 
-@pytest.fixture
-def cli(loop, test_client, settings, setup_elastic_search):
+@pytest.fixture(name='cli')
+async def _fix_cli(loop, test_client, settings, db_conn):
     async def modify_startup(app):
         app['sender']._concurrency_enabled = False
         await app['sender'].startup()
-        app['webhook_auth_key'] = b'testing'
         redis = await app['sender'].get_redis()
         await redis.flushdb()
 
@@ -184,15 +91,19 @@ def cli(loop, test_client, settings, setup_elastic_search):
         await app['sender'].shutdown()
 
     app = create_app(loop, settings=settings)
+    app.update(
+        pg=SimplePgPool(db_conn),
+        webhook_auth_key=b'testing'
+    )
     app.on_startup.append(modify_startup)
     app.on_shutdown.append(shutdown)
-    cli_ = loop.run_until_complete(test_client(app))
-    cli_.server.app['morpheus_api'].root = f'http://localhost:{cli_.server.port}/'
-    return cli_
+    cli = await test_client(app)
+    cli.server.app['morpheus_api'].root = f'http://localhost:{cli.server.port}/'
+    return cli
 
 
 @pytest.fixture
-def send_email(cli, **extra):
+def send_email(cli):
     async def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),

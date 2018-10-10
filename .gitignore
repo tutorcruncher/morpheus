@@ -15,3 +15,4 @@ activate.*
 nginx/htpasswd
 nginx/_build.nginx.conf
 morpheus/es-license/license.json
+data_transfer/es_data/

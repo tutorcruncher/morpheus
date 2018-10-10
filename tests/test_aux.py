@@ -1,13 +1,11 @@
 import asyncio
 import base64
-import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from morpheus.app.utils import ApiError, ApiSession
-from morpheus.app.worker import AuxActor
+from morpheus.app.ext import ApiError, ApiSession
 
 
 async def test_index(cli):
@@ -32,46 +30,6 @@ async def test_favicon(cli):
     r = await cli.get('/favicon.ico', allow_redirects=False)
     assert r.status == 200
     assert 'image' in r.headers['Content-Type']  # value can vary
-
-
-async def test_create_repo(cli, settings):
-    es = cli.server.app['es']
-    r = await es.get(f'/_snapshot/{settings.snapshot_repo_name}', allowed_statuses=(200, 404))
-    if r.status == 200:
-        await es.delete(f'/_snapshot/{settings.snapshot_repo_name}')
-
-    type, created = await es.create_snapshot_repo()
-    assert type == 'fs'
-    assert created is True
-
-    type, created = await es.create_snapshot_repo()
-    assert type == 'fs'
-    assert created is False
-
-    type, created = await es.create_snapshot_repo(delete_existing=True)
-    assert type == 'fs'
-    assert created is True
-
-
-@pytest.mark.skipif(not os.getenv('TRAVIS'),  reason='only run on travis')
-async def test_run_snapshot(cli, settings, loop):
-    es = cli.server.app['es']
-    await es.create_snapshot_repo()
-
-    r = await es.get(f'/_snapshot/{settings.snapshot_repo_name}/_all?pretty=true')
-    print(await r.text())
-    data = await r.json()
-    snapshots_before = len(data['snapshots'])
-
-    aux = AuxActor(settings=settings, loop=loop)
-    await aux.startup()
-    await aux.snapshot_es.direct()
-    await aux.close(shutdown=True)
-
-    r = await es.get(f'/_snapshot/{settings.snapshot_repo_name}/_all?pretty=true')
-    print(await r.text())
-    data = await r.json()
-    assert len(data['snapshots']) == snapshots_before + 1
 
 
 async def test_stats_unauthorised(cli, smart_caplog):
@@ -145,22 +103,22 @@ async def test_request_stats_reset(cli, loop):
 
 
 async def test_message_stats(cli, send_email):
-    await cli.server.app['es'].create_indices(True)
     for i in range(5):
         await send_email(uid=str(uuid.uuid4()), recipients=[{'address': f'{i}@t.com'}])
-    await cli.server.app['es'].get('messages/_refresh')
 
     r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
-    # import json
-    # print(json.dumps(data, indent=2))
-    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'send')['count'] == 5
-    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'open')['count'] == 0
-    assert next(d for d in data if d['method'] == 'email-mandrill' and d['status'] == 'send')['count'] == 0
+    assert data == [
+        {
+            'count': 5,
+            'age': 0,
+            'method': 'email-test',
+            'status': 'send',
+        },
+    ]
 
     await send_email()
-    await cli.server.app['es'].get('messages/_refresh')
 
     r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
@@ -168,38 +126,37 @@ async def test_message_stats(cli, send_email):
     assert data2 == data  # last message has no effect due to caching
 
 
-async def test_message_stats_old(cli, send_email):
-    es = cli.server.app['es']
-    await es.create_indices(True)
+async def test_message_stats_old(cli, send_email, db_conn):
     expected_msg_ids = []
     for i in range(5):
         uid = str(uuid.uuid4())
         await send_email(uid=uid, company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
         expected_msg_ids.append(f'{uid}-{i}tcom')
 
-    old = datetime.utcnow() - timedelta(minutes=20)
-    await es.post(f'messages/email-test/{expected_msg_ids[0]}/_update', doc={'send_ts': old, 'update_ts': old})
-    await es.post(f'messages/email-test/{expected_msg_ids[1]}/_update', doc={'send_ts': old, 'status': 'open'})
+    old = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(minutes=20)
 
-    await es.get('messages/_refresh')
+    await db_conn.execute('update messages set send_ts=$1, update_ts=$2 where external_id=$3',
+                          old, old, expected_msg_ids[0])
+    await db_conn.execute('update messages set send_ts=$1, status=$2 where external_id=$3',
+                          old, 'open', expected_msg_ids[1])
 
     r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
-    # import json
-    # print(json.dumps(data, indent=2))
-    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'send') == dict(
-        method='email-test',
-        status='send',
-        count=3,
-        age=0,
-    )
-    assert next(d for d in data if d['method'] == 'email-test' and d['status'] == 'open') == dict(
-        method='email-test',
-        status='open',
-        count=1,
-        age=1200,
-    )
+    assert data == [
+        {
+            'count': 3,
+            'age': 0,
+            'method': 'email-test',
+            'status': 'send',
+        },
+        {
+            'count': 1,
+            'age': 1200,
+            'method': 'email-test',
+            'status': 'open',
+        },
+    ]
 
 
 async def test_create_sub_account_new_few_sent(cli, mock_external):
@@ -292,14 +249,7 @@ async def test_api_error(settings, loop, mock_external):
         await s.close()
 
 
-@pytest.mark.parametrize('input, result', [
-    ([1, 2, datetime(2032, 6, 1)], '[1, 2, 1969660800000]'),
-    ([1, 2, {1, 2, 3}], '[1, 2, [1, 2, 3]]'),
-])
-def test_custom_json_encoder(input, result):
-    assert ApiSession.encode_json(input) == result
-
-
-def test_custom_json_encoder_error():
-    with pytest.raises(TypeError):
-        ApiSession.encode_json([1, 2, {1: 2, 2: 4}.keys()])
+def test_settings(settings):
+    assert settings.pg_host == 'localhost'
+    assert settings.pg_port == 5432
+    assert settings.pg_name == 'morpheus_test'

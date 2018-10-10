@@ -3,10 +3,8 @@ import hashlib
 import hmac
 import json
 import logging
-import re
-from datetime import datetime
 from html import escape
-from itertools import product
+from itertools import groupby
 from operator import itemgetter
 from statistics import mean, stdev
 from time import time
@@ -14,19 +12,21 @@ from time import time
 import msgpack
 import pytz
 import ujson
-from aiohttp.web import HTTPBadRequest, HTTPConflict, HTTPForbidden, HTTPNotFound, HTTPTemporaryRedirect, Response
+from aiohttp.web import HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
-from arq.utils import from_unix_ms, truncate
+from arq.utils import truncate
+from buildpg import Func, Var
+from buildpg.clauses import Select, Where
+from dataclasses import asdict
 from markupsafe import Markup
-from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
-from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, MessageStatus, SendMethod,
-                     SmsNumbersModel, SmsSendModel, SubaccountModel)
-from .utils import Mandrill  # noqa
-from .utils import AdminView, AuthView, ServiceView, TemplateView, UserView, View
+from .ext import Mandrill
+from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, SendMethod, SmsNumbersModel,
+                     SmsSendModel, SubaccountModel)
+from .utils import AdminView, AuthView, JsonErrors, PreResponse, ServiceView, TemplateView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
 
@@ -42,19 +42,9 @@ class ClickRedirectView(TemplateView):
 
     async def call(self, request):
         token = request.match_info['token'].rstrip('.')
-        r = await self.app['es'].get(
-            f'links/_search?filter_path=hits',
-            query={
-                'bool': {
-                    'filter': [
-                        {'term': {'token': token}},
-                        {'range': {'expires_ts': {'gte': 'now'}}},
-                    ]
-                }
-            },
-            size=1,
-        )
-        data = await r.json()
+        async with self.app['pg'].acquire() as conn:
+            link = await conn.fetchrow('select id, url from links where token=$1', token)
+
         arg_url = request.query.get('u')
         if arg_url:
             try:
@@ -62,9 +52,7 @@ class ClickRedirectView(TemplateView):
             except ValueError:
                 arg_url = None
 
-        if data['hits']['total']:
-            hit = data['hits']['hits'][0]
-            source = hit['_source']
+        if link:
             ip_address = request.headers.get('X-Forwarded-For')
             if ip_address:
                 ip_address = ip_address.split(',', 1)[0]
@@ -73,17 +61,16 @@ class ClickRedirectView(TemplateView):
                 ts = float(request.headers.get('X-Request-Start', '.'))
             except ValueError:
                 ts = time()
+
+            link_id, url = link
             await self.sender.store_click(
-                target=source['url'],
+                link_id=link_id,
                 ip=ip_address,
                 user_agent=request.headers.get('User-Agent'),
                 ts=ts,
-                send_method=source['send_method'],
-                send_message_id=source['send_message_id']
             )
-            url = source['url']
             if arg_url and arg_url != url:
-                logger.warning('db url does not match arg url: "%s" !+ "%s"', url, arg_url)
+                logger.warning('db url does not match arg url: %r !+ %r', url, arg_url)
             raise HTTPTemporaryRedirect(location=url)
         elif arg_url:
             logger.warning('no url found, using arg url "%s"', arg_url)
@@ -103,7 +90,7 @@ class EmailSendView(ServiceView):
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
-                raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+                raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
             recipients_key = f'recipients:{m.uid}'
             data = m.dict(exclude={'recipients', 'from_address'})
             data.update(
@@ -117,7 +104,7 @@ class EmailSendView(ServiceView):
             await pipe.execute()
             await self.sender.send_emails(recipients_key, **data)
             logger.info('%s sending %d emails', m.company_code, len(m.recipients))
-        return Response(text='201 job enqueued\n', status=201)
+        return PreResponse(text='201 job enqueued\n', status=201)
 
 
 class SmsSendView(ServiceView):
@@ -129,7 +116,7 @@ class SmsSendView(ServiceView):
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
-                raise HTTPConflict(text=f'Send group with id "{m.uid}" already exists\n')
+                raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
             if m.cost_limit is not None:
                 spend = await self.sender.check_sms_limit(m.company_code)
                 if spend >= m.cost_limit:
@@ -163,7 +150,7 @@ class SmsValidateView(ServiceView):
 
     @classmethod
     def to_dict(cls, v):
-        return v and dict(v._asdict())
+        return v and asdict(v)
 
 
 class TestWebhookView(View):
@@ -174,7 +161,7 @@ class TestWebhookView(View):
     async def call(self, request):
         m = await self.request_data(MandrillSingleWebhook)
         await self.sender.update_message_status('email-test', m)
-        return Response(text='message status updated\n')
+        return PreResponse(text='message status updated\n')
 
 
 class MandrillWebhookView(View):
@@ -186,7 +173,7 @@ class MandrillWebhookView(View):
         try:
             event_data = (await request.post())['mandrill_events']
         except KeyError:
-            raise HTTPBadRequest(text='"mandrill_events" not found in post data')
+            raise JsonErrors.HTTPBadRequest('"mandrill_events" not found in post data')
 
         sig_generated = base64.b64encode(
             hmac.new(
@@ -197,14 +184,14 @@ class MandrillWebhookView(View):
         )
         sig_given = request.headers.get('X-Mandrill-Signature', '<missing>').encode()
         if not hmac.compare_digest(sig_generated, sig_given):
-            raise HTTPForbidden(text='invalid signature')
+            raise JsonErrors.HTTPForbidden('invalid signature')
         try:
             events = ujson.loads(event_data)
         except ValueError as e:
-            raise HTTPBadRequest(text=f'invalid json data: {e}')
+            raise JsonErrors.HTTPBadRequest(f'invalid json data: {e}')
 
         await self.sender.update_mandrill_webhooks(events)
-        return Response(text='message status updated\n')
+        return PreResponse(text='message status updated\n')
 
 
 class MessageBirdWebhookView(View):
@@ -215,17 +202,17 @@ class MessageBirdWebhookView(View):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
         await self.sender.update_message_status('sms-messagebird', m)
-        return Response(text='message status updated\n')
+        return PreResponse(text='message status updated\n')
 
 
 class CreateSubaccountView(ServiceView):
     """
     Create a new subaccount with mandrill for new sending company
     """
-    async def call(self, request) -> Response:
+    async def call(self, request) -> PreResponse:
         method = request.match_info['method']
         if method != SendMethod.email_mandrill:
-            return Response(text=f'no subaccount creation required for "{method}"\n')
+            return PreResponse(text=f'no subaccount creation required for "{method}"\n')
 
         m = await self.request_data(SubaccountModel)
         mandrill: Mandrill = self.app['mandrill']
@@ -239,140 +226,212 @@ class CreateSubaccountView(ServiceView):
         )
         data = await r.json()
         if r.status == 200:
-            return Response(text='subaccount created\n', status=201)
+            return PreResponse(text='subaccount created\n', status=201)
 
         assert r.status == 500, r.status
         if f'A subaccount with id {m.company_code} already exists' not in data.get('message', ''):
-            return Response(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
+            return PreResponse(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
 
         r = await mandrill.get('subaccounts/info.json', id=m.company_code, timeout_=12)
         data = await r.json()
         total_sent = data['sent_total']
         if total_sent > 100:
-            return Response(text=f'subaccount already exists with {total_sent} emails sent, '
-                                 f'reuse of subaccount id not permitted\n', status=409)
+            return PreResponse(text=f'subaccount already exists with {total_sent} emails sent, '
+                               f'reuse of subaccount id not permitted\n', status=409)
         else:
-            return Response(text=f'subaccount already exists with only {total_sent} emails sent, '
-                                 f'reuse of subaccount id permitted\n')
+            return PreResponse(text=f'subaccount already exists with only {total_sent} emails sent, '
+                               f'reuse of subaccount id permitted\n')
 
 
 class _UserMessagesView(UserView):
-    es_from = True
+    offset = True
+    pretty_ts = False
 
-    def _strftime(self, ts):
+    def get_dt_tz(self):
         dt_tz = self.request.query.get('dttz') or 'utc'
         try:
-            dt_tz = pytz.timezone(dt_tz)
-        except pytz.UnknownTimeZoneError:
-            raise HTTPBadRequest(text=f'unknown timezone: "{dt_tz}"')
+            pytz.timezone(dt_tz)
+        except KeyError:
+            raise JsonErrors.HTTPBadRequest(f'unknown timezone: "{dt_tz}"')
+        return dt_tz
 
-        dt_fmt = self.request.query.get('dtfmt') or '%a %Y-%m-%d %H:%M'
-        return from_unix_ms(ts, 0).astimezone(dt_tz).strftime(dt_fmt)
+    def get_date_func(self):
+        pretty_ts = bool(self.pretty_ts or self.request.query.get('pretty_ts'))
+        return 'pretty_ts' if pretty_ts else 'iso_ts'
+
+    def _select_fields(self):
+        tz = self.get_dt_tz()
+        date_func = self.get_date_func()
+        return [
+            Var('m.id').as_('id'),
+            Func(date_func, Var('send_ts'), tz).as_('send_ts'),
+            Func(date_func, Var('update_ts'), tz).as_('update_ts'),
+            'external_id',
+            'status',
+            'to_first_name',
+            'to_last_name',
+            'to_user_link',
+            'to_address',
+            'company',
+            'method',
+            'subject',
+            'body',
+            'tags',
+            'attachments',
+            'from_name',
+            'from_name',
+            'cost',
+            'extra',
+        ]
 
     async def query(self, *, message_id=None, tags=None, query=None):
-        es_query = {
-            'query': {
-                'bool': {
-                    'filter': [
-                        {'match_all': {}}
-                        if self.session.company == '__all__' else
-                        {'term': {'company': self.session.company}},
-                    ]
-                }
-            },
-            'from': self.get_arg_int('from', 0) if self.es_from else 0,
-            'size': 100,
-        }
+        where = Var('j.method') == self.request.match_info['method']
+        if self.session.company != '__all__':
+            where &= (Var('j.company') == self.session.company)
+
         if message_id:
-            es_query['query']['bool']['filter'].append({'term': {'_id': message_id}})
-        elif query:
-            es_query['query']['bool']['should'] = [
-                {'simple_query_string': {
-                    'query': query,
-                    'fields': ['to_*^3', 'subject^2', '_all'],
-                    'lenient': True,
-                }}
-            ]
-            es_query['min_score'] = 0.01
+            where &= (Var('m.id') == message_id)
         elif tags:
-            es_query['query']['bool']['filter'] += [{'term': {'tags': t}} for t in tags]
-        else:
-            es_query['sort'] = [
-                {'send_ts': 'desc'},
-            ]
+            where &= (Var('tags').contains(tags))
+        elif query:
+            return await self.query_general(where, query)
 
-        r = await self.app['es'].get(
-            f'messages/{self.request.match_info["method"]}/_search?filter_path=hits', **es_query
-        )
-        assert r.status == 200, r.status
-        return await r.json()
-
-    @staticmethod
-    def _event_data(e):
-        data = e['_source']
-        data.pop('message')
-        return data
-
-    async def insert_events(self, data):
-        t = self.request.match_info['method']
-        for hit in data['hits']['hits']:
-            r = await self.app['es'].get(
-                f'events/{t}/_search?filter_path=hits',
-                query={
-                    'term': {'message': hit['_id']}
-                },
-                size=100,
+        where = Where(where)
+        async with self.app['pg'].acquire() as conn:
+            # count is limited to 10,000 as it speeds up the query massively
+            count = await conn.fetchval_b(
+                """
+                select count(*)
+                from (
+                  select 1
+                  from messages m
+                  join message_groups j on m.group_id = j.id
+                  :where
+                  limit 10000
+                ) as t
+                """,
+                where=where,
             )
-            assert r.status == 200, r.status
-            event_data = await r.json()
-            hit['_source']['events'] = [self._event_data(e) for e in event_data['hits']['hits']]
+            items = await conn.fetch_b(
+                """
+                :select
+                from messages m
+                join message_groups j on m.group_id = j.id
+                :where
+                order by m.send_ts desc
+                limit 100
+                offset :offset
+                """,
+                select=Select(self._select_fields()),
+                where=where,
+                offset=self.get_arg_int('from', 0) if self.offset else 0,
+            )
+        return {
+            'count': count,
+            'items': [dict(r) for r in items],
+        }
+
+    async def query_general(self, where, query):
+        s = self._select_fields()
+        s.append(Func('ts_rank_cd', Var('vector'), Var('tsquery'), Var('16')).as_('ranking'))
+        async with self.app['pg'].acquire() as conn:
+            items = await conn.fetch_b(
+                """
+                :select
+                from messages m join message_groups j on m.group_id = j.id, to_tsquery(:query) tsquery
+                where :where and vector @@ tsquery
+                order by ranking desc
+                limit 10
+                """,
+                select=Select(s),
+                tz=self.get_dt_tz(),
+                query=query,
+                where=where,
+            )
+        return {
+            'count': len(items),
+            'items': [dict(r) for r in items],
+        }
 
 
 class UserMessagesJsonView(_UserMessagesView):
+    def _select_fields(self):
+        tz = self.get_dt_tz()
+        date_func = self.get_date_func()
+        return [
+            Var('m.id'),
+            Func(date_func, Var('send_ts'), tz).as_('send_ts'),
+            Func(date_func, Var('update_ts'), tz).as_('update_ts'),
+            'external_id',
+            'method',
+            'subject',
+            'status',
+            'to_first_name',
+            'to_last_name',
+            'to_user_link',
+            'to_address',
+            'company',
+            'tags',
+            'from_name',
+            'from_name',
+            'cost',
+            'extra',
+        ]
+
     async def call(self, request):
         data = await self.query(
-            message_id=request.query.get('message_id'),
+            message_id=self.get_arg_int('message_id'),
             tags=request.query.getall('tags', None),
             query=request.query.get('q')
         )
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
             data['spend'] = await self.sender.check_sms_limit(self.session.company)
 
-        await self.insert_events(data)
+        if len(data['items']) == 1:
+            data['events'] = await self.events(data)
         return self.json_response(**data)
+
+    async def events(self, data):
+        async with self.app['pg'].acquire() as conn:
+            events = await conn.fetch(
+                """
+                select status, iso_ts(ts, $2) ts, extra
+                from events where message_id = $1
+                """,
+                data['items'][0]['id'],
+                self.get_dt_tz(),
+            )
+        return [dict(e) for e in events]
 
 
 class UserMessageDetailView(TemplateView, _UserMessagesView):
     template = 'user/details.jinja'
-    es_from = False
+    pretty_ts = True
 
     async def call(self, request):
-        msg_id = self.request.match_info['id']
-        data = await self.query(message_id=msg_id)
-        await self.insert_events(data)
-        if len(data['hits']['hits']) == 0:
-            raise HTTPNotFound(text='message not found')
-        data = data['hits']['hits'][0]
+        data = await self.query(message_id=int(self.request.match_info['id']))
+        if data['count'] == 0:
+            raise JsonErrors.HTTPNotFound('message not found')
+        data = data['items'][0]
 
         preview_path = self.app.router['user-preview'].url_for(**self.request.match_info)
         return dict(
             base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
-            title='{_type} - {_id}'.format(**data),
-            id=data['_id'],
-            method=data['_type'],
+            title='{method} - {external_id}'.format(**data),
+            id=data['external_id'],
+            method=data['method'],
             details=self._details(data),
-            events=list(self._events(data)),
+            events=[e async for e in self._events(data['id'])],
             preview_url=self.full_url(f'{preview_path}?{self.request.query_string}'),
             attachments=list(self._attachments(data)),
         )
 
     def _details(self, data):
-        yield 'ID', data['_id']
-        source = data['_source']
-        yield 'Status', source['status'].title()
+        yield 'ID', data['external_id']
+        yield 'Status', data['status'].title()
 
-        dst = f'{source["to_first_name"] or ""} {source["to_last_name"] or ""} <{source["to_address"]}>'.strip(' ')
-        link = source.get('to_user_link')
+        dst = f'{data["to_first_name"] or ""} {data["to_last_name"] or ""} <{data["to_address"]}>'.strip(' ')
+        link = data.get('to_user_link')
         if link:
             yield 'To', dict(
                 href=link,
@@ -381,33 +440,46 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         else:
             yield 'To', dst
 
-        yield 'Subject', source.get('subject')
-        yield 'Send Time', self._strftime(source['send_ts'])
-        yield 'Last Updated', self._strftime(source['update_ts'])
+        yield 'Subject', data.get('subject')
+        # could do with using prettier timezones here
+        yield 'Send Time', {'class': 'datetime', 'value': data['send_ts']}
+        yield 'Last Updated', {'class': 'datetime', 'value': data['update_ts']}
 
     def _attachments(self, data):
-        for a in data['_source'].get('attachments', []):
-            name = None
-            try:
-                doc_id, name = a.split('::')
-                doc_id = int(doc_id)
-            except ValueError:
-                yield '#', name or a
-            else:
-                yield f'/attachment-doc/{doc_id}/', name
+        attachments = data['attachments']
+        if attachments:
+            for a in attachments:
+                name = None
+                try:
+                    doc_id, name = a.split('::')
+                    doc_id = int(doc_id)
+                except ValueError:
+                    yield '#', name or a
+                else:
+                    yield f'/attachment-doc/{doc_id}/', name
 
-    def _events(self, data):
-        events = sorted(data['_source'].get('events', []), key=itemgetter('ts'), reverse=True)
+    async def _events(self, message_id):
+        events = await self.app['pg'].fetch(
+            """
+            select status, message_id, pretty_ts(ts, $2) as ts, extra
+            from events where message_id = $1
+            order by ts asc
+            limit 51
+            """,
+            message_id,
+            self.get_dt_tz(),
+        )
         for event in events[:50]:
             yield dict(
                 status=event['status'].title(),
-                datetime=self._strftime(event['ts']),
-                details=Markup(json.dumps(event['extra'], indent=2)),
+                datetime=event['ts'],
+                details=Markup(json.dumps(json.loads(event['extra']), indent=2)),
             )
         if len(events) > 50:
+            extra = await self.app['pg'].fetchval('select count(*) - 50 from events where message_id = $1', message_id)
             yield dict(
-                status=f'{len(events) - 50} more',
-                datetime='...',
+                status=f'{extra} more',
+                datetime=None,
                 details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2))
             )
 
@@ -423,9 +495,9 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         total_sms_spend = None
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
             total_sms_spend = '{:,.3f}'.format(await self.sender.check_sms_limit(self.session.company))
-        hits = data['hits']['hits']
+        hits = data['items']
         headings = ['To', 'Send Time', 'Status', 'Subject']
-        total = data['hits']['total']
+        total = data['count']
         size = 100
         offset = self.get_arg_int('from', 0)
         pagination = {}
@@ -454,17 +526,19 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             pagination=pagination,
         )
 
-    def _table_body(self, hits):
-        for msg in hits:
-            msg_source = msg['_source']
-            subject = msg_source.get('subject') or msg_source.get('body', '')
+    def _table_body(self, items):
+        for msg in items:
+            subject = msg.get('subject') or msg.get('body', '')
             yield [
                 {
-                    'href': msg['_id'],
-                    'text': msg_source['to_address'],
+                    'href': msg['id'],
+                    'value': msg['to_address'],
                 },
-                self._strftime((msg_source['send_ts'])),
-                msg_source['status'].title(),
+                {
+                    'class': 'datetime',
+                    'value': msg['send_ts']
+                },
+                msg['status'].title(),
                 truncate(subject, 40),
             ]
 
@@ -476,37 +550,101 @@ class UserMessagePreviewView(TemplateView, UserView):
     template = 'user/preview.jinja'
 
     async def call(self, request):
-        es_query = {
-            'bool': {
-                'filter': [
-                    {'match_all': {}}
-                    if self.session.company == '__all__' else
-                    {'term': {'company': self.session.company}},
-                ] + [
-                    {'term': {'_id': request.match_info['id']}}
-                ]
-            }
-        }
-        method = request.match_info['method']
-        r = await self.app['es'].get(
-            f'messages/{method}/_search?filter_path=hits', query=es_query
-        )
-        data = await r.json()
-        if data['hits']['total'] != 1:
-            raise HTTPNotFound(text='message not found')
-        source = data['hits']['hits'][0]['_source']
-        body = source['body']
+        method = self.request.match_info['method']
+        where = (Var('j.method') == method) & (Var('m.id') == int(request.match_info['id']))
+
+        if self.session.company != '__all__':
+            where &= (Var('j.company') == self.session.company)
+
+        async with self.app['pg'].acquire() as conn:
+            data = await conn.fetchrow_b(
+                """
+                select from_name, to_last_name, to_address, status, body, extra
+                from messages m
+                join message_groups j on m.group_id = j.id
+                where :where
+                """,
+                where=where
+            )
+
+        if not data:
+            raise JsonErrors.HTTPNotFound('message not found')
+
+        data = dict(data)
+        body = data['body']
+        extra = json.loads(data['extra']) if data.get('extra') else {}
         if method.startswith('sms'):
             # need to render the sms so it makes sense to users
             return {
-                'from': source['from_name'],
-                'to': source['to_last_name'] or source['to_address'],
-                'status': source['status'],
+                'from': data['from_name'],
+                'to': data['to_last_name'] or data['to_address'],
+                'status': data['status'],
                 'message': body,
-                'extra': source.get('extra') or {},
+                'extra': extra,
             }
         else:
             return {'raw': body}
+
+
+agg_sql = """
+select json_build_object(
+  'histogram', histogram,
+  'all_90_day', all_90_day,
+  'open_90_day', open_90_day,
+  'all_7_day', all_7_day,
+  'open_7_day', open_7_day,
+  'all_28_day', all_28_day,
+  'open_28_day', open_28_day
+)
+from (
+  select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') AS histogram from (
+    select count(*), to_char(day, 'YYYY-MM-DD') as day, status
+    from (
+      select date_trunc('day', m.send_ts) as day, status
+      from messages m
+      join message_groups j on m.group_id = j.id
+      where :where and m.send_ts > current_timestamp::date - '28 days'::interval
+    ) as t
+    group by day, status
+  ) as t
+) as histogram,
+(
+  select count(*) as all_90_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp::date - '90 days'::interval
+) as all_90_day,
+(
+  select count(*) as open_90_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp::date - '90 days'::interval and status = 'open'
+) as open_90_day,
+(
+  select count(*) as all_7_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp::date - '7 days'::interval
+) as all_7_day,
+(
+  select count(*) as open_7_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp::date - '7 days'::interval and status = 'open'
+) as open_7_day,
+(
+  select count(*) as all_28_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp::date - '28 days'::interval
+) as all_28_day,
+(
+  select count(*) as open_28_day
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where :where and m.send_ts > current_timestamp::date - '28 days'::interval and status = 'open'
+) as open_28_day
+"""
 
 
 class UserAggregationView(UserView):
@@ -515,111 +653,40 @@ class UserAggregationView(UserView):
     """
     async def call(self, request):
         # TODO allow more filtering here, filter to last X days.
-        r = await self.app['es'].get(
-            'messages/{[method]}/_search?size=0&filter_path=hits.total,aggregations'.format(request.match_info),
-            query={
-                'bool': {
-                    'filter': [
-                        {'match_all': {}} if self.session.company == '__all__' else
-                        {'term': {'company': self.session.company}},
-                        {
-                            'range': {'send_ts': {'gte': 'now-90d'}}
-                        }
-                    ]
-                }
-            },
-            aggs={
-                'histogram': {
-                    'date_histogram': {
-                        'field': 'send_ts',
-                        'interval': 'day'
-                    },
-                    'aggs': {
-                        status: {
-                            'filter': {
-                                'term': {
-                                    'status': status
-                                }
-                            }
-                        } for status in MessageStatus
-                    },
-                },
-                'all_opened': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'term': {'status': MessageStatus.open}}
-                            ]
-                        }
-                    }
-                },
-                '7_days_all': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-7d'}}}
-                            ]
-                        }
-                    }
-                },
-                '7_days_opened': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-7d'}}},
-                                {'term': {'status': MessageStatus.open}}
-                            ]
-                        }
-                    }
-                },
-                '28_days_all': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-28d'}}}
-                            ]
-                        }
-                    }
-                },
-                '28_days_opened': {
-                    'filter': {
-                        'bool': {
-                            'filter': [
-                                {'range': {'send_ts': {'gte': 'now-28d'}}},
-                                {'term': {'status': MessageStatus.open}}
-                            ]
-                        }
-                    }
-                }
-            }
-        )
-        return Response(body=await r.text(), content_type='application/json')
+        where = Var('j.method') == self.request.match_info['method']
+        if self.session.company != '__all__':
+            where &= (Var('j.company') == self.session.company)
+
+        async with self.app['pg'].acquire() as conn:
+            data = await conn.fetchval_b(agg_sql, where=where)
+        return PreResponse(text=data, content_type='application/json')
 
 
 class AdminAggregatedView(AdminView):
     async def get_context(self, morpheus_api):
-        method = self.request.query.get('method', SendMethod.email_mandrill)
+        method = self.request.query.get('method', SendMethod.email_mandrill.value)
         url = self.app.router['user-aggregation'].url_for(method=method)
 
         r = await morpheus_api.get(url)
         data = await r.json()
-        bucket_data = data['aggregations']['histogram']['buckets']
         # ignore "click" and "unsub"
         headings = ['date', 'deferral', 'send', 'open', 'reject', 'soft_bounce', 'hard_bounce', 'spam', 'open rate']
         was_sent_statuses = 'send', 'open', 'soft_bounce', 'hard_bounce', 'spam', 'click'
         table_body = []
-        for period in reversed(bucket_data):
-            row = [datetime.strptime(period['key_as_string'][:10], '%Y-%m-%d').strftime('%a %Y-%m-%d')]
-            row += [period[h]['doc_count'] or '0' for h in headings[1:-1]]
-            was_sent = sum(period[h]['doc_count'] or 0 for h in was_sent_statuses)
-            opened = period['open']['doc_count']
+        hist = sorted(data['histogram'], key=itemgetter('day'), reverse=True)
+        for period, g in groupby(hist, key=itemgetter('day')):
+            row = [period]
+            counts = {v['status']: v['count'] for v in g}
+            row += [counts.get(h) or 0 for h in headings[1:-1]]
+            was_sent = sum(counts.get(h) or 0 for h in was_sent_statuses)
+            opened = counts.get('open') or 0
             if was_sent > 0:
                 row.append(f'{opened / was_sent * 100:0.2f}%')
             else:
                 row.append(f'{0:0.2f}%')
             table_body.append(row)
         return dict(
-            total=data['hits']['total'],
+            total=data['all_28_day'],
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'Aggregated {method} data',
@@ -628,7 +695,7 @@ class AdminAggregatedView(AdminView):
 
 class AdminListView(AdminView):
     async def get_context(self, morpheus_api):
-        method = self.request.query.get('method', SendMethod.email_mandrill)
+        method = self.request.query.get('method', SendMethod.email_mandrill.value)
         offset = int(self.request.query.get('offset', '0'))
         search = self.request.query.get('search', '')
         tags = self.request.query.get('tags', '')
@@ -636,6 +703,7 @@ class AdminListView(AdminView):
             'size': 100,
             'from': offset,
             'q': search,
+            'pretty_ts': '1',
         }
         # tags is a list so has to be processed separately
         if tags:
@@ -645,26 +713,25 @@ class AdminListView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
 
-        headings = ['score', 'message id', 'company', 'to', 'status', 'sent at', 'updated at', 'subject']
+        headings = ['score', 'to', 'company', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
-        for i, message in enumerate(data['hits']['hits']):
-            score, source, id = message['_score'], message['_source'], message['_id']
-            subject = source.get('subject') or source.get('body', '')[:50]
+        for i, message in enumerate(data['items']):
+            subject = message.get('subject') or message.get('body', '')[:50]
+            score = message.get('score') or None
             table_body.append([
                 str(i + 1 + offset) if score is None else f'{score:6.3f}',
                 {
-                    'href': self.app.router['admin-get'].url_for(method=method, id=id),
-                    'text': id,
+                    'href': self.app.router['admin-get'].url_for(method=method, id=str(message['id'])),
+                    'text': message['to_address'],
                 },
-                source['company'],
-                source['to_address'],
-                source['status'],
-                from_unix_ms(source['send_ts']).strftime('%a %Y-%m-%d %H:%M'),
-                from_unix_ms(source['update_ts']).strftime('%a %Y-%m-%d %H:%M'),
+                message['company'],
+                message['status'],
+                message['send_ts'],
+                message['update_ts'],
                 Markup(f'<span class="subject">{subject}</span>'),
             ])
 
-        if len(data['hits']['hits']) == 100:
+        if len(data['items']) == 100:
             next_offset = offset + 100
             query = {
                 'method': method,
@@ -680,7 +747,7 @@ class AdminListView(AdminView):
             next_page = None
         user_list_path = morpheus_api.modify_url(self.app.router['user-message-list'].url_for(method=method))
         return dict(
-            total=data['hits']['total'],
+            total=data['count'],
             table_headings=headings,
             table_body=table_body,
             sub_heading=f'List {method} messages',
@@ -694,12 +761,6 @@ class AdminListView(AdminView):
 class AdminGetView(AdminView):
     template = 'admin-get.jinja'
 
-    @staticmethod
-    def replace_data(m):
-        dt = parse_datetime(m.group())
-        # WARNING: this means the output is not valid json, but is more readable
-        return f'{m.group()} ({dt:%a %Y-%m-%d %H:%M})'
-
     async def get_context(self, morpheus_api):
         method = self.request.match_info['method']
         message_id = self.request.match_info['id']
@@ -708,7 +769,6 @@ class AdminGetView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
         data = json.dumps(data, indent=2)
-        data = re.sub('14\d{8,11}', self.replace_data, data)
 
         preview_path = morpheus_api.modify_url(self.app.router['user-preview'].url_for(method=method, id=message_id))
         deets_path = morpheus_api.modify_url(self.app.router['user-message-get'].url_for(method=method, id=message_id))
@@ -780,7 +840,18 @@ class RequestStatsView(AuthView):
                 request_count, request_list, _ = await tr.execute()
                 response_data = self.process_values(request_count, request_list)
                 await redis.setex(stats_cache_key, 8, response_data)
-        return Response(body=response_data, content_type='application/json')
+        return PreResponse(body=response_data, content_type='application/json')
+
+
+msg_stats_sql = """
+select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') from (
+  select count(*), extract(epoch from avg(update_ts - send_ts))::int as age, method, status
+  from messages m
+  join message_groups j on m.group_id = j.id
+  where m.update_ts > current_timestamp - '10 mins'::interval
+  group by method, status
+) as t
+"""
 
 
 class MessageStatsView(AuthView):
@@ -790,61 +861,9 @@ class MessageStatsView(AuthView):
         cache_key = 'message-stats'
         redis_pool = await request.app['sender'].get_redis()
         with await redis_pool as redis:
-            response_data = await redis.get(cache_key)
-            if not response_data:
-                r = await self.app['es'].get(
-                    'messages/_search?size=0&filter_path=aggregations',
-                    query={
-                        'bool': {
-                            'filter': {
-                                'range': {
-                                    'update_ts': {'gte': 'now-10m'}
-                                }
-                            }
-                        }
-                    },
-                    aggs={
-                        f'{method}.{status}': {
-                            'aggs': {
-                                'age': {
-                                    'avg': {
-                                        'script': {
-                                            'source': 'doc.update_ts.value - doc.send_ts.value'
-                                        }
-                                    },
-                                },
-                                # 'event_count': {
-                                #     'avg': {
-                                #         'field': 'events',
-                                #         'script': {
-                                #             'inline': '_value.length',
-                                #         },
-                                #         'missing': 0,
-                                #     },
-                                # }
-                            },
-                            'filter': {
-                                'bool': {
-                                    'filter': [
-                                        {'type': {'value': method}},
-                                        {'term': {'status': status}},
-                                    ]
-                                }
-                            }
-                        } for method, status in product(SendMethod, MessageStatus)
-                    }
-                )
-                data = await r.json()
-                result = []
-                for k, v in data['aggregations'].items():
-                    method, status = k.split('.', 1)
-                    result.append(dict(
-                        method=method,
-                        status=status,
-                        count=v['doc_count'],
-                        age=round((v['age']['value'] or 0) / 1000),
-                        # events=int(v['event_count']['value'] or 0),
-                    ))
-                response_data = ujson.dumps(result).encode()
-                await redis.setex(cache_key, 598, response_data)
-        return Response(body=response_data, content_type='application/json')
+            results = await redis.get(cache_key)
+            if not results:
+                async with self.app['pg'].acquire() as conn:
+                    results = await conn.fetchval_b(msg_stats_sql)
+                await redis.setex(cache_key, 598, results)
+        return PreResponse(body=results, content_type='application/json')

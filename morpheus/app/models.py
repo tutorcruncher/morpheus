@@ -1,25 +1,21 @@
+import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List
+from uuid import UUID
 
-from aiohttp.web_exceptions import HTTPBadRequest
-from pydantic import BaseModel, NameEmail, ValidationError, constr
+from pydantic import BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
 
 THIS_DIR = Path(__file__).parent.resolve()
 
 
-class WebModel(BaseModel):
-    def _process_values(self, values):
-        try:
-            return super()._process_values(values)
-        except ValidationError as e:
-            raise HTTPBadRequest(text=e.display_errors)
-
-
 class SendMethod(str, Enum):
+    """
+    Should match SEND_METHODS sql enum
+    """
     email_mandrill = 'email-mandrill'
     email_ses = 'email-ses'
     email_test = 'email-test'
@@ -69,6 +65,8 @@ class MessageBirdMessageStatus(str, Enum):
 class MessageStatus(str, Enum):
     """
     Combined MandrillMessageStatus and MessageBirdMessageStatus
+
+    Should match MESSAGE_STATUSES sql enum
     """
     render_failed = 'render_failed'
     send_request_failed = 'send_request_failed'
@@ -93,8 +91,8 @@ class MessageStatus(str, Enum):
 
 
 class PDFAttachmentModel(BaseModel):
-    name: str = ...
-    html: str = ...
+    name: str
+    html: str
     id: int = None
 
     class Config:
@@ -122,8 +120,8 @@ class EmailRecipientModel(BaseModel):
         max_anystr_length = int(1e7)
 
 
-class EmailSendModel(WebModel):
-    uid: constr(min_length=20, max_length=40) = ...
+class EmailSendModel(BaseModel):
+    uid: UUID
     main_template: str = (THIS_DIR / 'extra' / 'default-email-template.mustache').read_text()
     mustache_partials: Dict[str, str] = None
     macros: Dict[str, str] = None
@@ -138,8 +136,12 @@ class EmailSendModel(WebModel):
     important = False
     recipients: List[EmailRecipientModel] = ...
 
+    @validator('uid')
+    def validate_uid(cls, v):
+        return str(v)
 
-class SubaccountModel(WebModel):
+
+class SubaccountModel(BaseModel):
     company_code: str = ...
     company_name: str = None
 
@@ -153,10 +155,10 @@ class SmsRecipientModel(BaseModel):
     context: dict = {}
 
 
-class SmsSendModel(WebModel):
-    uid: constr(min_length=20, max_length=40) = ...
-    main_template: str = ...
-    company_code: str = ...
+class SmsSendModel(BaseModel):
+    uid: constr(min_length=20, max_length=40)
+    main_template: str
+    company_code: str
     cost_limit: float = None
     country_code: constr(min_length=2, max_length=2) = 'GB'
     from_name: constr(min_length=1, max_length=11) = 'Morpheus'
@@ -166,18 +168,24 @@ class SmsSendModel(WebModel):
     recipients: List[SmsRecipientModel] = ...
 
 
-class SmsNumbersModel(WebModel):
-    numbers: Dict[int, str] = ...
+class SmsNumbersModel(BaseModel):
+    numbers: Dict[int, str]
     country_code: constr(min_length=2, max_length=2) = 'GB'
 
 
-class BaseWebhook(WebModel):
+class BaseWebhook(BaseModel):
     ts: datetime
     status: MessageStatus
     message_id: str
 
-    def extra(self):
+    def extra_json(self, sort_keys=False):
         raise NotImplementedError()
+
+    @validator('ts')
+    def add_tz(cls, v):
+        if v and not v.tzinfo:
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 ID_REGEX = re.compile(r'[/<>= ]')
@@ -202,12 +210,12 @@ class MandrillSingleWebhook(BaseWebhook):
     location: dict = None
     msg: dict = {}
 
-    def extra(self):
-        return {
+    def extra_json(self, sort_keys=False):
+        return json.dumps({
             'user_agent': self.user_agent,
             'location': self.location,
             **{f: self.msg.get(f) for f in self.__config__.msg_fields},
-        }
+        }, sort_keys=sort_keys)
 
     class Config:
         ignore_extra = True
@@ -227,8 +235,8 @@ class MandrillSingleWebhook(BaseWebhook):
         )
 
 
-class MandrillWebhook(WebModel):
-    events: List[MandrillSingleWebhook] = ...
+class MandrillWebhook(BaseModel):
+    events: List[MandrillSingleWebhook]
 
 
 class MessageBirdWebHook(BaseWebhook):
@@ -237,8 +245,8 @@ class MessageBirdWebHook(BaseWebhook):
     message_id: IDStr
     error_code: str = None
 
-    def extra(self):
-        return {'error_code': self.error_code} if self.error_code else {}
+    def extra_json(self, sort_keys=False):
+        return json.dumps({'error_code': self.error_code} if self.error_code else {}, sort_keys=sort_keys)
 
     class Config:
         ignore_extra = True
@@ -247,13 +255,3 @@ class MessageBirdWebHook(BaseWebhook):
             'ts': 'statusDatetime',
             'error_code': 'statusErrorCode',
         }
-
-
-class ClickInfo(BaseWebhook):
-    ts: datetime
-    status: MessageStatus
-    message_id: IDStr
-    extra_: dict
-
-    def extra(self):
-        return self.extra_

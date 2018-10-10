@@ -1,33 +1,26 @@
 language: python
 
+addons:
+  postgresql: '9.6'
+
 services:
+- postgresql
 - redis-server
+- docker
 
 cache: pip
-
-addons:
-  apt:
-    packages:
-    - oracle-java8-set-default
 
 python:
 - '3.6'
 
 install:
-- curl -O https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-5.6.2.deb
-- sudo dpkg -i --force-confnew elasticsearch-5.6.2.deb
-- "echo 'path.repo: [\"/tmp\"]' | sudo tee --append /etc/elasticsearch/elasticsearch.yml"
-- sudo service elasticsearch start
 - make install
-
-before_script:
 - pip freeze
-- sleep 6  # wait for es to come up
-- curl -v localhost:9200
 
 script:
 - make lint
 - make test
+- make build
 - python setup.py build
 
 after_success:

@@ -8,7 +8,7 @@ import uvloop
 from aiohttp.web import run_app
 from arq import RunWorkerProcess
 
-from app.es import ElasticSearch
+from app.db import patches, reset_database, run_patch
 from app.logs import setup_logging
 from app.main import create_app
 from app.settings import Settings
@@ -22,6 +22,7 @@ async def _check_port_open(host, port, loop):
         try:
             await loop.create_connection(lambda: asyncio.Protocol(), host=host, port=port)
         except OSError:
+            logger.info('waiting for connection to %s:%s %d', host, port, i)
             await asyncio.sleep(delay, loop=loop)
         else:
             logger.info('Connected successfully to %s:%s after %0.2fs', host, port, delay * i)
@@ -32,7 +33,7 @@ async def _check_port_open(host, port, loop):
 def _check_services_ready(settings: Settings):
     loop = asyncio.get_event_loop()
     coros = [
-        _check_port_open(settings.elastic_host, settings.elastic_port, loop),
+        _check_port_open(settings.pg_host, settings.pg_port, loop),
         _check_port_open(settings.redis_host, settings.redis_port, loop),
     ]
     loop.run_until_complete(asyncio.gather(*coros, loop=loop))
@@ -47,6 +48,11 @@ def cli(ctx):
     pass
 
 
+def _set_loop():
+    asyncio.get_event_loop().close()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+
 @cli.command()
 @click.option('--wait/--no-wait', default=True)
 def web(wait):
@@ -55,20 +61,14 @@ def web(wait):
     If the database doesn't already exist it will be created.
     """
     settings = Settings(sender_cls='app.worker.Sender')
-    print(settings.to_string(True), flush=True)
     setup_logging(settings)
 
-    logger.info('waiting for elasticsearch and redis to come up...')
-    # give es a chance to come up fully, this just prevents lots of es errors, create_indices is itself lenient
+    logger.info('waiting for postgres and redis to come up...')
 
-    # skip wait as es and redis are generally already up and delay is causing missed requests
-    # wait and sleep(4)
     _check_services_ready(settings)
 
-    _elasticsearch_setup(settings)
     logger.info('starting server...')
-    asyncio.get_event_loop().close()
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    _set_loop()
     loop = asyncio.get_event_loop()
     app = create_app(loop, settings)
     run_app(app, port=8000, print=lambda v: None, access_log=None)
@@ -83,7 +83,8 @@ def worker(wait):
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
 
-    logger.info('waiting for elasticsearch and redis to come up...')
+    _set_loop()
+    logger.info('waiting for postgres and redis to come up...')
     wait and sleep(4)
     _check_services_ready(settings)
     # redis/the network occasionally hangs and gets itself in a mess if we try to connect too early,
@@ -92,64 +93,30 @@ def worker(wait):
     RunWorkerProcess('app/worker.py', 'Worker')
 
 
-def _elasticsearch_setup(settings, force_create_index=False, force_create_repo=False):
-    """
-    setup elastic search db: create indexes and snapshot repo
-    """
-    es = ElasticSearch(settings=settings)
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(es.set_license())
-    loop.run_until_complete(es.create_indices(delete_existing=force_create_index))
-    loop.run_until_complete(es.create_snapshot_repo(delete_existing=force_create_repo))
-    es.close()
-
-
 @cli.command()
-@click.option('--force-create-index', is_flag=True)
-@click.option('--force-create-repo', is_flag=True)
-def elasticsearch_setup(force_create_index, force_create_repo):
-    settings = Settings(sender_cls='app.worker.Sender')
-    setup_logging(settings)
-    _elasticsearch_setup(settings, force_create_index, force_create_repo)
-
-
-@cli.command()
-@click.argument('patch')
-def elasticsearch_patch(patch):
-    settings = Settings(sender_cls='app.worker.Sender')
-    setup_logging(settings)
-    loop = asyncio.get_event_loop()
-    es = ElasticSearch(settings=settings)
-    try:
-        patch_func = getattr(es, '_patch_' + patch)
-        logger.info('running patch %s...', patch_func.__name__)
-        loop.run_until_complete(patch_func())
-    finally:
-        es.close()
-
-
-@cli.command()
-@click.argument('action', type=click.Choice(['create', 'list', 'restore']))
-@click.argument('snapshot-name', required=False)
-def elasticsearch_snapshot(action, snapshot_name):
+def postgres_reset_database():
     """
-    create an elastic search snapshot
+    reset the postgres database
     """
     settings = Settings(sender_cls='app.worker.Sender')
     setup_logging(settings)
-    loop = asyncio.get_event_loop()
-    es = ElasticSearch(settings=settings)
-    try:
-        if action == 'create':
-            f = es.create_snapshot()
-        elif action == 'list':
-            f = es.restore_list()
-        else:
-            assert snapshot_name, 'snapshot-name may not be None'
-            f = es.restore_snapshot(snapshot_name)
-        loop.run_until_complete(f)
-    finally:
-        es.close()
+
+    logger.info('running reset_database...')
+    reset_database(settings)
+
+
+@cli.command()
+@click.option('--live/--not-live')
+@click.argument('patch', type=click.Choice([p.func.__name__ for p in patches]))
+def postgres_patch(live, patch):
+    """
+    run a postgres patch
+    """
+    settings = Settings(sender_cls='app.worker.Sender')
+    setup_logging(settings)
+
+    logger.info('running reset_database...')
+    run_patch(settings, live, patch)
 
 
 EXEC_LINES = [

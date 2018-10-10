@@ -17,9 +17,11 @@
       {% for row in table_body %}
         <tr>
           {% for col in row %}
-            <td>
+            <td{% if col.class %} class="{{ col.class }}"{% endif %}>
               {%- if col.href -%}
-                <a href="{{ col.href }}">{{ col.text }}</a>
+                <a href="{{ col.href }}">{{ col.value }}</a>
+              {%- elif col.value -%}
+                {{ col.value }}
               {%- else -%}
                 {{ col }}
               {%- endif -%}

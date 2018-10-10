@@ -37,5 +37,6 @@ Everything else is excluded to avoid installing unnecessary packages.
         'chevron>=0.11.1',
         'libsass>=0.13.2',
         'misaka>=2.1.0',
+        'dataclasses>=0.6;python_version<"3.7"',
     ],
 )

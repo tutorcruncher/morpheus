@@ -47,7 +47,7 @@ You can also run either the web or worker with
     # OR
     ./morpheus/run.py worker
 
-You'll need elastic search and redis installed.
+You'll need postgres and redis installed.
 
 ### To prepare for deploy
 
@@ -58,8 +58,6 @@ Create `activate.prod.sh`:
 ```shell
 #!/usr/bin/env bash
 . env/bin/activate
-export SCALEWAY_ORGANIZATION='...1'
-export SCALEWAY_TOKEN='...'
 export LOGSPOUT_ENDPOINT='...'
 export RAVEN_DSN='...'
 export APP_AUTH_KEY='...'
@@ -68,8 +66,6 @@ export APP_USER_AUTH_KEY='...'
 export APP_HOST_NAME='...'
 export APP_PUBLIC_LOCAL_API_URL='...'
 export APP_ADMIN_BASIC_AUTH_PASSWORD='...'
-export APP_S3_ACCESS_KEY='...'
-export APP_S3_SECRET_KEY='...'
 
 export APP_MESSAGEBIRD_KEY='...'
 export APP_MESSAGEBIRD_PRICING_USERNAME='...'
@@ -82,21 +78,11 @@ export MODE='PRODUCTION'
 export PS1="PROD $PS1"
 ```
 
-### Setting up the machine
-
-you'll need to add
-
-```
-vm.max_map_count=262144
-```
-
-To the end of `/etc/sysctl.conf` to allow elastic search to boot.
-
 ### To deploy
 
 Set up your environment
 
-    ./start-prod.sh
+    source activate.prod.sh
 
 (this assumes you have a `prod` gnome profile setup to differentiate commands going to the production server)
 
@@ -109,23 +95,9 @@ That same command should also work to update the deployment after a change.
 
 ### To test
 
-Set up your environment. If you have ElasticSearch installed and running you're fine, or you can run it with:
-
-    ./run-es.sh
-
-then
+simply
 
     make
-
-### to monitor
-
-backup in progress (the pydf image has curl installed)
-
-    docker exec -it morpheus_pdf_1 curl elastic:9200/_cat/recovery?v
-
-indices
-    
-    docker exec -it morpheus_pdf_1 curl elastic:9200/_cat/indices/?v
 
 
 ### to backup redis
