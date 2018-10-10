@@ -5,6 +5,7 @@ env/
 build/
 dist/
 .pytest_cache/
+.cache/
 /test*.*
 /sandbox/
 .coverage

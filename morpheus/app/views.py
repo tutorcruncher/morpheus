@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from html import escape
 from itertools import groupby
 from operator import itemgetter
@@ -572,6 +573,9 @@ class UserMessagePreviewView(TemplateView, UserView):
 
         data = dict(data)
         body = data['body']
+        # Remove links from preview
+        body = re.sub('(href=").*?"', r'\1#"', body, flags=re.S | re.I)
+
         extra = json.loads(data['extra']) if data.get('extra') else {}
         if method.startswith('sms'):
             # need to render the sms so it makes sense to users
