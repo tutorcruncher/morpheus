@@ -15,7 +15,7 @@ CREATE TABLE message_groups (
   from_name VARCHAR(255)
 );
 CREATE UNIQUE INDEX message_group_uuid ON message_groups USING btree (uuid);
-CREATE INDEX message_group_company ON message_groups USING btree (company);
+CREATE INDEX message_group_company_method ON message_groups USING btree (company, method);
 CREATE INDEX message_group_method ON message_groups USING btree (method);
 CREATE INDEX message_group_created_ts ON message_groups USING btree (created_ts);
 
@@ -45,7 +45,7 @@ CREATE TABLE messages (
   extra JSONB,
   vector tsvector NOT NULL
 );
-CREATE INDEX message_group_id ON messages USING btree (group_id);
+CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts);
 CREATE INDEX message_external_id ON messages USING btree (external_id);
 CREATE INDEX message_status ON messages USING btree (status);
 CREATE INDEX message_send_ts ON messages USING btree (send_ts);
