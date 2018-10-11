@@ -102,13 +102,28 @@ async def test_user_search(cli, settings, send_email):
     assert data['count'] == 1
     item = data['items'][0]
     # debug(item)
-    assert 0.05 < item['ranking'] < 0.2
     assert item['external_id'] == msgs['cherry']
     assert item['subject'] == 'cherry'
     r = await cli.get(modify_url('/user/email-test/messages.json?q=eggplant', settings, 'whoever'))
     assert r.status == 200, await r.text()
     data = await r.json()
     # debug(data)
+    assert data['count'] == 0
+
+
+async def test_user_search_space(cli, settings, send_email):
+    uid = str(uuid.uuid4())
+    await send_email(uid=uid, company_code='testing',
+                     recipients=[{'address': f'testing@example.com'}], subject_template='foobar')
+
+    r = await cli.get(modify_url('/user/email-test/messages.json?q=foobar', settings, 'testing'))
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data['count'] == 1
+
+    r = await cli.get(modify_url('/user/email-test/messages.json?q=foo%20bar', settings, 'testing'))
+    assert r.status == 200, await r.text()
+    data = await r.json()
     assert data['count'] == 0
 
 

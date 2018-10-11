@@ -227,3 +227,18 @@ async def update_enums(conn, settings, **kwargs):
         await conn.execute(f"ALTER TYPE SEND_METHODS ADD VALUE IF NOT EXISTS '{t.value}'")
     for t in MessageStatus:
         await conn.execute(f"ALTER TYPE MESSAGE_STATUSES ADD VALUE IF NOT EXISTS '{t.value}'")
+
+
+@patch
+async def correct_indexes(conn, settings, **kwargs):
+    """
+    modify indexes to improve query performance
+    """
+    await conn.execute("""
+    DROP INDEX IF EXISTS message_group_company;
+    DROP INDEX IF EXISTS message_group_company_method;
+    CREATE INDEX message_group_company_method ON message_groups USING btree (company, method);
+    DROP INDEX IF EXISTS message_group_id;
+    DROP INDEX IF EXISTS message_group_id_send_ts;
+    CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts);
+    """)

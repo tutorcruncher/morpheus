@@ -333,21 +333,21 @@ class _UserMessagesView(UserView):
         }
 
     async def query_general(self, where, query):
-        s = self._select_fields()
-        s.append(Func('ts_rank_cd', Var('vector'), Var('tsquery'), Var('16')).as_('ranking'))
         async with self.app['pg'].acquire() as conn:
             items = await conn.fetch_b(
                 """
                 :select
-                from messages m join message_groups j on m.group_id = j.id, to_tsquery(:query) tsquery
-                where :where and vector @@ tsquery
-                order by ranking desc
-                limit 10
+                from messages m join message_groups j on m.group_id = j.id, plainto_tsquery(:query) tsquery
+                where :where and m.vector @@ tsquery
+                order by m.send_ts desc
+                limit 100
+                offset :offset
                 """,
-                select=Select(s),
+                select=Select(self._select_fields()),
                 tz=self.get_dt_tz(),
                 query=query,
                 where=where,
+                offset=self.get_arg_int('from', 0) if self.offset else 0,
             )
         return {
             'count': len(items),
