@@ -161,7 +161,7 @@ class TestWebhookView(View):
 
     async def call(self, request):
         m = await self.request_data(MandrillSingleWebhook)
-        await self.sender.update_message_status('email-test', m)
+        await self.sender.update_message_status(SendMethod.email_test, m)
         return PreResponse(text='message status updated\n')
 
 
@@ -202,7 +202,7 @@ class MessageBirdWebhookView(View):
     async def call(self, request):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
-        await self.sender.update_message_status('sms-messagebird', m)
+        await self.sender.update_message_status(SendMethod.sms_messagebird, m)
         return PreResponse(text='message status updated\n')
 
 

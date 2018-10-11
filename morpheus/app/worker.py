@@ -26,7 +26,7 @@ from pydantic.datetime_parse import parse_datetime
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from .ext import ApiError, Mandrill, MessageBird
-from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SmsSendMethod
+from .models import THIS_DIR, BaseWebhook, EmailSendMethod, MandrillWebhook, MessageStatus, SendMethod, SmsSendMethod
 from .render import EmailInfo, render_email
 from .render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from .settings import Settings
@@ -100,8 +100,7 @@ class SmsData:
 class UpdateStatus(str, Enum):
     duplicate = 'duplicate'
     missing = 'missing'
-    added_newest = 'added-newest'
-    added_not_newest = 'added-not-newest'
+    added = 'added'
 
 
 class Sender(Actor):
@@ -694,13 +693,14 @@ class Sender(Actor):
         mandrill_webhook = MandrillWebhook(events=events)
         statuses = {}
         for m in mandrill_webhook.events:
-            status = await self.update_message_status('email-mandrill', m, log_each=False)
+            status = await self.update_message_status(SendMethod.email_mandrill, m, log_each=False)
             if status in statuses:
                 statuses[status] += 1
             else:
                 statuses[status] = 1
         main_logger.info('updating %d messages: %s', len(mandrill_webhook.events),
                          ' '.join(f'{k}={v}' for k, v in statuses.items()))
+        return len(mandrill_webhook.events)
 
     @concurrent
     async def store_click(self, *, link_id, ip, ts, user_agent):
@@ -739,7 +739,7 @@ class Sender(Actor):
                 )
             )
 
-    async def update_message_status(self, send_method, m: BaseWebhook, log_each=True) -> UpdateStatus:
+    async def update_message_status(self, send_method: SendMethod, m: BaseWebhook, log_each=True) -> UpdateStatus:
         h = hashlib.md5(f'{m.message_id}-{to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
         ref = f'event-{h.hexdigest()}'
         redis_pool = await self.get_redis()
@@ -778,6 +778,7 @@ class Sender(Actor):
                     extra=m.extra_json(),
                 )
             )
+            return UpdateStatus.added
 
 
 class Worker(BaseWorker):  # pragma: no cover
