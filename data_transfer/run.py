@@ -16,10 +16,10 @@ from tqdm import tqdm
 
 sys.path.append('./morpheus')
 from app.db import prepare_database
+from app.ext import ApiSession
 from app.logs import setup_logging
 from app.models import SendMethod
 from app.settings import Settings
-from app.utils import ApiSession
 
 main_logger = logging.getLogger('morpheus.elastic')
 elastic_url = 'http://localhost:9200'
@@ -77,6 +77,8 @@ MAPPINGS = {
         'extra': DYNAMIC,
     }
 }
+
+START_TIME = 1539234064 * 1000
 
 
 class ElasticSearch(ApiSession):  # pragma: no cover
@@ -174,7 +176,7 @@ class ElasticSearch(ApiSession):  # pragma: no cover
 message_group_lookup = {}
 
 
-async def process_messages(messages, pg):
+async def process_messages(messages, pg, es):
     if not messages:
         return
 
@@ -224,22 +226,61 @@ async def process_messages(messages, pg):
     async with pg.acquire() as conn:
         await conn.execute_b('insert into messages (:values__names) values :values', values=values)
 
+    link_values = []
+    async with pg.acquire() as conn:
+        for msg in messages:
+            query = {
+                'bool': {
+                    'filter': [
+                        {'term': {'send_message_id': msg['_id']}},
+                    ]
+                }
+            }
+
+            r = await es.get(f'links/_search', query=query, size=100)
+            data = await r.json()
+            links = data['hits']['hits']
+            if not links:
+                continue
+
+            message_id = await conn.fetchval('select id from messages where external_id=$1', msg['_id'])
+            for link in links:
+                link_values.append(
+                    Values(
+                        message_id=message_id,
+                        token=link['_source']['token'],
+                        url=link['_source']['url'],
+                    )
+                )
+        if link_values:
+            await conn.execute_b('insert into links (:values__names) values :values',
+                                 values=MultipleValues(*link_values))
+    print(f'created {len(link_values)} links')
+
 
 async def transfer_messages(es, pg, loop):
     # clear the db before we begin
-    print('deleting everything from the db...')
-    await pg.execute('delete from message_groups')
-    print('done')
+    # print('deleting everything from the db...')
+    # await pg.execute('delete from message_groups')
+    # print('done')
     global group_lookup
     scrl = 1000
 
+    query = {
+        'bool': {
+            'filter': [
+                {'range': {'send_ts': {'gt': START_TIME}}},
+            ]
+        }
+    }
+
     for m in reversed(SendMethod):
-        r = await es.get(f'messages/{m.value}/_search?scroll=10m', size=scrl, sort=[{'send_ts': 'desc'}])
+        r = await es.get(f'messages/{m.value}/_search?scroll=10m', query=query, size=scrl, sort=[{'send_ts': 'desc'}])
         data = await r.json()
         total = data['hits']['total']
         scroll_id = data['_scroll_id']
         hits = data['hits']['hits']
-        tasks = [loop.create_task(process_messages(hits, pg))]
+        tasks = [loop.create_task(process_messages(hits, pg, es))]
         hit_count = len(hits)
         print(f'method: {m.value}, events: {total}')
         for i in tqdm(range(total // scrl + 1), smoothing=0.01):
@@ -252,7 +293,7 @@ async def transfer_messages(es, pg, loop):
             hits = data['hits']['hits']
             hit_count += len(hits)
             if hits:
-                tasks.append(loop.create_task(process_messages(hits, pg)))
+                tasks.append(loop.create_task(process_messages(hits, pg, es)))
             else:
                 break
 
@@ -309,16 +350,24 @@ async def process_events(events, pg):
 
 
 async def transfer_events(es, pg, loop):
-    print('deleting events from the db...')
-    await pg.execute('delete from events')
-    print('done')
+    # print('deleting events from the db...')
+    # await pg.execute('delete from events')
+    # print('done')
     await pg.execute('DROP TRIGGER IF EXISTS update_message ON events')
     global message_id_lookup
     scrl = 5000
 
+    query = {
+        'bool': {
+            'filter': [
+                {'range': {'ts': {'gt': START_TIME}}},
+            ]
+        }
+    }
+
     try:
         for m in reversed(SendMethod):
-            r = await es.get(f'events/{m.value}/_search?scroll=10m', size=scrl, sort=[{'ts': 'desc'}])
+            r = await es.get(f'events/{m.value}/_search?scroll=10m', query=query, size=scrl, sort=[{'ts': 'desc'}])
             data = await r.json()
             total = data['hits']['total']
             scroll_id = data['_scroll_id']
@@ -393,6 +442,7 @@ async def process_links(links, pg):
 
 
 async def transfer_links(es, pg, loop):
+    raise RuntimeError('links are processed transfer_messages')
     print('deleting links from the db...')
     await pg.execute('delete from links')
     print('done')

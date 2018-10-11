@@ -129,7 +129,7 @@ def send_email(cli):
 
 
 @pytest.fixture
-def send_sms(cli, **extra):
+def send_sms(cli):
     async def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),

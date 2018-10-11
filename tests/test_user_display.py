@@ -74,6 +74,18 @@ async def test_user_list(cli, settings, send_email, db_conn):
     assert text.count('.com</a>') == 6
 
 
+async def test_user_list_sms(cli, settings, send_sms, db_conn):
+    await send_sms(company_code='testing')
+
+    r = await cli.get(modify_url('/user/sms-test/messages.json', settings, 'testing'))
+    assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    data = await r.json()
+    assert data['count'] == 1
+    assert len(data['items']) == 1
+    assert data['items'][0]['body'] == 'this is a test apples'
+
+
 async def test_user_search(cli, settings, send_email):
     msgs = {}
     for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):

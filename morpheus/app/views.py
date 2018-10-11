@@ -359,7 +359,7 @@ class UserMessagesJsonView(_UserMessagesView):
     def _select_fields(self):
         tz = self.get_dt_tz()
         date_func = self.get_date_func()
-        return [
+        fields = [
             Var('m.id'),
             Func(date_func, Var('send_ts'), tz).as_('send_ts'),
             Func(date_func, Var('update_ts'), tz).as_('update_ts'),
@@ -378,14 +378,18 @@ class UserMessagesJsonView(_UserMessagesView):
             'cost',
             'extra',
         ]
+        if self.sms_method:
+            fields.append('body')
+        return fields
 
     async def call(self, request):
+        self.sms_method = 'sms' in request.match_info['method']
         data = await self.query(
             message_id=self.get_arg_int('message_id'),
             tags=request.query.getall('tags', None),
             query=request.query.get('q')
         )
-        if 'sms' in request.match_info['method'] and self.session.company != '__all__':
+        if self.sms_method and self.session.company != '__all__':
             data['spend'] = await self.sender.check_sms_limit(self.session.company)
 
         if len(data['items']) == 1:

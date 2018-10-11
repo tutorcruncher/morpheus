@@ -14,18 +14,17 @@ services:
     ports:
     - 443:443
 
-# TODO uncomment once we halt the other morpheus
-#  telegraf:
-#    build: telegraf
-#    hostname: morpheus-telegraf
-#    volumes:
-#    - /var/run/docker.sock:/var/run/docker.sock:ro
-#    - /var/run/utmp:/var/run/utmp:ro
-#    environment:
-#      INFLUXDB_URL: ${INFLUXDB_URL}
-#      INFLUXDB_PASSWORD: ${INFLUXDB_PASSWORD}
-#      STATS_TOKEN: ${APP_STATS_TOKEN}
-#      STATS_HOST: ${APP_HOST_NAME}
-#      APP_PG_DSN: ${APP_PG_DSN}
-#    pid: host
-#    restart: always
+  telegraf:
+    build: telegraf
+    hostname: morpheus-telegraf
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /var/run/utmp:/var/run/utmp:ro
+    environment:
+      INFLUXDB_URL: ${INFLUXDB_URL}
+      INFLUXDB_PASSWORD: ${INFLUXDB_PASSWORD}
+      STATS_TOKEN: ${APP_STATS_TOKEN}
+      STATS_HOST: ${APP_HOST_NAME}
+      APP_PG_DSN: ${APP_PG_DSN}
+    pid: host
+    restart: always
