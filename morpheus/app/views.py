@@ -246,7 +246,6 @@ class CreateSubaccountView(ServiceView):
 
 class _UserMessagesView(UserView):
     offset = True
-    pretty_ts = False
 
     def get_dt_tz(self):
         dt_tz = self.request.query.get('dttz') or 'utc'
@@ -257,7 +256,7 @@ class _UserMessagesView(UserView):
         return dt_tz
 
     def get_date_func(self):
-        pretty_ts = bool(self.pretty_ts or self.request.query.get('pretty_ts'))
+        pretty_ts = bool(self.request.query.get('pretty_ts'))
         return 'pretty_ts' if pretty_ts else 'iso_ts'
 
     def _select_fields(self):
@@ -411,7 +410,6 @@ class UserMessagesJsonView(_UserMessagesView):
 
 class UserMessageDetailView(TemplateView, _UserMessagesView):
     template = 'user/details.jinja'
-    pretty_ts = True
 
     async def call(self, request):
         data = await self.query(message_id=int(self.request.match_info['id']))
