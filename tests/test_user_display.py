@@ -173,6 +173,21 @@ async def test_user_aggregate(cli, settings, send_email):
     assert sum(v['count'] for v in data['histogram']) == 6
 
 
+async def test_user_aggregate_no_data(cli, settings):
+    r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'testing'))
+    assert r.status == 200, await r.text()
+    data = await r.json()
+    assert data == {
+        'histogram': [],
+        'all_90_day': 0,
+        'open_90_day': 0,
+        'all_7_day': 0,
+        'open_7_day': 0,
+        'all_28_day': 0,
+        'open_28_day': 0,
+    }
+
+
 async def test_user_tags(cli, settings, send_email):
     uid1 = str(uuid.uuid4())
     await send_email(

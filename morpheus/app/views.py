@@ -595,15 +595,15 @@ class UserMessagePreviewView(TemplateView, UserView):
 agg_sql = """
 select json_build_object(
   'histogram', histogram,
-  'all_90_day', all_90_day,
-  'open_90_day', open_90_day,
-  'all_7_day', all_7_day,
-  'open_7_day', open_7_day,
-  'all_28_day', all_28_day,
-  'open_28_day', open_28_day
+  'all_90_day', agg.all_90,
+  'open_90_day', agg.open_90,
+  'all_28_day', agg.all_28,
+  'open_28_day', agg.open_28,
+  'all_7_day', agg.all_7,
+  'open_7_day', agg.open_7
 )
 from (
-  select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') AS histogram from (
+  select coalesce(json_agg(t), '[]') AS histogram from (
     select count(*), to_char(day, 'YYYY-MM-DD') as day, status
     from (
       select date_trunc('day', m.send_ts) as day, status
@@ -615,41 +615,17 @@ from (
   ) as t
 ) as histogram,
 (
-  select count(*) as all_90_day
+  select
+    count(*) as all_90,
+    count(*) filter (where m.status = 'open') as open_90,
+    count(*) filter (where m.send_ts > current_timestamp::date - '28 days'::interval) as all_28,
+    count(*) filter (where m.send_ts > current_timestamp::date - '28 days'::interval and m.status = 'open') as open_28,
+    count(*) filter (where m.send_ts > current_timestamp::date - '7 days'::interval) as all_7,
+    count(*) filter (where m.send_ts > current_timestamp::date - '7 days'::interval and m.status = 'open') as open_7
   from messages m
   join message_groups j on m.group_id = j.id
   where :where and m.send_ts > current_timestamp::date - '90 days'::interval
-) as all_90_day,
-(
-  select count(*) as open_90_day
-  from messages m
-  join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp::date - '90 days'::interval and status = 'open'
-) as open_90_day,
-(
-  select count(*) as all_7_day
-  from messages m
-  join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp::date - '7 days'::interval
-) as all_7_day,
-(
-  select count(*) as open_7_day
-  from messages m
-  join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp::date - '7 days'::interval and status = 'open'
-) as open_7_day,
-(
-  select count(*) as all_28_day
-  from messages m
-  join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp::date - '28 days'::interval
-) as all_28_day,
-(
-  select count(*) as open_28_day
-  from messages m
-  join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp::date - '28 days'::interval and status = 'open'
-) as open_28_day
+) as agg
 """
 
 
@@ -850,7 +826,7 @@ class RequestStatsView(AuthView):
 
 
 msg_stats_sql = """
-select coalesce(array_to_json(array_agg(row_to_json(t))), '[]') from (
+select coalesce(json_agg(t), '[]') from (
   select count(*), extract(epoch from avg(update_ts - send_ts))::int as age, method, status
   from messages m
   join message_groups j on m.group_id = j.id
