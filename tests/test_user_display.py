@@ -312,6 +312,31 @@ async def test_single_item_events(cli, settings, send_email, db_conn):
     ]
 
 
+async def test_details_empty_event_extra(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
+        company_code='test-details',
+        recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}],
+    )
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    await db_conn.execute_b(
+        'insert into events (:values__names) values :values',
+        values=MultipleValues(*[
+            Values(
+                ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+                message_id=message_id,
+                status=MessageStatus.send,
+                extra=None,
+            ) for i in range(3)
+        ])
+    )
+
+    url = modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details')
+    r = await cli.get(url)
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    assert '<pre><code class="JSON">{}</code></pre>' in text
+
+
 async def test_invalid_message_id(cli, settings):
     url = modify_url(f'/user/email-test/messages.json?message_id=foobar', settings, 'test-details')
     r = await cli.get(url)

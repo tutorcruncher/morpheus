@@ -474,7 +474,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             yield dict(
                 status=event['status'].title(),
                 datetime=event['ts'],
-                details=Markup(json.dumps(json.loads(event['extra']), indent=2)),
+                details=Markup(json.dumps(json.loads(event['extra'] or "{}"), indent=2)),
             )
         if len(events) > 50:
             extra = await self.app['pg'].fetchval('select count(*) - 50 from events where message_id = $1', message_id)
