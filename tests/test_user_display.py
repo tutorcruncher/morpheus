@@ -255,7 +255,6 @@ async def test_message_details(cli, settings, send_email, db_conn):
     assert r.status == 200, text
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     spaceless = re.sub('\n +', '\n', text)
-    # print(spaceless)
     assert '<label>Subject:</label>\n<span>test message</span>' in spaceless
     assert '<label>To:</label>\n<span>&lt;foobar@testing.com&gt;</span>' in spaceless
 
@@ -312,6 +311,27 @@ async def test_message_details_link(cli, settings, send_email, db_conn):
     assert r.status == 400, await r.text()
     assert r.headers.get('Access-Control-Allow-Origin') == '*'
     assert {'message': 'unknown timezone: "snap"'} == await r.json()
+
+
+async def test_no_event_data(cli, settings, send_email, db_conn):
+    msg_ext_id = await send_email(
+        company_code='test-details',
+        recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}],
+    )
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    await db_conn.execute_b(
+        'insert into events (:values__names) values :values',
+        values=MultipleValues(*[
+            Values(
+                ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+                message_id=message_id,
+                status=MessageStatus.send,
+            ) for i in range(3)
+        ])
+    )
+    message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
+    r = await cli.get(modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details'))
+    assert '<div class="panel-group events" id="morpheus-accordion">\n' in await r.text()
 
 
 async def test_single_item_events(cli, settings, send_email, db_conn):
