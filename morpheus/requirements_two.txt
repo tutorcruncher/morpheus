@@ -1,6 +1,6 @@
 aiohttp==3.4.4
 aiohttp-jinja2==1.1.0
-aioredis==1.1.0
+aioredis==1.2.0
 arq==0.14
 buildpg==0.0.2
 chevron==0.12.2
