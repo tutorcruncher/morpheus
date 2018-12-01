@@ -2,5 +2,5 @@
 -r morpheus/requirements_one.txt
 -r morpheus/requirements_two.txt
 -r tests/requirements.txt
-aiohttp-devtools==0.10.3
+aiohttp-devtools==0.10.4
 requests==2.19.1
