@@ -1,6 +1,6 @@
 asyncpg==0.18.2
 cffi==1.11.5
 libsass==0.16.1
-misaka==2.1.0
+misaka==2.1.1
 multidict==4.4.2
 uvloop==0.11.2
