@@ -6,7 +6,7 @@ buildpg==0.0.2
 chevron==0.13.1
 click==7.0
 dataclasses==0.6
-ipython==7.0.1
+ipython==7.2.0
 jinja2==2.10
 misaka==2.1.1
 msgpack-python==0.5.6
