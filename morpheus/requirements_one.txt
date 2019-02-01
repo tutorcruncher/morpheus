@@ -1,4 +1,4 @@
-asyncpg==0.17.0
+asyncpg==0.18.3
 cffi==1.11.5
 libsass==0.15.1
 misaka==2.1.0
