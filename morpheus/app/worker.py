@@ -600,11 +600,15 @@ class Sender(Actor):
                 for i in range(30):
                     r = await self.messagebird.get(f'lookup/{api_number}')
                     data = await r.json()
-                    if data['hlr']['status'] == 'active':
-                        main_logger.info('found result for %s after %d attempts %s',
-                                         number.number, i, json.dumps(data, indent=2))
-                        break
-                    await asyncio.sleep(1)
+                    hlr = data.get('hlr')
+                    if hlr:
+                        if hlr['status'] == 'active':
+                            main_logger.info('found result for %s after %d attempts %s',
+                                             number.number, i, json.dumps(data, indent=2))
+                            break
+                        await asyncio.sleep(1)
+                    else:
+                        return
                 mcc = str(data['hlr']['network'])[:3]
                 await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
             return await self._messagebird_get_mcc_cost(redis, mcc)
@@ -614,6 +618,8 @@ class Sender(Actor):
         if sms_data is None:
             return
         msg_cost = await self._messagebird_get_number_cost(sms_data.number)
+        if msg_cost is None:
+            return
 
         cost = sms_data.length.parts * msg_cost
         send_ts = utcnow()
