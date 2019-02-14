@@ -44,7 +44,7 @@ async def test_send_email(cli, tmpdir):
     print(msg_file)
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
-    data = json.loads(re.search('data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
+    data = json.loads(re.search(r'data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
     assert data['from_email'] == 's@muelcolvin.com'
     assert data['to_address'] == 'foobar@example.org'
     assert data['to_user_link'] == '/user/profile/42/'
@@ -765,7 +765,7 @@ async def send_with_link(send_email, tmpdir):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{mid}.txt').read()
-    m = re.search('<a href="https://click.example.com/l(.+?)\?u=(.+?)">foobar</a> test message', msg_file)
+    m = re.search(r'<a href="https://click.example.com/l(.+?)\?u=(.+?)">foobar</a> test message', msg_file)
     assert m, msg_file
     token, enc_url = m.groups()
     assert len(token) == 30
@@ -852,7 +852,7 @@ async def test_link_shortening_in_render(send_email, tmpdir, db_conn):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{mid}.txt').read()
-    m = re.search('<p>test email https://click.example.com/l(.+?)\?u=(.+?)</p>', msg_file)
+    m = re.search(r'<p>test email https://click.example.com/l(.+?)\?u=(.+?)</p>', msg_file)
     assert m, msg_file
     token, enc_url = m.groups()
 
@@ -872,7 +872,7 @@ async def test_link_shortening_keep_long_link(send_email, tmpdir, cli):
         company_code='test_link_shortening_in_render',
     )
     msg_file = tmpdir.join(f'{mid}.txt').read()
-    m = re.search('<p>test email http://example.org/foobar</p>', msg_file)
+    m = re.search(r'<p>test email http://example.org/foobar</p>', msg_file)
     assert m, msg_file
 
 
@@ -887,7 +887,7 @@ async def test_link_shortening_not_image(send_email, tmpdir, cli):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{mid}.txt').read()
-    assert re.search('<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
+    assert re.search(r'<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
 
 
 async def test_mandrill_key_not_setup(settings, loop):

@@ -65,15 +65,15 @@ class Settings(BaseSettings):
 
     @validator('pg_host', always=True, pre=True)
     def set_pg_host(cls, v, values, **kwargs):
-        return re.search('@(.+?):', values['pg_dsn']).group(1)
+        return re.search(r'@(.+?):', values['pg_dsn']).group(1)
 
     @validator('pg_port', always=True, pre=True)
     def set_pg_port(cls, v, values, **kwargs):
-        return int(re.search(':(\d+)', values['pg_dsn']).group(1))
+        return int(re.search(r':(\d+)', values['pg_dsn']).group(1))
 
     @validator('pg_name', always=True, pre=True)
     def set_pg_name(cls, v, values, **kwargs):
-        return re.search('\d+/(\w+)$', values['pg_dsn']).group(1)
+        return re.search(r'\d+/(\w+)$', values['pg_dsn']).group(1)
 
     @property
     def models_sql(self):

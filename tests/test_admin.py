@@ -44,7 +44,7 @@ async def test_list(cli, send_email, db_conn):
     r = await cli.get('/admin/list/?method=email-test', headers=gen_headers())
     text = await r.text()
     assert r.status == 200, text
-    m = re.search('<h3>Total: (\d+)</h3>', text)
+    m = re.search(r'<h3>Total: (\d+)</h3>', text)
     assert m, text
     send_count = int(m.groups()[0])
     assert send_count == 2
@@ -66,7 +66,7 @@ async def test_list_many(cli, send_email, db_conn):
     r = await cli.get('/admin/list/?method=email-test', headers=gen_headers())
     text = await r.text()
     assert r.status == 200, text
-    m = re.search('<h3>Total: (\d+)</h3>', text)
+    m = re.search(r'<h3>Total: (\d+)</h3>', text)
     assert m, text
     send_count = int(m.groups()[0])
     assert send_count == 105

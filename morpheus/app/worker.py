@@ -104,7 +104,7 @@ class UpdateStatus(str, Enum):
 
 
 class Sender(Actor):
-    def __init__(self, settings: Settings=None, **kwargs):
+    def __init__(self, settings: Settings = None, **kwargs):
         self.settings = settings or Settings()
         self.redis_settings = self.settings.redis_settings
         super().__init__(**kwargs)
@@ -174,7 +174,7 @@ class Sender(Actor):
             subaccount=subaccount,
             important=important,
         )
-        if 'styles__sass' not in context and re.search('\{\{\{ *styles *\}\}\}', main_template):
+        if 'styles__sass' not in context and re.search(r'\{\{\{ *styles *\}\}\}', main_template):
             context['styles__sass'] = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 
         drain = Drain(
