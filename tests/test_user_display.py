@@ -44,8 +44,8 @@ async def test_user_list(cli, settings, send_email, db_conn):
     assert first_item == {
         'id': await db_conn.fetchval('select id from messages where external_id=$1', expected_msg_ids[3]),
         'external_id': expected_msg_ids[3],
-        'send_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
-        'update_ts': RegexStr('\d{4}-\d{2}-\d{2}.*'),
+        'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+        'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
         'status': 'send',
         'to_first_name': None,
         'to_last_name': None,
@@ -516,7 +516,7 @@ async def test_user_list_lots(cli, settings, send_email):
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     text = await r.text()
-    m = re.search('<caption>Results: <b>(\d+)</b></caption>', text)
+    m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
     results = int(m.groups()[0])
     assert results >= 110
     assert f'1 - 100' not in text

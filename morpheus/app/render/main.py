@@ -53,7 +53,7 @@ def _update_context(context, partials, macros):
 def _apply_macros(s, macros):
     if macros:
         for key, body in macros.items():
-            m = re.search('^(\S+)\((.*)\) *$', key)
+            m = re.search(r'^(\S+)\((.*)\) *$', key)
             if not m:
                 logger.warning('invalid macro "%s", skipping it', key)
                 continue
