@@ -697,7 +697,7 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker, db_con
     async def fake_response(url, **data):
         nonlocal request
         request += 1
-        if request == 1:
+        if request < 7:
             raise ClientOSError('foobar')
 
         class FakeResponse:

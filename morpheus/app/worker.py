@@ -243,8 +243,10 @@ class Sender(Actor):
             return
 
         response, exc = None, None
-        for i in range(5):
-            if i > 0:
+        for i in range(15):
+            if i > 5:
+                await asyncio.sleep(2 * i)
+            elif i > 0:
                 await asyncio.sleep(0.5 * i)
             try:
                 response = await self.mandrill.post('messages/send.json', **data)
