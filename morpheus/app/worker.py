@@ -600,7 +600,10 @@ class Sender(Actor):
                 for i in range(30):
                     r = await self.messagebird.get(f'lookup/{api_number}')
                     data = await r.json()
-                    if data['hlr']['status'] == 'active':
+                    hlr = data.get('hlr')
+                    if not hlr:
+                        return
+                    elif hlr['status'] == 'active':
                         main_logger.info('found result for %s after %d attempts %s',
                                          number.number, i, json.dumps(data, indent=2))
                         break
@@ -614,6 +617,8 @@ class Sender(Actor):
         if sms_data is None:
             return
         msg_cost = await self._messagebird_get_number_cost(sms_data.number)
+        if msg_cost is None:
+            return
 
         cost = sms_data.length.parts * msg_cost
         send_ts = utcnow()

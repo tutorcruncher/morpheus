@@ -208,6 +208,23 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
     ] == mock_external.app['request_log']
 
 
+async def test_messagebird_no_hlr(cli, tmpdir, mock_external):
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'method': 'sms-messagebird',
+        'main_template': 'this is a message',
+        'recipients': [{'number': '07888888888'}]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert [
+        'POST /messagebird/lookup/447888888888/hlr > 201',
+        'GET /messagebird/lookup/447888888888 > 200',
+    ] == mock_external.app['request_log']
+    mock_external.app['request_log'] = []
+
+
 async def test_messagebird_webhook(cli, db_conn, mock_external):
     data = {
         'uid': str(uuid4()),
@@ -228,7 +245,6 @@ async def test_messagebird_webhook(cli, db_conn, mock_external):
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
     msg = await db_conn.fetchrow('select * from messages join message_groups j on messages.group_id = j.id')
-    # debug(dict(msg))
     assert msg['status'] == 'send'
     assert msg['to_first_name'] == 'John'
     assert msg['to_last_name'] == 'Doe'
@@ -238,8 +254,6 @@ async def test_messagebird_webhook(cli, db_conn, mock_external):
     assert msg['body'] == 'this is a message'
     assert msg['cost'] == 0.02
     assert len(msg['tags']) == 1  # just group_id
-    # events = await get_events(cli, response_data['hits']['hits'][0]['_id'], es_type='sms-messagebird')
-    # assert events['hits']['total'] == 0
 
     url_args = {
         'id': msg['external_id'],
@@ -254,9 +268,6 @@ async def test_messagebird_webhook(cli, db_conn, mock_external):
     assert 1 == await db_conn.fetchval('select count(*) from messages')
     msg = await db_conn.fetchrow('select * from messages')
     assert msg['status'] == 'delivered'
-    # events = await get_events(cli, response_data['hits']['hits'][0]['_id'], es_type='sms-messagebird')
-    # assert events['hits']['total'] == 1
-    # assert events['hits']['hits'][0]['_source']['status'] == 'delivered'
 
 
 async def test_failed_render(cli, tmpdir, db_conn):

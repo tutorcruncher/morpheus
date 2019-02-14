@@ -71,6 +71,8 @@ async def messagebird_hlr_post(request):
 
 async def messagebird_lookup(request):
     assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
+    if '447888888888' in request.path:
+        return json_response({})
     return json_response({
         'hlr': {
             'status': 'active',
