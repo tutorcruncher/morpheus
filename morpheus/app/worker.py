@@ -601,14 +601,13 @@ class Sender(Actor):
                     r = await self.messagebird.get(f'lookup/{api_number}')
                     data = await r.json()
                     hlr = data.get('hlr')
-                    if hlr:
-                        if hlr['status'] == 'active':
-                            main_logger.info('found result for %s after %d attempts %s',
-                                             number.number, i, json.dumps(data, indent=2))
-                            break
-                        await asyncio.sleep(1)
-                    else:
+                    if not hlr:
                         return
+                    elif hlr['status'] == 'active':
+                        main_logger.info('found result for %s after %d attempts %s',
+                                         number.number, i, json.dumps(data, indent=2))
+                        break
+                    await asyncio.sleep(1)
                 mcc = str(data['hlr']['network'])[:3]
                 await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
             return await self._messagebird_get_mcc_cost(redis, mcc)
