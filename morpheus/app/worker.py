@@ -182,6 +182,7 @@ class Sender(Actor):
             raise_task_exception=True,
             max_concurrent_tasks=10,
             shutdown_delay=60,
+            timeout_seconds=180,
         )
         jobs = 0
         async with drain:
@@ -255,7 +256,7 @@ class Sender(Actor):
                 main_logger.info('%s: client connection error, retrying %d...', j.group_id, i)
             except ApiError as e:
                 exc = e
-                if e.status not in {502, 504}:
+                if e.status not in {502, 504} and not (e.status == 500 and 'Internal Server Error' not in e.args[0]):
                     # if the status is not 502 or 504 break immediately
                     break
             except ClientError as e:
