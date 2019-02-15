@@ -256,7 +256,7 @@ class Sender(Actor):
                 main_logger.info('%s: client connection error, retrying %d...', j.group_id, i)
             except ApiError as e:
                 exc = e
-                if e.status not in {502, 504} and not (e.status == 500 and 'Internal Server Error' not in e.args[0]):
+                if e.status not in {502, 504} and not (e.status == 500 and 'center>nginx/1.1.19</center' not in e.body):
                     # if the status is not 502 or 504 break immediately
                     break
             except ClientError as e:

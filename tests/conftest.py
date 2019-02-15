@@ -104,7 +104,7 @@ async def _fix_cli(loop, test_client, settings, db_conn):
 
 @pytest.fixture
 def send_email(cli):
-    async def _send_message(**extra):
+    async def _send_message(status_code=201, **extra):
         data = dict(
             uid=str(uuid.uuid4()),
             main_template='<body>\n{{{ message }}}\n</body>',
@@ -120,7 +120,7 @@ def send_email(cli):
         # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
         r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-        assert r.status == 201
+        assert r.status == status_code
         if len(data['recipients']) != 1:
             return NotImplemented
         else:

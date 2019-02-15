@@ -24,10 +24,11 @@ def lenient_json(v):
 
 
 class ApiError(RuntimeError):
-    def __init__(self, method, url, response):
+    def __init__(self, method, url, response, response_text):
         self.method = method
         self.url = url
         self.status = response.status
+        self.body = response_text
 
     def __str__(self):
         return f'{self.method} {self.url}, unexpected response {self.status}'
@@ -78,7 +79,7 @@ class ApiSession:
             }
             logger.warning('%s unexpected response %s /%s -> %s', self.__class__.__name__, method, uri, r.status,
                            extra={'data': data})
-            raise ApiError(method, url, r)
+            raise ApiError(method, url, r, response_text)
         else:
             logger.debug('%s /%s -> %s', method, uri, r.status)
             return r

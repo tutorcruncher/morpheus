@@ -41,7 +41,6 @@ async def test_send_email(cli, tmpdir):
     assert r.status == 201, await r.text()
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(uuid + '-foobarexampleorg.txt').read()
-    print(msg_file)
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
     data = json.loads(re.search(r'data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
@@ -755,6 +754,69 @@ async def test_mandrill_send_502_ok(cli, send_email, mocker, db_conn):
     m = await db_conn.fetchrow('select * from messages')
     assert m['status'] == 'send'
     assert m['body'] == '<body>\nthis is a test\n</body>'
+
+
+async def test_mandrill_send_500_not_ok(cli, send_email, mocker, db_conn):
+    request = 0
+
+    async def fake_response(url, **data):
+        nonlocal request
+        request += 1
+
+        class FakeResponse:
+            status = 500
+
+            async def text(self):
+                return 'center>Foobar</center'
+
+            async def json(self):
+                return [{'body': 'center>Foobar</center'}]
+        return FakeResponse()
+
+    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
+    mock_mandrill_post.side_effect = fake_response
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+
+    await send_email(
+        status_code=500,
+        method='email-mandrill',
+        company_code='mandrill-error-ok-test',
+        recipients=[{'address': 'foobar_a@testing.com'}]
+    )
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+
+
+async def test_mandrill_send_500_ok(cli, send_email, mocker, db_conn):
+    request = 0
+
+    async def fake_response(url, **data):
+        nonlocal request
+        request += 1
+
+        class FakeResponse:
+            status = 500 if request == 1 else 200
+
+            async def text(self):
+                return 'center>nginx/1.1.19</center'
+
+            async def json(self):
+                return [dict(email='foobar_a@testing.com', _id='abc')]
+        return FakeResponse()
+
+    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
+    mock_mandrill_post.side_effect = fake_response
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+
+    await send_email(
+        method='email-mandrill',
+        company_code='mandrill-error-ok-test',
+        recipients=[{'address': 'foobar_a@testing.com'}]
+    )
+
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
 
 
 async def send_with_link(send_email, tmpdir):
