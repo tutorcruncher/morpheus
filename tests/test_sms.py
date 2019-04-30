@@ -225,6 +225,23 @@ async def test_messagebird_no_hlr(cli, tmpdir, mock_external):
     mock_external.app['request_log'] = []
 
 
+async def test_messagebird_no_network(cli, tmpdir, mock_external):
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'method': 'sms-messagebird',
+        'main_template': 'this is a message',
+        'recipients': [{'number': '07777777777'}]
+    }
+    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert [
+        'POST /messagebird/lookup/447777777777/hlr > 201',
+        'GET /messagebird/lookup/447777777777 > 200',
+    ] == mock_external.app['request_log']
+    mock_external.app['request_log'] = []
+
+
 async def test_messagebird_webhook(cli, db_conn, mock_external):
     data = {
         'uid': str(uuid4()),

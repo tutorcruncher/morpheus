@@ -73,6 +73,12 @@ async def messagebird_lookup(request):
     assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
     if '447888888888' in request.path:
         return json_response({})
+    elif '447777777777' in request.path:
+        return json_response({
+            'hlr': {
+                'status': 'active',
+            }
+        })
     return json_response({
         'hlr': {
             'status': 'active',
