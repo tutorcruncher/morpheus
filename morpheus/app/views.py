@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import re
+from dataclasses import asdict
 from html import escape
 from itertools import groupby
 from operator import itemgetter
@@ -18,7 +19,6 @@ from aiohttp_jinja2 import template
 from arq.utils import truncate
 from buildpg import Func, Var
 from buildpg.clauses import Select, Where
-from dataclasses import asdict
 from markupsafe import Markup
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
@@ -35,7 +35,7 @@ logger = logging.getLogger('morpheus.web')
 @template('index.jinja')
 async def index(request):
     settings = request.app['settings']
-    return {k: escape(v) for k, v in settings.dict(include=('commit', 'release_date')).items()}
+    return {k: escape(v) for k, v in settings.dict(include={'commit', 'release_date'}).items()}
 
 
 class ClickRedirectView(TemplateView):

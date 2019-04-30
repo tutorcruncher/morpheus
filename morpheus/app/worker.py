@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from itertools import chain
@@ -17,7 +18,6 @@ from arq import Actor, BaseWorker, Drain, concurrent
 from arq.utils import to_unix_ms
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
-from dataclasses import asdict, dataclass
 from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
                           number_type)
 from phonenumbers import parse as parse_number

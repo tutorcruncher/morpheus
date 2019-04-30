@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 from asyncio import shield
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import update_wrapper
 from pathlib import Path
@@ -15,7 +16,6 @@ import ujson
 from aiohttp.hdrs import METH_GET, METH_HEAD, METH_OPTIONS
 from aiohttp.web import Application, HTTPClientError, Request, Response
 from aiohttp_jinja2 import render_template
-from dataclasses import dataclass
 from markupsafe import Markup
 from pydantic import BaseModel, ValidationError
 from pydantic.json import pydantic_encoder
