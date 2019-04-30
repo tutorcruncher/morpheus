@@ -35,7 +35,7 @@ logger = logging.getLogger('morpheus.web')
 @template('index.jinja')
 async def index(request):
     settings = request.app['settings']
-    return {k: escape(v) for k, v in settings.dict(include=('commit', 'release_date')).items()}
+    return {k: escape(v) for k, v in settings.dict(include={'commit', 'release_date'}).items()}
 
 
 class ClickRedirectView(TemplateView):
