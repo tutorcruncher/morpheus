@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import re
+from dataclasses import asdict
 from html import escape
 from itertools import groupby
 from operator import itemgetter
@@ -18,7 +19,6 @@ from aiohttp_jinja2 import template
 from arq.utils import truncate
 from buildpg import Func, Var
 from buildpg.clauses import Select, Where
-from dataclasses import asdict
 from markupsafe import Markup
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter

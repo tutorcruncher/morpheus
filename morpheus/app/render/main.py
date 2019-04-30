@@ -2,12 +2,12 @@ import logging
 import re
 import secrets
 from base64 import urlsafe_b64encode
+from dataclasses import dataclass
 from typing import Dict
 
 import chevron
 import sass
 from chevron import ChevronError
-from dataclasses import dataclass
 from misaka import HtmlRenderer, Markdown
 
 markdown = Markdown(HtmlRenderer(flags=['hard-wrap']), extensions=['no-intra-emphasis'])

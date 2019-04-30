@@ -1,11 +1,11 @@
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from typing import Callable, Union
 
 import asyncpg
 from async_timeout import timeout
-from dataclasses import dataclass
 
 from .models import MessageStatus, SendMethod
 from .settings import Settings
