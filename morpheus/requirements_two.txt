@@ -1,5 +1,5 @@
 aiohttp==3.5.4
-aiohttp-jinja2==1.1.0
+aiohttp-jinja2==1.1.1
 aioredis==1.2.0
 arq==0.15
 buildpg==0.1
