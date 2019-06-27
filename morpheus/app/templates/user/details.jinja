@@ -36,12 +36,12 @@
 
   <h3>Events</h3>
   {% if events %}
-    <div class="panel-group events" id="morpheus-accordion">
+    <div class="events" id="morpheus-accordion">
       {% for event in events %}
-        <div class="panel panel-default">
-          <div class="panel-heading">
-            <h4 class="panel-title">
-              <a role="button" data-toggle="collapse" data-parent="#morpheus-accordion" href="#m-event-{{ loop.index }}">
+        <div class="card card-default">
+          <div class="card-header">
+            <h4 class="card-title">
+              <a role="button" data-toggle="collapse" href="#m-event-{{ loop.index }}">
                 {{ event.status }} &bull;
                 {%- if event.datetime %} <span class="datetime">{{ event.datetime }}</span>
                 {%- else %} ...
@@ -49,8 +49,8 @@
               </a>
             </h4>
           </div>
-          <div id="m-event-{{ loop.index }}" class="panel-collapse collapse">
-            <div class="panel-body">
+          <div id="m-event-{{ loop.index }}" class="card-collapse collapse" data-parent="#morpheus-accordion">
+            <div class="card-body">
               <pre><code class="JSON">{{ event.details }}</code></pre>
             </div>
           </div>
