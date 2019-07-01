@@ -10,7 +10,7 @@ ipython==7.6.0
 jinja2==2.10.1
 misaka==2.1.1
 msgpack-python==0.5.6
-phonenumbers==8.10.13
+phonenumbers==8.10.14
 pydantic[email]==0.29
 pytz==2019.1
 raven==6.10.0
