@@ -1,4 +1,4 @@
-FROM python:3.6-alpine
+FROM python:3.7-alpine
 
 RUN apk --update --no-cache add gcc g++ musl-dev zlib-dev libuv libffi-dev make \
  && rm -rf /var/cache/apk/*
