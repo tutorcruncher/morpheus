@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python3.7
 import asyncio
 import logging
 from time import sleep
@@ -120,14 +120,11 @@ def postgres_patch(live, patch):
 
 
 EXEC_LINES = [
-    'import asyncio, os, re, sys',
+    'import os, re, sys',
     'from datetime import datetime, timedelta, timezone',
     'from pprint import pprint as pp',
     '',
     'from app.settings import Settings',
-    '',
-    'loop = asyncio.get_event_loop()',
-    'await_ = loop.run_until_complete',
 ]
 EXEC_LINES += (
     ['print("\\n    Python {v.major}.{v.minor}.{v.micro}\\n".format(v=sys.version_info))'] +

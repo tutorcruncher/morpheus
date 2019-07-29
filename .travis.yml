@@ -1,3 +1,6 @@
+os: linux
+dist: xenial
+sudo: required
 language: python
 
 addons:
@@ -11,7 +14,7 @@ services:
 cache: pip
 
 python:
-- '3.6'
+- '3.7'
 
 install:
 - make install
@@ -36,4 +39,4 @@ deploy:
   skip_upload_docs: true
   on:
     tags: true
-    python: 3.6
+    python: 3.7

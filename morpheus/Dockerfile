@@ -1,14 +1,31 @@
-FROM python:3.6-alpine
+# ===============================================
+# python build stage
+FROM python:3.7-slim as build
 
-RUN apk --update --no-cache add gcc g++ musl-dev zlib-dev libuv libffi-dev make \
- && rm -rf /var/cache/apk/*
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc python-dev
 
-# having a seperate file for packages which are slow to install speeds up some builts a lot
-ADD ./requirements_one.txt /home/root/requirements_one.txt
-RUN pip install -r /home/root/requirements_one.txt
+RUN pip install -U pip setuptools
+ADD ./requirements.txt /home/root/requirements.txt
+RUN pip install -r /home/root/requirements.txt
 
-ADD ./requirements_two.txt /home/root/requirements_two.txt
-RUN pip install -r /home/root/requirements_two.txt
+# get rid of unnecessary files to keep the size of site-packages and the final image down
+RUN find /usr \
+    -name '*.py[codxi]' -o \
+    -name '*.pxd' -o \
+    -name '*.c' -o \
+    -name '*.h' -o \
+    -name '*.txt' | xargs rm
+RUN find /usr -name '__pycache__' -delete
+RUN find /usr -name '*.dist-info'  | xargs rm -r
+
+# ===============================================
+# final image
+FROM python:3.7-slim
+
+#COPY --from=build /lib/* /lib/
+COPY --from=build /usr/lib/* /usr/lib/
+COPY --from=build /usr/local/lib/python3.7/site-packages /usr/local/lib/python3.7/site-packages
 
 ADD ./app /home/root/app
 ADD ./run.py /home/root/run.py

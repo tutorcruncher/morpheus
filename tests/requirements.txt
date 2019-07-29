@@ -1,11 +1,11 @@
 attrs==19.1.0
 coverage==4.5.3
-docutils==0.14
-flake8==3.7.7
+docutils==0.15
+flake8==3.7.8
 isort==4.3.21
 pycodestyle==2.5.0
 pyflakes==2.1.1
-pytest==5.0.0
+pytest==5.0.1
 pytest-aiohttp==0.3.0
 pytest-cov==2.7.1
 pytest-isort==0.3.1
