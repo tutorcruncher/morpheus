@@ -104,7 +104,10 @@ async def app_startup(app):
 
 
 async def app_cleanup(app):
-    await asyncio.gather(app['pg'].close(), app['redis'].close(), app['morpheus_api'].close(), app['mandrill'].close())
+    app['redis'].close()
+    await asyncio.gather(
+        app['pg'].close(), app['redis'].wait_closed(), app['morpheus_api'].close(), app['mandrill'].close()
+    )
 
 
 def create_app(loop, settings: Settings = None):

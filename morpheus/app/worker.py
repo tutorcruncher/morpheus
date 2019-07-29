@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import chevron
-import msgpack
 from aiohttp import ClientConnectionError, ClientSession
 from arq import Retry
 from arq.utils import to_unix_ms
@@ -34,6 +33,7 @@ from ua_parser.user_agent_parser import Parse as ParseUserAgent
 from .ext import ApiError, Mandrill, MessageBird
 from .models import (
     THIS_DIR,
+    AttachmentModel,
     BaseWebhook,
     EmailRecipientModel,
     EmailSendMethod,
@@ -53,6 +53,14 @@ MOBILE_NUMBER_TYPES = PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBI
 ONE_DAY = 86400
 ONE_YEAR = ONE_DAY * 365
 STYLES_SASS = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
+
+
+worker_functions = []
+
+
+def worker_function(f):
+    worker_functions.append(f)
+    return f
 
 
 @dataclass
@@ -140,6 +148,7 @@ async def shutdown(ctx):
 email_retrying = [5, 10, 60, 600, 1800, 3600]
 
 
+@worker_function
 async def send_email(ctx, group_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
     s = SendEmail(ctx, group_id, recipient, m)
     return await s.run()
@@ -154,7 +163,7 @@ class SendEmail:
         self.recipient: EmailRecipientModel = recipient
         self.group_id = group_id
         self.m: EmailSendModel = m
-        self.tags = list(set(self.recipient.tags + self.m.tags))
+        self.tags = list(set(self.recipient.tags + self.m.tags + [self.m.uid.hex]))
 
     async def run(self):
         if self.ctx['job_try'] >= len(email_retrying):
@@ -162,11 +171,11 @@ class SendEmail:
             await self._store_email_failed(MessageStatus.send_request_failed, 'upstream error')
             return
 
-        context = dict(**self.m.context, **self.recipient.context)
+        context = dict(self.m.context, **self.recipient.context)
         if 'styles__sass' not in context and re.search(r'\{\{\{ *styles *\}\}\}', self.m.main_template):
             context['styles__sass'] = STYLES_SASS
 
-        headers = dict(**self.m.headers, **self.recipient.headers)
+        headers = dict(self.m.headers, **self.recipient.headers)
 
         email_info: EmailInfo = await self._render_email(context, headers)
         if not email_info:
@@ -200,7 +209,7 @@ class SendEmail:
                 track_clicks=False,
                 auto_text=True,
                 view_content_link=False,
-                signing_domain=self.m.from_address.email[j.from_email.index('@') + 1 :],
+                signing_domain=self.m.from_address.email[self.m.from_address.email.index('@') + 1 :],
                 subaccount=self.m.subaccount,
                 tags=self.tags,
                 inline_css=True,
@@ -279,20 +288,18 @@ class SendEmail:
     async def _generate_base64_pdf(self, pdf_attachments):
         headers = dict(pdf_page_size='A4', pdf_zoom='1.25', pdf_margin_left='8mm', pdf_margin_right='8mm')
         for a in pdf_attachments:
-            async with self.ctx['session'].get(self.settings.pdf_generation_url, data=a['html'], headers=headers) as r:
+            async with self.ctx['session'].get(self.settings.pdf_generation_url, data=a.html, headers=headers) as r:
                 if r.status == 200:
                     pdf_content = await r.read()
-                    yield dict(type='application/pdf', name=a['name'], content=base64.b64encode(pdf_content).decode())
+                    yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
                 else:
                     data = await r.text()
                     main_logger.warning('error generating pdf %s, data: %s', r.status, data)
 
-    async def _generate_base64(self, attachments):
+    async def _generate_base64(self, attachments: List[AttachmentModel]):
         for attachment in attachments:
             yield dict(
-                name=attachment['name'],
-                type=attachment['mime_type'],
-                content=base64.b64encode(attachment['content']).decode(),
+                name=attachment.name, type=attachment.mime_type, content=base64.b64encode(attachment.content).decode()
             )
 
     async def _store_email(self, external_id, send_ts, email_info: EmailInfo):
@@ -310,7 +317,7 @@ class SendEmail:
             body=email_info.html_body,
         )
         attachments = [
-            f'{a.get("id") or ""}::{a["name"]}'
+            f'{getattr(a, "id", None) or ""}::{a.name}'
             for a in chain(self.recipient.pdf_attachments, self.recipient.attachments)
         ]
         if attachments:
@@ -616,88 +623,90 @@ class SMS:
                 or 0
             )
 
-    # @concurrent(Actor.LOW_QUEUE)
-    async def update_mandrill_webhooks(self, events):
-        mandrill_webhook = MandrillWebhook(events=events)
-        statuses = {}
-        for m in mandrill_webhook.events:
-            status = await self.update_message_status(SendMethod.email_mandrill, m, log_each=False)
-            if status in statuses:
-                statuses[status] += 1
-            else:
-                statuses[status] = 1
-        main_logger.info(
-            'updating %d messages: %s', len(mandrill_webhook.events), ' '.join(f'{k}={v}' for k, v in statuses.items())
+
+@worker_function
+async def update_mandrill_webhooks(ctx, events):
+    mandrill_webhook = MandrillWebhook(events=events)
+    statuses = {}
+    for m in mandrill_webhook.events:
+        status = await update_message_status(ctx, SendMethod.email_mandrill, m, log_each=False)
+        if status in statuses:
+            statuses[status] += 1
+        else:
+            statuses[status] = 1
+    main_logger.info(
+        'updating %d messages: %s', len(mandrill_webhook.events), ' '.join(f'{k}={v}' for k, v in statuses.items())
+    )
+    return len(mandrill_webhook.events)
+
+
+@worker_function
+async def store_click(ctx, *, link_id, ip, ts, user_agent):
+    cache_key = f'click-{link_id}-{ip}'
+    with await ctx['redis'] as redis:
+        v = await redis.incr(cache_key)
+        if v > 1:
+            return 'recently_clicked'
+        await redis.expire(cache_key, 60)
+
+    async with ctx['pg'].acquire() as conn:
+        message_id, target = await conn.fetchrow('select message_id, url from links where id=$1', link_id)
+        extra = {'target': target, 'ip': ip, 'user_agent': user_agent}
+        if user_agent:
+            ua_dict = ParseUserAgent(user_agent)
+            platform = ua_dict['device']['family']
+            if platform in {'Other', None}:
+                platform = ua_dict['os']['family']
+            extra['user_agent_display'] = (
+                ('{user_agent[family]} {user_agent[major]} on ' '{platform}')
+                .format(platform=platform, **ua_dict)
+                .strip(' ')
+            )
+
+        ts = parse_datetime(ts)
+        status = 'click'
+        await conn.execute_b(
+            'insert into events (:values__names) values :values',
+            values=Values(message_id=message_id, status=status, ts=ts, extra=json.dumps(extra)),
         )
-        return len(mandrill_webhook.events)
 
-    # @concurrent
-    async def store_click(self, *, link_id, ip, ts, user_agent):
-        cache_key = f'click-{link_id}-{ip}'
-        redis_pool = await self.get_redis()
-        with await redis_pool as redis:
-            v = await redis.incr(cache_key)
-            if v > 1:
-                return 'recently_clicked'
-            await redis.expire(cache_key, 60)
 
-        async with self.pg.acquire() as conn:
-            message_id, target = await conn.fetchrow('select message_id, url from links where id=$1', link_id)
-            extra = {'target': target, 'ip': ip, 'user_agent': user_agent}
-            if user_agent:
-                ua_dict = ParseUserAgent(user_agent)
-                platform = ua_dict['device']['family']
-                if platform in {'Other', None}:
-                    platform = ua_dict['os']['family']
-                extra['user_agent_display'] = (
-                    ('{user_agent[family]} {user_agent[major]} on ' '{platform}')
-                    .format(platform=platform, **ua_dict)
-                    .strip(' ')
-                )
-
-            ts = parse_datetime(ts)
-            status = 'click'
-            await conn.execute_b(
-                'insert into events (:values__names) values :values',
-                values=Values(message_id=message_id, status=status, ts=ts, extra=json.dumps(extra)),
+@worker_function
+async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, log_each=True) -> UpdateStatus:
+    h = hashlib.md5(f'{m.message_id}-{to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
+    ref = f'event-{h.hexdigest()}'
+    with await ctx['redis'] as redis:
+        v = await redis.incr(ref)
+        if v > 1:
+            log_each and main_logger.info(
+                'event already exists %s, ts: %s, ' 'status: %s. skipped', m.message_id, m.ts, m.status
             )
+            return UpdateStatus.duplicate
+        await redis.expire(ref, 86400)
 
-    async def update_message_status(self, send_method: SendMethod, m: BaseWebhook, log_each=True) -> UpdateStatus:
-        h = hashlib.md5(f'{m.message_id}-{to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
-        ref = f'event-{h.hexdigest()}'
-        redis_pool = await self.get_redis()
-        with await redis_pool as redis:
-            v = await redis.incr(ref)
-            if v > 1:
-                log_each and main_logger.info(
-                    'event already exists %s, ts: %s, ' 'status: %s. skipped', m.message_id, m.ts, m.status
-                )
-                return UpdateStatus.duplicate
-            await redis.expire(ref, 86400)
+    async with ctx['pg'].acquire() as conn:
+        message_id = await conn.fetchval(
+            """
+            select m.id from messages m
+            join message_groups j on m.group_id = j.id
+            where j.method = $1 and m.external_id = $2
+            """,
+            send_method,
+            m.message_id,
+        )
+        if not message_id:
+            return UpdateStatus.missing
 
-        async with self.pg.acquire() as conn:
-            message_id = await conn.fetchval(
-                """
-                select m.id from messages m
-                join message_groups j on m.group_id = j.id
-                where j.method = $1 and m.external_id = $2
-                """,
-                send_method,
-                m.message_id,
-            )
-            if not message_id:
-                return UpdateStatus.missing
+        if not m.ts.tzinfo:
+            m.ts = m.ts.replace(tzinfo=timezone.utc)
 
-            if not m.ts.tzinfo:
-                m.ts = m.ts.replace(tzinfo=timezone.utc)
+        log_each and main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
-            log_each and main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
-
-            await conn.execute_b(
-                'insert into events (:values__names) values :values',
-                values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
-            )
-            return UpdateStatus.added
+        await conn.execute_b(
+            'insert into events (:values__names) values :values',
+            values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
+        )
+        return UpdateStatus.added
 
 
 def utcnow():
@@ -706,6 +715,6 @@ def utcnow():
 
 class WorkerSettings:
     max_jobs = 4
-    functions = [send_email]
+    functions = worker_functions
     on_startup = startup
     on_shutdown = shutdown

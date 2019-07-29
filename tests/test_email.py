@@ -14,8 +14,8 @@ from morpheus.app.ext import ApiError
 from morpheus.app.main import create_app, get_mandrill_webhook_key
 
 
-async def test_send_email(cli, tmpdir):
-    uuid = str(uuid4())
+async def test_send_email(cli, worker, tmpdir):
+    uuid = uuid4().hex
     data = {
         'uid': uuid,
         'company_code': 'foobar',
@@ -35,6 +35,7 @@ async def test_send_email(cli, tmpdir):
     }
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(uuid + '-foobarexampleorg.txt').read()
     assert '\nsubject: test email Apple\n' in msg_file
@@ -47,8 +48,8 @@ async def test_send_email(cli, tmpdir):
     assert set(data['tags']) == {uuid, 'foobar'}
 
 
-async def test_webhook(cli, send_email, db_conn):
-    uuid = str(uuid4())
+async def test_webhook(cli, send_email, db_conn, worker):
+    uuid = uuid4().hex
     message_id = await send_email(uid=uuid)
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', message_id)
@@ -61,6 +62,7 @@ async def test_webhook(cli, send_email, db_conn):
     data = {'ts': int(2e9), 'event': 'open', '_id': message_id, 'foobar': ['hello', 'world']}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', message_id)
     assert message['status'] == 'open'
@@ -82,7 +84,7 @@ async def test_webhook(cli, send_email, db_conn):
     assert extra['opens'] is None
 
 
-async def test_webhook_old(cli, send_email, db_conn):
+async def test_webhook_old(cli, send_email, db_conn, worker):
     msg_id = await send_email()
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'send'
@@ -92,6 +94,7 @@ async def test_webhook_old(cli, send_email, db_conn):
     data = {'ts': int(1.4e9), 'event': 'open', '_id': msg_id}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'send'
@@ -100,7 +103,7 @@ async def test_webhook_old(cli, send_email, db_conn):
     assert message['update_ts'] == first_update_ts
 
 
-async def test_webhook_repeat(cli, send_email, db_conn):
+async def test_webhook_repeat(cli, send_email, db_conn, worker):
     msg_id = await send_email()
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'send'
@@ -113,6 +116,7 @@ async def test_webhook_repeat(cli, send_email, db_conn):
     data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id, 'user_agent': 'xx'}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 5
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'open'
@@ -172,7 +176,7 @@ async def test_example_email_address(send_email, db_conn):
     assert m['status'] == 'send'
 
 
-async def test_mandrill_webhook(cli, send_email, db_conn):
+async def test_mandrill_webhook(cli, send_email, db_conn, worker):
     await send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     assert 1 == await db_conn.fetchval('select count(*) from messages')
 
@@ -194,6 +198,7 @@ async def test_mandrill_webhook(cli, send_email, db_conn):
     )
     r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     events = await db_conn.fetch('select * from events')
     assert len(events) == 1
@@ -234,8 +239,8 @@ async def test_mandrill_send_bad_template(cli, send_email, db_conn):
     assert 'render_failed' == await db_conn.fetchval('select status from messages')
 
 
-async def test_send_email_headers(cli, tmpdir):
-    uid = str(uuid4())
+async def test_send_email_headers(cli, tmpdir, worker):
+    uid = uuid4().hex
     data = {
         'uid': uid,
         'company_code': 'foobar',
@@ -255,6 +260,8 @@ async def test_send_email_headers(cli, tmpdir):
     }
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 2
+
     assert len(tmpdir.listdir()) == 2
     msg_file = tmpdir.join(f'{uid}-foobarexampleorg.txt').read()
     assert '<p>test email Apple Banana Carrot.</p>\n' in msg_file
@@ -270,7 +277,7 @@ async def test_send_email_headers(cli, tmpdir):
 
 
 async def test_send_unsub_context(send_email, tmpdir):
-    uid = str(uuid4())
+    uid = uuid4().hex
     await send_email(
         uid=uid,
         context={
@@ -435,9 +442,9 @@ async def test_send_md_options(send_email, tmpdir):
     assert '<p>we are_testing_emphasis <strong>bold</strong><br>\nnewline</p>' in msg_file
 
 
-async def test_standard_sass(cli, tmpdir):
+async def test_standard_sass(cli, tmpdir, worker):
     data = dict(
-        uid=str(uuid4()),
+        uid=uuid4().hex,
         company_code='foobar',
         from_address='Sender Name <sender@example.org>',
         method='email-test',
@@ -447,6 +454,7 @@ async def test_standard_sass(cli, tmpdir):
     )
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201
+    assert await worker.run_check() == 1
     message_id = data['uid'] + '-foobartestingcom'
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -722,7 +730,7 @@ async def send_with_link(send_email, tmpdir):
     return token
 
 
-async def test_link_shortening(send_email, tmpdir, cli, db_conn):
+async def test_link_shortening(send_email, tmpdir, cli, db_conn, worker):
     token = await send_with_link(send_email, tmpdir)
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -745,6 +753,7 @@ async def test_link_shortening(send_email, tmpdir, cli, db_conn):
     )
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'https://www.foobar.com'
+    assert await worker.run_check() == 2
 
     m_status = await db_conn.fetchval('select status from messages where id=$1', m['id'])
     assert m_status == 'click'
@@ -779,10 +788,11 @@ async def test_link_shortening_wrong_url_missing(send_email, tmpdir, cli):
     assert r.headers['location'] == 'different'
 
 
-async def test_link_shortening_repeat(send_email, tmpdir, cli, db_conn):
+async def test_link_shortening_repeat(send_email, tmpdir, cli, db_conn, worker):
     token = await send_with_link(send_email, tmpdir)
     r = await cli.get('/l' + token, allow_redirects=False)
     assert r.status == 307, await r.text()
+    assert await worker.run_check() == 2
     assert r.headers['location'] == 'https://www.foobar.com'
     assert 1 == await db_conn.fetchval('select count(*) from events')
 

@@ -71,8 +71,9 @@ class ClickRedirectView(TemplateView):
                 ts = time()
 
             link_id, url = link
-            await self.sender.store_click(
-                link_id=link_id, ip=ip_address, user_agent=request.headers.get('User-Agent'), ts=ts
+
+            await request.app['redis'].enqueue_job(
+                'store_click', link_id=link_id, ip=ip_address, user_agent=request.headers.get('User-Agent'), ts=ts
             )
             if arg_url and arg_url != url:
                 logger.warning('db url does not match arg url: %r !+ %r', url, arg_url)
@@ -95,7 +96,6 @@ class EmailSendView(ServiceView):
             await redis.expire(group_key, 86400)
 
         logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
-        m.tags.append(m.uid.hex)
         group_id = await self.app['pg'].fetchval_b(
             'insert into message_groups (:values__names) values :values returning id',
             values=Values(
@@ -160,7 +160,7 @@ class TestWebhookView(View):
 
     async def call(self, request):
         m = await self.request_data(MandrillSingleWebhook)
-        await self.sender.update_message_status(SendMethod.email_test, m)
+        await request.app['redis'].enqueue_job('update_message_status', SendMethod.email_test, m)
         return PreResponse(text='message status updated\n')
 
 
@@ -190,7 +190,7 @@ class MandrillWebhookView(View):
         except ValueError as e:
             raise JsonErrors.HTTPBadRequest(f'invalid json data: {e}')
 
-        await self.sender.update_mandrill_webhooks(events)
+        await request.app['redis'].enqueue_job('update_mandrill_webhooks', events)
         return PreResponse(text='message status updated\n')
 
 

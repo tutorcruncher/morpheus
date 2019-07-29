@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from arq.connections import RedisSettings
-from pydantic import BaseSettings, NoneStr, PyObject, validator
+from pydantic import BaseSettings, NoneStr, validator
 
 THIS_DIR = Path(__file__).parent
 BASE_DIR = THIS_DIR.parent
