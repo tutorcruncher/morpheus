@@ -25,8 +25,15 @@ from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 
 from .ext import Mandrill
-from .models import (EmailSendModel, MandrillSingleWebhook, MessageBirdWebHook, SendMethod, SmsNumbersModel,
-                     SmsSendModel, SubaccountModel)
+from .models import (
+    EmailSendModel,
+    MandrillSingleWebhook,
+    MessageBirdWebHook,
+    SendMethod,
+    SmsNumbersModel,
+    SmsSendModel,
+    SubaccountModel,
+)
 from .utils import AdminView, AuthView, JsonErrors, PreResponse, ServiceView, TemplateView, UserView, View
 
 logger = logging.getLogger('morpheus.web')
@@ -65,10 +72,7 @@ class ClickRedirectView(TemplateView):
 
             link_id, url = link
             await self.sender.store_click(
-                link_id=link_id,
-                ip=ip_address,
-                user_agent=request.headers.get('User-Agent'),
-                ts=ts,
+                link_id=link_id, ip=ip_address, user_agent=request.headers.get('User-Agent'), ts=ts
             )
             if arg_url and arg_url != url:
                 logger.warning('db url does not match arg url: %r !+ %r', url, arg_url)
@@ -77,10 +81,7 @@ class ClickRedirectView(TemplateView):
             logger.warning('no url found, using arg url "%s"', arg_url)
             raise HTTPTemporaryRedirect(location=arg_url)
         else:
-            return dict(
-                url=request.url,
-                http_status_=404,
-            )
+            return dict(url=request.url, http_status_=404)
 
 
 class EmailSendView(ServiceView):
@@ -94,10 +95,7 @@ class EmailSendView(ServiceView):
                 raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
             recipients_key = f'recipients:{m.uid}'
             data = m.dict(exclude={'recipients', 'from_address'})
-            data.update(
-                from_email=m.from_address.email,
-                from_name=m.from_address.name,
-            )
+            data.update(from_email=m.from_address.email, from_name=m.from_address.name)
             pipe = redis.pipeline()
             pipe.lpush(recipients_key, *[msgpack.packb(r.dict(), use_bin_type=True) for r in m.recipients])
             pipe.expire(group_key, 86400)
@@ -122,10 +120,7 @@ class SmsSendView(ServiceView):
                 spend = await self.sender.check_sms_limit(m.company_code)
                 if spend >= m.cost_limit:
                     return self.json_response(
-                        status='send limit exceeded',
-                        cost_limit=m.cost_limit,
-                        spend=spend,
-                        status_=402,
+                        status='send limit exceeded', cost_limit=m.cost_limit, spend=spend, status_=402
                     )
             recipients_key = f'recipients:{m.uid}'
             data = m.dict(exclude={'recipients'})
@@ -136,11 +131,7 @@ class SmsSendView(ServiceView):
             await pipe.execute()
             await self.sender.send_smss(recipients_key, **data)
             logger.info('%s sending %d SMSs', m.company_code, len(m.recipients))
-        return self.json_response(
-            status='enqueued',
-            spend=spend,
-            status_=201,
-        )
+        return self.json_response(status='enqueued', spend=spend, status_=201)
 
 
 class SmsValidateView(ServiceView):
@@ -180,7 +171,7 @@ class MandrillWebhookView(View):
             hmac.new(
                 self.app['webhook_auth_key'],
                 msg=(self.app['mandrill_webhook_url'] + 'mandrill_events' + event_data).encode(),
-                digestmod=hashlib.sha1
+                digestmod=hashlib.sha1,
             ).digest()
         )
         sig_given = request.headers.get('X-Mandrill-Signature', '<missing>').encode()
@@ -199,6 +190,7 @@ class MessageBirdWebhookView(View):
     """
     Update messages sent with message bird
     """
+
     async def call(self, request):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
@@ -210,6 +202,7 @@ class CreateSubaccountView(ServiceView):
     """
     Create a new subaccount with mandrill for new sending company
     """
+
     async def call(self, request) -> PreResponse:
         method = request.match_info['method']
         if method != SendMethod.email_mandrill:
@@ -219,11 +212,7 @@ class CreateSubaccountView(ServiceView):
         mandrill: Mandrill = self.app['mandrill']
 
         r = await mandrill.post(
-            'subaccounts/add.json',
-            id=m.company_code,
-            name=m.company_name,
-            allowed_statuses=(200, 500),
-            timeout_=12,
+            'subaccounts/add.json', id=m.company_code, name=m.company_name, allowed_statuses=(200, 500), timeout_=12
         )
         data = await r.json()
         if r.status == 200:
@@ -237,11 +226,16 @@ class CreateSubaccountView(ServiceView):
         data = await r.json()
         total_sent = data['sent_total']
         if total_sent > 100:
-            return PreResponse(text=f'subaccount already exists with {total_sent} emails sent, '
-                               f'reuse of subaccount id not permitted\n', status=409)
+            return PreResponse(
+                text=f'subaccount already exists with {total_sent} emails sent, '
+                f'reuse of subaccount id not permitted\n',
+                status=409,
+            )
         else:
-            return PreResponse(text=f'subaccount already exists with only {total_sent} emails sent, '
-                               f'reuse of subaccount id permitted\n')
+            return PreResponse(
+                text=f'subaccount already exists with only {total_sent} emails sent, '
+                f'reuse of subaccount id permitted\n'
+            )
 
 
 class _UserMessagesView(UserView):
@@ -287,12 +281,12 @@ class _UserMessagesView(UserView):
     async def query(self, *, message_id=None, tags=None, query=None):
         where = Var('j.method') == self.request.match_info['method']
         if self.session.company != '__all__':
-            where &= (Var('j.company') == self.session.company)
+            where &= Var('j.company') == self.session.company
 
         if message_id:
-            where &= (Var('m.id') == message_id)
+            where &= Var('m.id') == message_id
         elif tags:
-            where &= (Var('tags').contains(tags))
+            where &= Var('tags').contains(tags)
         elif query:
             return await self.query_general(where, query)
 
@@ -326,10 +320,7 @@ class _UserMessagesView(UserView):
                 where=where,
                 offset=self.get_arg_int('from', 0) if self.offset else 0,
             )
-        return {
-            'count': count,
-            'items': [dict(r) for r in items],
-        }
+        return {'count': count, 'items': [dict(r) for r in items]}
 
     async def query_general(self, where, query):
         async with self.app['pg'].acquire() as conn:
@@ -348,10 +339,7 @@ class _UserMessagesView(UserView):
                 where=where,
                 offset=self.get_arg_int('from', 0) if self.offset else 0,
             )
-        return {
-            'count': len(items),
-            'items': [dict(r) for r in items],
-        }
+        return {'count': len(items), 'items': [dict(r) for r in items]}
 
 
 class UserMessagesJsonView(_UserMessagesView):
@@ -386,7 +374,7 @@ class UserMessagesJsonView(_UserMessagesView):
         data = await self.query(
             message_id=self.get_arg_int('message_id'),
             tags=request.query.getall('tags', None),
-            query=request.query.get('q')
+            query=request.query.get('q'),
         )
         if self.sms_method and self.session.company != '__all__':
             data['spend'] = await self.sender.check_sms_limit(self.session.company)
@@ -436,10 +424,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
         dst = f'{data["to_first_name"] or ""} {data["to_last_name"] or ""} <{data["to_address"]}>'.strip(' ')
         link = data.get('to_user_link')
         if link:
-            yield 'To', dict(
-                href=link,
-                value=dst,
-            )
+            yield 'To', dict(href=link, value=dst)
         else:
             yield 'To', dst
 
@@ -473,10 +458,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             self.get_dt_tz(),
         )
         for event in events[:50]:
-            data = dict(
-                status=event['status'].title(),
-                datetime=event['ts'],
-            )
+            data = dict(status=event['status'].title(), datetime=event['ts'])
             if event['extra']:
                 data['details'] = Markup(json.dumps(json.loads(event['extra']), indent=2))
             yield data
@@ -486,7 +468,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             yield dict(
                 status=f'{extra} more',
                 datetime=None,
-                details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2))
+                details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2)),
             )
 
 
@@ -494,10 +476,7 @@ class UserMessageListView(TemplateView, _UserMessagesView):
     template = 'user/list.jinja'
 
     async def call(self, request):
-        data = await self.query(
-            tags=request.query.getall('tags', None),
-            query=request.query.get('q', None)
-        )
+        data = await self.query(tags=request.query.getall('tags', None), query=request.query.get('q', None))
         total_sms_spend = None
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
             total_sms_spend = '{:,.3f}'.format(await self.sender.check_sms_limit(self.session.company))
@@ -512,14 +491,12 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             pagination['next'] = dict(
                 href=f'?from={next_offset}',
                 pfrom=next_offset,
-                text=f'{next_offset + 1} - {min(next_offset + size, total)}'
+                text=f'{next_offset + 1} - {min(next_offset + size, total)}',
             )
         if offset:
             previous_offset = offset - size
             pagination['previous'] = dict(
-                href=f'?from={previous_offset}',
-                pfrom=previous_offset,
-                text=f'{previous_offset + 1} - {max(offset, 0)}'
+                href=f'?from={previous_offset}', pfrom=previous_offset, text=f'{previous_offset + 1} - {max(offset, 0)}'
             )
 
         return dict(
@@ -536,14 +513,8 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         for msg in items:
             subject = msg.get('subject') or msg.get('body', '')
             yield [
-                {
-                    'href': msg['id'],
-                    'value': msg['to_address'],
-                },
-                {
-                    'class': 'datetime',
-                    'value': msg['send_ts']
-                },
+                {'href': msg['id'], 'value': msg['to_address']},
+                {'class': 'datetime', 'value': msg['send_ts']},
                 msg['status'].title(),
                 truncate(subject, 40),
             ]
@@ -553,6 +524,7 @@ class UserMessagePreviewView(TemplateView, UserView):
     """
     preview a message
     """
+
     template = 'user/preview.jinja'
 
     async def call(self, request):
@@ -560,7 +532,7 @@ class UserMessagePreviewView(TemplateView, UserView):
         where = (Var('j.method') == method) & (Var('m.id') == int(request.match_info['id']))
 
         if self.session.company != '__all__':
-            where &= (Var('j.company') == self.session.company)
+            where &= Var('j.company') == self.session.company
 
         async with self.app['pg'].acquire() as conn:
             data = await conn.fetchrow_b(
@@ -570,7 +542,7 @@ class UserMessagePreviewView(TemplateView, UserView):
                 join message_groups j on m.group_id = j.id
                 where :where
                 """,
-                where=where
+                where=where,
             )
 
         if not data:
@@ -636,11 +608,12 @@ class UserAggregationView(UserView):
     """
     Aggregated sends and opens over time for an authenticated user
     """
+
     async def call(self, request):
         # TODO allow more filtering here, filter to last X days.
         where = Var('j.method') == self.request.match_info['method']
         if self.session.company != '__all__':
-            where &= (Var('j.company') == self.session.company)
+            where &= Var('j.company') == self.session.company
 
         async with self.app['pg'].acquire() as conn:
             data = await conn.fetchval_b(agg_sql, where=where)
@@ -684,12 +657,7 @@ class AdminListView(AdminView):
         offset = int(self.request.query.get('offset', '0'))
         search = self.request.query.get('search', '')
         tags = self.request.query.get('tags', '')
-        query = {
-            'size': 100,
-            'from': offset,
-            'q': search,
-            'pretty_ts': '1',
-        }
+        query = {'size': 100, 'from': offset, 'q': search, 'pretty_ts': '1'}
         # tags is a list so has to be processed separately
         if tags:
             query['tags'] = tags
@@ -703,30 +671,27 @@ class AdminListView(AdminView):
         for i, message in enumerate(data['items']):
             subject = message.get('subject') or message.get('body', '')[:50]
             score = message.get('score') or None
-            table_body.append([
-                str(i + 1 + offset) if score is None else f'{score:6.3f}',
-                {
-                    'href': self.app.router['admin-get'].url_for(method=method, id=str(message['id'])),
-                    'text': message['to_address'],
-                },
-                message['company'],
-                message['status'],
-                message['send_ts'],
-                message['update_ts'],
-                Markup(f'<span class="subject">{subject}</span>'),
-            ])
+            table_body.append(
+                [
+                    str(i + 1 + offset) if score is None else f'{score:6.3f}',
+                    {
+                        'href': self.app.router['admin-get'].url_for(method=method, id=str(message['id'])),
+                        'text': message['to_address'],
+                    },
+                    message['company'],
+                    message['status'],
+                    message['send_ts'],
+                    message['update_ts'],
+                    Markup(f'<span class="subject">{subject}</span>'),
+                ]
+            )
 
         if len(data['items']) == 100:
             next_offset = offset + 100
-            query = {
-                'method': method,
-                'search': search,
-                'tags': tags,
-                'offset': next_offset,
-            }
+            query = {'method': method, 'search': search, 'tags': tags, 'offset': next_offset}
             next_page = dict(
                 href=self.app.router['admin-list'].url_for().with_query(query),
-                text=f'Next: {next_offset} - {next_offset + 100}'
+                text=f'Next: {next_offset} - {next_offset + 100}',
             )
         else:
             next_page = None
@@ -788,25 +753,19 @@ class RequestStatsView(AuthView):
         data = []
         for k, v in groups.items():
             method, status = k.decode().split(':')
-            v.update(
-                method=method,
-                status=status + 'XX'
-            )
+            v.update(method=method, status=status + 'XX')
             times = v.pop('times', None)
             if times:
                 times = sorted(times)
                 times_count = len(times)
                 v.update(
-                    time_min=times[0],
-                    time_max=times[-1],
-                    time_mean=mean(times),
-                    request_count_interval=times_count,
+                    time_min=times[0], time_max=times[-1], time_mean=mean(times), request_count_interval=times_count
                 )
                 if times_count > 2:
                     v.update(
                         time_stdev=stdev(times),
-                        time_90=times[int(times_count*0.9)],
-                        time_95=times[int(times_count*0.95)],
+                        time_90=times[int(times_count * 0.9)],
+                        time_95=times[int(times_count * 0.95)],
                     )
             data.append(v)
         return ujson.dumps(data).encode()

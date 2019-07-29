@@ -14,15 +14,10 @@ from .dummy_server import create_external_app
 
 
 def pytest_addoption(parser):
-    parser.addoption(
-        '--reuse-db', action='store_true', default=False, help='keep the existing database if it exists'
-    )
+    parser.addoption('--reuse-db', action='store_true', default=False, help='keep the existing database if it exists')
 
 
-pg_settings = dict(
-    pg_dsn='postgres://postgres:waffle@localhost:5432/morpheus_test',
-    pg_name=None,
-)
+pg_settings = dict(pg_dsn='postgres://postgres:waffle@localhost:5432/morpheus_test', pg_name=None)
 
 
 @pytest.fixture(scope='session', name='clean_db')
@@ -91,10 +86,7 @@ async def _fix_cli(loop, test_client, settings, db_conn):
         await app['sender'].shutdown()
 
     app = create_app(loop, settings=settings)
-    app.update(
-        pg=SimplePgPool(db_conn),
-        webhook_auth_key=b'testing'
-    )
+    app.update(pg=SimplePgPool(db_conn), webhook_auth_key=b'testing')
     app.on_startup.append(modify_startup)
     app.on_shutdown.append(shutdown)
     cli = await test_client(app)
@@ -112,10 +104,8 @@ def send_email(cli):
             from_address='Sender Name <sender@example.com>',
             method='email-test',
             subject_template='test message',
-            context={
-                'message': 'this is a test'
-            },
-            recipients=[{'address': 'foobar@testing.com'}]
+            context={'message': 'this is a test'},
+            recipients=[{'address': 'foobar@testing.com'}],
         )
         # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
@@ -125,6 +115,7 @@ def send_email(cli):
             return NotImplemented
         else:
             return re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
+
     return _send_message
 
 
@@ -137,14 +128,13 @@ def send_sms(cli):
             company_code='foobar',
             from_name='FooBar',
             method='sms-test',
-            context={
-                'variable': 'apples'
-            },
-            recipients=[{'number': '07896541236'}]
+            context={'variable': 'apples'},
+            recipients=[{'number': '07896541236'}],
         )
         # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
         r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
         return data['uid'] + '-447896541236'
+
     return _send_message

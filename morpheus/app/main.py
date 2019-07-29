@@ -14,10 +14,27 @@ from .middleware import ErrorLoggingMiddleware, stats_middleware
 from .models import SendMethod
 from .settings import Settings
 from .utils import THIS_DIR
-from .views import (AdminAggregatedView, AdminGetView, AdminListView, ClickRedirectView, CreateSubaccountView,
-                    EmailSendView, MandrillWebhookView, MessageBirdWebhookView, MessageStatsView, RequestStatsView,
-                    SmsSendView, SmsValidateView, TestWebhookView, UserAggregationView, UserMessageDetailView,
-                    UserMessageListView, UserMessagePreviewView, UserMessagesJsonView, index)
+from .views import (
+    AdminAggregatedView,
+    AdminGetView,
+    AdminListView,
+    ClickRedirectView,
+    CreateSubaccountView,
+    EmailSendView,
+    MandrillWebhookView,
+    MessageBirdWebhookView,
+    MessageStatsView,
+    RequestStatsView,
+    SmsSendView,
+    SmsValidateView,
+    TestWebhookView,
+    UserAggregationView,
+    UserMessageDetailView,
+    UserMessageListView,
+    UserMessagePreviewView,
+    UserMessagesJsonView,
+    index,
+)
 
 logger = logging.getLogger('morpheus.main')
 
@@ -46,8 +63,15 @@ async def get_mandrill_webhook_key(app):
                 # infuriatingly this list appears to differ from those the api returns or actually submits in hooks
                 # blacklist and whitelist are skipped since they are "sync events" not "message events"
                 'events': (
-                   'send', 'hard_bounce', 'soft_bounce', 'open', 'click', 'spam', 'unsub', 'reject'
-                   # 'deferral' can't request this.
+                    'send',
+                    'hard_bounce',
+                    'soft_bounce',
+                    'open',
+                    'click',
+                    'spam',
+                    'unsub',
+                    'reject'
+                    # 'deferral' can't request this.
                 ),
             }
             logger.info('about to create webhook entry via API, wait for morpheus API to be up...')
@@ -80,20 +104,14 @@ async def app_startup(app):
 
 
 async def app_cleanup(app):
-    await asyncio.gather(
-        app['pg'].close(),
-        app['sender'].close(),
-        app['morpheus_api'].close(),
-        app['mandrill'].close(),
-    )
+    await asyncio.gather(app['pg'].close(), app['sender'].close(), app['morpheus_api'].close(), app['mandrill'].close())
 
 
 def create_app(loop, settings: Settings = None):
     settings = settings or Settings()
     setup_logging(settings)
     app = Application(
-        client_max_size=1024**2*100,
-        middlewares=(stats_middleware, ErrorLoggingMiddleware().middleware)
+        client_max_size=1024 ** 2 * 100, middlewares=(stats_middleware, ErrorLoggingMiddleware().middleware)
     )
     aiohttp_jinja2.setup(
         app,
@@ -132,8 +150,9 @@ def create_app(loop, settings: Settings = None):
     app.router.add_get('/webhook/messagebird/', MessageBirdWebhookView.view(), name='webhook-messagebird')
 
     app.router.add_get('/user' + methods + 'messages.json', UserMessagesJsonView.view(), name='user-messages')
-    app.router.add_get('/user' + methods + r'message/{id:\d+}.html', UserMessageDetailView.view(),
-                       name='user-message-get')
+    app.router.add_get(
+        '/user' + methods + r'message/{id:\d+}.html', UserMessageDetailView.view(), name='user-message-get'
+    )
     app.router.add_get('/user' + methods + 'messages.html', UserMessageListView.view(), name='user-message-list')
     app.router.add_get('/user' + methods + 'aggregation.json', UserAggregationView.view(), name='user-aggregation')
     app.router.add_get('/user' + methods + r'{id:\d+}/preview/', UserMessagePreviewView.view(), name='user-preview')

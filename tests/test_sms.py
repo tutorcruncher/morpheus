@@ -10,14 +10,7 @@ async def test_send_message(cli, tmpdir):
         'method': 'sms-test',
         'from_name': 'foobar send',
         'main_template': 'this is a message {{ foo }}',
-        'recipients': [
-            {
-                'number': '07891123856',
-                'context': {
-                    'foo': 'bar',
-                }
-            }
-        ]
+        'recipients': [{'number': '07891123856', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -26,8 +19,10 @@ async def test_send_message(cli, tmpdir):
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
-    assert ("to: Number(number='+447891123856', country_code='44', "
-            "number_formatted='+44 7891 123856', descr=None, is_mobile=True)") in msg_file
+    assert (
+        "to: Number(number='+447891123856', country_code='44', "
+        "number_formatted='+44 7891 123856', descr=None, is_mobile=True)"
+    ) in msg_file
     assert '\nfrom_name: foobar send\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
     assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
@@ -41,14 +36,7 @@ async def test_send_message_usa(cli, settings, tmpdir):
         'from_name': 'foobar send',
         'method': 'sms-test',
         'main_template': 'this is a message {{ foo }}',
-        'recipients': [
-            {
-                'number': '+1 818 337 3095',
-                'context': {
-                    'foo': 'bar',
-                }
-            }
-        ]
+        'recipients': [{'number': '+1 818 337 3095', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -57,8 +45,10 @@ async def test_send_message_usa(cli, settings, tmpdir):
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     print(msg_file)
-    assert ("to: Number(number='+18183373095', country_code='1', "
-            "number_formatted='+1 818-337-3095', descr=None, is_mobile=True)") in msg_file
+    assert (
+        "to: Number(number='+18183373095', country_code='1', "
+        "number_formatted='+1 818-337-3095', descr=None, is_mobile=True)"
+    ) in msg_file
     assert f'\nfrom_name: {settings.us_send_number}\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
     assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
@@ -73,7 +63,7 @@ async def test_validate_number(cli, tmpdir):
             345: '+447891123856',
             456: '+44 (0) 207 1128 953',
             567: '+12001230101',  # not possible
-        }
+        },
     }
     r = await cli.get('/validate/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
@@ -86,21 +76,21 @@ async def test_validate_number(cli, tmpdir):
             'country_code': '1',
             'number_formatted': '+1 818-337-3095',
             'descr': 'California, United States',
-            'is_mobile': True
+            'is_mobile': True,
         },
         '345': {
             'number': '+447891123856',
             'country_code': '44',
             'number_formatted': '+44 7891 123856',
             'descr': 'United Kingdom',
-            'is_mobile': True
+            'is_mobile': True,
         },
         '456': {
             'number': '+442071128953',
             'country_code': '44',
             'number_formatted': '+44 20 7112 8953',
             'descr': 'London, United Kingdom',
-            'is_mobile': False
+            'is_mobile': False,
         },
         '567': None,
     } == data
@@ -112,7 +102,7 @@ async def test_repeat_uuid(cli, tmpdir):
         'company_code': 'foobar',
         'method': 'sms-test',
         'main_template': 'this is a message',
-        'recipients': [{'number': '07891123856'}]
+        'recipients': [{'number': '07891123856'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -121,9 +111,7 @@ async def test_repeat_uuid(cli, tmpdir):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 409, await r.text()
     data = await r.json()
-    assert {
-        'message': 'Send group with id "69eb85e8-1504-40aa-94ff-75bb65fd8d73" already exists\n',
-    } == data
+    assert {'message': 'Send group with id "69eb85e8-1504-40aa-94ff-75bb65fd8d73" already exists\n'} == data
 
 
 async def test_invalid_number(cli, tmpdir):
@@ -138,7 +126,7 @@ async def test_invalid_number(cli, tmpdir):
             {'number': '+44 (0) 207 1128 953'},  # not mobile
             {'number': '1 818 337 3095'},  # US mobile or fix
             {'number': '+12001230101'},  # not possible
-        ]
+        ],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -156,7 +144,7 @@ async def test_exceed_cost_limit(cli, tmpdir):
         'cost_limit': 0.1,
         'method': 'sms-test',
         'main_template': 'this is a message',
-        'recipients': [{'number': f'0789112385{i}'} for i in range(4)]
+        'recipients': [{'number': f'0789112385{i}'} for i in range(4)],
     }
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -187,7 +175,7 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
         'company_code': 'foobar',
         'method': 'sms-messagebird',
         'main_template': 'this is a message',
-        'recipients': [{'number': '07801234567'}]
+        'recipients': [{'number': '07801234567'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -203,9 +191,7 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
     data = dict(data, uid=str(uuid4()))
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
-    assert [
-        'POST /messagebird/messages > 201',
-    ] == mock_external.app['request_log']
+    assert ['POST /messagebird/messages > 201'] == mock_external.app['request_log']
 
 
 async def test_messagebird_no_hlr(cli, tmpdir, mock_external):
@@ -214,7 +200,7 @@ async def test_messagebird_no_hlr(cli, tmpdir, mock_external):
         'company_code': 'foobar',
         'method': 'sms-messagebird',
         'main_template': 'this is a message',
-        'recipients': [{'number': '07888888888'}]
+        'recipients': [{'number': '07888888888'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -231,7 +217,7 @@ async def test_messagebird_no_network(cli, tmpdir, mock_external):
         'company_code': 'foobar',
         'method': 'sms-messagebird',
         'main_template': 'this is a message',
-        'recipients': [{'number': '07777777777'}]
+        'recipients': [{'number': '07777777777'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -248,14 +234,7 @@ async def test_messagebird_webhook(cli, db_conn, mock_external):
         'company_code': 'webhook-test',
         'method': 'sms-messagebird',
         'main_template': 'this is a message',
-        'recipients': [
-            {
-                'first_name': 'John',
-                'last_name': 'Doe',
-                'user_link': 4321,
-                'number': '07801234567'
-            }
-        ]
+        'recipients': [{'first_name': 'John', 'last_name': 'Doe', 'user_link': 4321, 'number': '07801234567'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -294,7 +273,7 @@ async def test_failed_render(cli, tmpdir, db_conn):
         'method': 'sms-test',
         'context': {'foo': 'FOO'},
         'main_template': 'this is a message {{ foo }',
-        'recipients': [{'number': '07891123856'}]
+        'recipients': [{'number': '07891123856'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -311,12 +290,7 @@ async def test_link_shortening(cli, tmpdir, db_conn):
         'company_code': 'sms_test_link_shortening',
         'method': 'sms-test',
         'main_template': 'this is a message {{ foo }}',
-        'recipients': [
-            {
-                'number': '07891123856',
-                'context': {'foo': 'http://whatever.com/foo/bar'}
-            }
-        ]
+        'recipients': [{'number': '07891123856', 'context': {'foo': 'http://whatever.com/foo/bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -350,14 +324,7 @@ async def test_send_multi_part(cli, tmpdir):
         'company_code': 'foobar',
         'method': 'sms-test',
         'main_template': 'this is a message {{ foo }}\n' * 10,
-        'recipients': [
-            {
-                'number': '07891123856',
-                'context': {
-                    'foo': 'bar',
-                }
-            }
-        ]
+        'recipients': [{'number': '07891123856', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -376,14 +343,7 @@ async def test_send_too_long(cli, tmpdir):
         'company_code': 'foobar',
         'method': 'sms-test',
         'main_template': 'x' * 1500,
-        'recipients': [
-            {
-                'number': '07891123856',
-                'context': {
-                    'foo': 'bar',
-                }
-            }
-        ]
+        'recipients': [{'number': '07891123856', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()

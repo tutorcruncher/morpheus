@@ -22,11 +22,7 @@ async def test_send_email(cli, tmpdir):
         'from_address': 'Samuel <s@muelcolvin.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
-        'context': {
-            'message__render': '# hello\n\nThis is a **{{ b }}**.\n',
-            'a': 'Apple',
-            'b': f'Banana',
-        },
+        'context': {'message__render': '# hello\n\nThis is a **{{ b }}**.\n', 'a': 'Apple', 'b': f'Banana'},
         'recipients': [
             {
                 'first_name': 'foo',
@@ -35,7 +31,7 @@ async def test_send_email(cli, tmpdir):
                 'address': 'foobar@example.org',
                 'tags': ['foobar'],
             }
-        ]
+        ],
     }
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -62,12 +58,7 @@ async def test_webhook(cli, send_email, db_conn):
     events = await db_conn.fetchval('select count(*) from events')
     assert events == 0
 
-    data = {
-        'ts': int(2e9),
-        'event': 'open',
-        '_id': message_id,
-        'foobar': ['hello', 'world']
-    }
+    data = {'ts': int(2e9), 'event': 'open', '_id': message_id, 'foobar': ['hello', 'world']}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
@@ -84,7 +75,7 @@ async def test_webhook(cli, send_email, db_conn):
             'status': 'open',
             'ts': datetime(2033, 5, 18, 3, 33, 20, tzinfo=timezone.utc),
             'extra': RegexStr('{.*}'),
-        },
+        }
     ]
     extra = json.loads(events[0]['extra'])
     assert extra['diag'] is None
@@ -98,11 +89,7 @@ async def test_webhook_old(cli, send_email, db_conn):
     first_update_ts = message['update_ts']
     events = await db_conn.fetch('select * from events where message_id=$1', message['id'])
     assert len(events) == 0
-    data = {
-        'ts': int(1.4e9),
-        'event': 'open',
-        '_id': msg_id,
-    }
+    data = {'ts': int(1.4e9), 'event': 'open', '_id': msg_id}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
@@ -119,20 +106,11 @@ async def test_webhook_repeat(cli, send_email, db_conn):
     assert message['status'] == 'send'
     events = await db_conn.fetch('select * from events where message_id=$1', message['id'])
     assert len(events) == 0
-    data = {
-        'ts': '2032-06-06T12:10',
-        'event': 'open',
-        '_id': msg_id,
-    }
+    data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id}
     for _ in range(3):
         r = await cli.post('/webhook/test/', json=data)
         assert r.status == 200, await r.text()
-    data = {
-        'ts': '2032-06-06T12:10',
-        'event': 'open',
-        '_id': msg_id,
-        'user_agent': 'xx',
-    }
+    data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id, 'user_agent': 'xx'}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
 
@@ -145,12 +123,7 @@ async def test_webhook_repeat(cli, send_email, db_conn):
 async def test_webhook_missing(cli, send_email, db_conn):
     msg_id = await send_email()
 
-    data = {
-        'ts': int(1e10),
-        'event': 'open',
-        '_id': 'missing',
-        'foobar': ['hello', 'world']
-    }
+    data = {'ts': int(1e10), 'event': 'open', '_id': 'missing', 'foobar': ['hello', 'world']}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
@@ -162,17 +135,12 @@ async def test_webhook_missing(cli, send_email, db_conn):
 async def test_mandrill_send(send_email, db_conn, mock_external):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is None
-    await send_email(
-        method='email-mandrill',
-        recipients=[{'address': 'foobar_a@testing.com'}]
-    )
+    await send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@testing.com'}])
 
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is not None
     assert m['to_address'] == 'foobar_a@testing.com'
-    assert mock_external.app['request_log'] == [
-        'POST /mandrill/messages/send.json > 200',
-    ]
+    assert mock_external.app['request_log'] == ['POST /mandrill/messages/send.json > 200']
 
 
 async def test_send_mandrill_with_other_attachment(send_email, db_conn):
@@ -183,13 +151,11 @@ async def test_send_mandrill_with_other_attachment(send_email, db_conn):
         recipients=[
             {
                 'address': 'foobar_c@testing.com',
-                'attachments': [{
-                    'name': 'calendar.ics',
-                    'content': 'Look this is some test data',
-                    'mime_type': 'text/calendar',
-                }]
+                'attachments': [
+                    {'name': 'calendar.ics', 'content': 'Look this is some test data', 'mime_type': 'text/calendar'}
+                ],
             }
-        ]
+        ],
     )
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobarctestingcom')
     assert m['to_address'] == 'foobar_c@testing.com'
@@ -199,10 +165,7 @@ async def test_send_mandrill_with_other_attachment(send_email, db_conn):
 async def test_example_email_address(send_email, db_conn):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaraexamplecom')
     assert m is None
-    await send_email(
-        method='email-mandrill',
-        recipients=[{'address': 'foobar_a@example.com'}]
-    )
+    await send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@example.com'}])
 
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaraexamplecom')
     assert m['to_address'] == 'foobar_a@example.com'
@@ -210,10 +173,7 @@ async def test_example_email_address(send_email, db_conn):
 
 
 async def test_mandrill_webhook(cli, send_email, db_conn):
-    await send_email(
-        method='email-mandrill',
-        recipients=[{'address': 'testing@example.org'}]
-    )
+    await send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     assert 1 == await db_conn.fetchval('select count(*) from messages')
 
     events = await db_conn.fetch('select * from events')
@@ -225,9 +185,11 @@ async def test_mandrill_webhook(cli, send_email, db_conn):
     sig = base64.b64encode(
         hmac.new(
             b'testing',
-            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
-                 b'"event": "open", "_id": "mandrill-testingexampleorg", "foobar": ["hello", "world"]}]'),
-            digestmod=hashlib.sha1
+            msg=(
+                b'https://None/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
+                b'"event": "open", "_id": "mandrill-testingexampleorg", "foobar": ["hello", "world"]}]'
+            ),
+            digestmod=hashlib.sha1,
         ).digest()
     )
     r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
@@ -241,19 +203,18 @@ async def test_mandrill_webhook(cli, send_email, db_conn):
 
 
 async def test_mandrill_webhook_invalid(cli, send_email, db_conn):
-    await send_email(
-        method='email-mandrill',
-        recipients=[{'address': 'testing@example.org'}]
-    )
+    await send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
     data = {'mandrill_events': json.dumps(messages)}
 
     sig = base64.b64encode(
         hmac.new(
             b'testing',
-            msg=(b'https://None/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
-                 b'"event": "open", "_id": "e587306</div></body><meta name=", "foobar": ["x"]}]'),
-            digestmod=hashlib.sha1
+            msg=(
+                b'https://None/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
+                b'"event": "open", "_id": "e587306</div></body><meta name=", "foobar": ["x"]}]'
+            ),
+            digestmod=hashlib.sha1,
         ).digest()
     )
     r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
@@ -266,9 +227,7 @@ async def test_mandrill_webhook_invalid(cli, send_email, db_conn):
 async def test_mandrill_send_bad_template(cli, send_email, db_conn):
     assert 0 == await db_conn.fetchval('select count(*) from messages')
     await send_email(
-        method='email-mandrill',
-        main_template='{{ foo } test message',
-        recipients=[{'address': 'foobar_b@testing.com'}]
+        method='email-mandrill', main_template='{{ foo } test message', recipients=[{'address': 'foobar_b@testing.com'}]
     )
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -283,34 +242,16 @@ async def test_send_email_headers(cli, tmpdir):
         'from_address': 'Samuel <s@muelcolvin.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
-        'context': {
-            'message__render': 'test email {{ a }} {{ b}} {{ c }}.\n',
-            'a': 'Apple',
-            'b': f'Banana',
-        },
-        'headers': {
-            'Reply-To': 'another@whoever.com',
-            'List-Unsubscribe': '<http://example.org/unsub>'
-        },
+        'context': {'message__render': 'test email {{ a }} {{ b}} {{ c }}.\n', 'a': 'Apple', 'b': f'Banana'},
+        'headers': {'Reply-To': 'another@whoever.com', 'List-Unsubscribe': '<http://example.org/unsub>'},
         'recipients': [
-            {
-                'first_name': 'foo',
-                'last_name': f'bar',
-                'address': f'foobar@example.org',
-                'context': {
-                    'c': 'Carrot',
-                },
-            },
+            {'first_name': 'foo', 'last_name': f'bar', 'address': f'foobar@example.org', 'context': {'c': 'Carrot'}},
             {
                 'address': f'2@example.org',
-                'context': {
-                    'b': 'Banker',
-                },
-                'headers': {
-                    'List-Unsubscribe': '<http://example.org/different>'
-                },
-            }
-        ]
+                'context': {'b': 'Banker'},
+                'headers': {'List-Unsubscribe': '<http://example.org/different>'},
+            },
+        ],
     }
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -334,20 +275,16 @@ async def test_send_unsub_context(send_email, tmpdir):
         uid=uid,
         context={
             'message__render': 'test email {{ unsubscribe_link }}.\n',
-            'unsubscribe_link': 'http://example.org/unsub'
+            'unsubscribe_link': 'http://example.org/unsub',
         },
         recipients=[
             {'address': f'1@example.org'},
             {
                 'address': f'2@example.org',
-                'context': {
-                    'unsubscribe_link': 'http://example.org/context'
-                },
-                'headers': {
-                    'List-Unsubscribe': '<http://example.org/different>'
-                },
-            }
-        ]
+                'context': {'unsubscribe_link': 'http://example.org/context'},
+                'headers': {'List-Unsubscribe': '<http://example.org/different>'},
+            },
+        ],
     )
     assert len(tmpdir.listdir()) == 2
     msg_file = tmpdir.join(f'{uid}-1exampleorg.txt').read()
@@ -368,7 +305,7 @@ async def test_markdown_context(send_email, tmpdir):
         main_template='testing {{{ foobar }}}',
         context={
             'message__render': 'test email {{ unsubscribe_link }}.\n',
-            'foobar__md': '[hello](www.example.org/hello)'
+            'foobar__md': '[hello](www.example.org/hello)',
         },
     )
     assert len(tmpdir.listdir()) == 1
@@ -379,40 +316,30 @@ async def test_markdown_context(send_email, tmpdir):
 
 async def test_partials(send_email, tmpdir):
     message_id = await send_email(
-        main_template=('message: |{{{ message }}}|\n'
-                       'foo: {{ foo }}\n'
-                       'partial: {{> test_p }}'),
-        context={
-            'message__render': '{{foo}} {{> test_p }}',
-            'foo': 'FOO',
-            'bar': 'BAR',
-        },
-        mustache_partials={
-            'test_p': 'foo ({{ foo }}) bar **{{ bar }}**',
-        }
+        main_template=('message: |{{{ message }}}|\n' 'foo: {{ foo }}\n' 'partial: {{> test_p }}'),
+        context={'message__render': '{{foo}} {{> test_p }}', 'foo': 'FOO', 'bar': 'BAR'},
+        mustache_partials={'test_p': 'foo ({{ foo }}) bar **{{ bar }}**'},
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
-    assert """
+    assert (
+        """
 content:
 message: |<p>FOO foo (FOO) bar <strong>BAR</strong></p>
 |
 foo: FOO
 partial: foo (FOO) bar **BAR**
-""" in msg_file
+"""
+        in msg_file
+    )
 
 
 async def test_macros(send_email, tmpdir):
     message_id = await send_email(
         main_template='macro result: foobar(hello | {{ foo }})',
-        context={
-            'foo': 'FOO',
-            'bar': 'BAR',
-        },
-        macros={
-            'foobar(a | b)': '___{{ a }} {{b}}___'
-        }
+        context={'foo': 'FOO', 'bar': 'BAR'},
+        macros={'foobar(a | b)': '___{{ a }} {{b}}___'},
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -444,13 +371,14 @@ async def test_macros_more(send_email, tmpdir):
             'centered_button(text | link)': """
       <div class="button">
         <a href="{{ link }}"><span>{{ text }}</span></a>
-      </div>\n"""
-        }
+      </div>\n""",
+        },
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
-    assert """
+    assert (
+        """
 content:
 foo:___is foo___
 foo wrong:foo(1 | 2)
@@ -463,7 +391,9 @@ button:
       <div class="button">
         <a href="/testagency/password/reset/t-4mx-2968ca2f34bc512e70e6/"><span>Reset password now</span></a>
       </div>
-""" in msg_file
+"""
+        in msg_file
+    )
 
 
 async def test_macro_in_message(send_email, tmpdir):
@@ -471,23 +401,19 @@ async def test_macro_in_message(send_email, tmpdir):
         context={
             'pay_link': '/pay/now/123/',
             'first_name': 'John',
-            'message__render': (
-                '# hello {{ first_name }}\n'
-                'centered_button(Pay now | {{ pay_link }})\n'
-            )
+            'message__render': ('# hello {{ first_name }}\n' 'centered_button(Pay now | {{ pay_link }})\n'),
         },
         macros={
             'centered_button(text | link)': (
-                '<div class="button">\n'
-                '  <a href="{{ link }}"><span>{{ text }}</span></a>\n'
-                '</div>\n'
+                '<div class="button">\n' '  <a href="{{ link }}"><span>{{ text }}</span></a>\n' '</div>\n'
             )
-        }
+        },
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     print(msg_file)
-    assert """
+    assert (
+        """
 content:
 <body>
 <h1>hello John</h1>
@@ -497,7 +423,9 @@ content:
 </div>
 
 </body>
-""" in msg_file
+"""
+        in msg_file
+    )
 
 
 async def test_send_md_options(send_email, tmpdir):
@@ -515,7 +443,7 @@ async def test_standard_sass(cli, tmpdir):
         method='email-test',
         subject_template='test message',
         context={'message': 'this is a test'},
-        recipients=[{'address': 'foobar@testing.com'}]
+        recipients=[{'address': 'foobar@testing.com'}],
     )
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201
@@ -529,16 +457,7 @@ async def test_standard_sass(cli, tmpdir):
 async def test_custom_sass(send_email, tmpdir):
     message_id = await send_email(
         main_template='{{{ css }}}',
-        context={
-            'css__sass': (
-                '.foo {\n'
-                '  .bar {\n'
-                '    color: black;\n'
-                '    width: (60px / 6);\n'
-                '  }\n'
-                '}'
-            )
-        }
+        context={'css__sass': ('.foo {\n' '  .bar {\n' '    color: black;\n' '    width: (60px / 6);\n' '  }\n' '}')},
     )
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -548,9 +467,7 @@ async def test_custom_sass(send_email, tmpdir):
 
 async def test_invalid_mustache_subject(send_email, tmpdir, db_conn):
     message_id = await send_email(
-        subject_template='{{ foo } test message',
-        context={'foo': 'FOO'},
-        company_code='test_invalid_mustache_subject',
+        subject_template='{{ foo } test message', context={'foo': 'FOO'}, company_code='test_invalid_mustache_subject'
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -570,9 +487,7 @@ async def test_invalid_mustache_subject(send_email, tmpdir, db_conn):
 
 async def test_invalid_mustache_body(send_email, db_conn):
     await send_email(
-        main_template='{{ foo } test message',
-        context={'foo': 'FOO'},
-        company_code='test_invalid_mustache_body',
+        main_template='{{ foo } test message', context={'foo': 'FOO'}, company_code='test_invalid_mustache_body'
     )
 
     messages = await db_conn.fetch(
@@ -593,16 +508,9 @@ async def test_send_with_pdf(send_email, tmpdir, db_conn):
             {
                 'address': 'foobar@testing.com',
                 'pdf_attachments': [
-                    {
-                        'name': 'testing.pdf',
-                        'html': '<h1>testing</h1>',
-                        'id': 123,
-                    },
-                    {
-                        'name': 'different.pdf',
-                        'html': '<h1>different</h1>',
-                    }
-                ]
+                    {'name': 'testing.pdf', 'html': '<h1>testing</h1>', 'id': 123},
+                    {'name': 'different.pdf', 'html': '<h1>different</h1>'},
+                ],
             }
         ]
     )
@@ -619,11 +527,9 @@ async def test_send_with_other_attachment(send_email, tmpdir, db_conn):
         recipients=[
             {
                 'address': 'foobar@testing.com',
-                'attachments': [{
-                    'name': 'calendar.ics',
-                    'content': 'Look this is some test data',
-                    'mime_type': 'text/calendar',
-                }]
+                'attachments': [
+                    {'name': 'calendar.ics', 'content': 'Look this is some test data', 'mime_type': 'text/calendar'}
+                ],
             }
         ]
     )
@@ -637,12 +543,7 @@ async def test_send_with_other_attachment(send_email, tmpdir, db_conn):
 async def test_pdf_not_unicode(send_email, tmpdir, cli):
     message_id = await send_email(
         recipients=[
-            {
-                'address': 'foobar@testing.com',
-                'pdf_attachments': [
-                    {'name': 'testing.pdf',  'html': '<h1>binary</h1>'}
-                ]
-            }
+            {'address': 'foobar@testing.com', 'pdf_attachments': [{'name': 'testing.pdf', 'html': '<h1>binary</h1>'}]}
         ]
     )
     assert len(tmpdir.listdir()) == 1
@@ -653,17 +554,7 @@ async def test_pdf_not_unicode(send_email, tmpdir, cli):
 
 async def test_pdf_empty(send_email, tmpdir):
     message_id = await send_email(
-        recipients=[
-            {
-                'address': 'foobar@testing.com',
-                'pdf_attachments': [
-                    {
-                        'name': 'testing.pdf',
-                        'html': '',
-                    }
-                ]
-            }
-        ]
+        recipients=[{'address': 'foobar@testing.com', 'pdf_attachments': [{'name': 'testing.pdf', 'html': ''}]}]
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -678,9 +569,7 @@ async def test_mandrill_send_client_error(cli, send_email, mocker, db_conn):
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
     await send_email(
-        method='email-mandrill',
-        company_code='mandrill-error-test',
-        recipients=[{'address': 'foobar_a@testing.com'}]
+        method='email-mandrill', company_code='mandrill-error-test', recipients=[{'address': 'foobar_a@testing.com'}]
     )
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -704,6 +593,7 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker, db_con
 
             async def json(self):
                 return [dict(email='foobar_a@testing.com', _id='abc')]
+
         return FakeResponse()
 
     mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
@@ -712,9 +602,7 @@ async def test_mandrill_send_connection_error_ok(cli, send_email, mocker, db_con
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
     await send_email(
-        method='email-mandrill',
-        company_code='mandrill-error-ok-test',
-        recipients=[{'address': 'foobar_a@testing.com'}]
+        method='email-mandrill', company_code='mandrill-error-ok-test', recipients=[{'address': 'foobar_a@testing.com'}]
     )
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -736,6 +624,7 @@ async def test_mandrill_send_502_ok(cli, send_email, mocker, db_conn):
 
             async def json(self):
                 return [dict(email='foobar_a@testing.com', _id='abc')]
+
         return FakeResponse()
 
     mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
@@ -744,9 +633,7 @@ async def test_mandrill_send_502_ok(cli, send_email, mocker, db_conn):
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
     await send_email(
-        method='email-mandrill',
-        company_code='mandrill-error-ok-test',
-        recipients=[{'address': 'foobar_a@testing.com'}]
+        method='email-mandrill', company_code='mandrill-error-ok-test', recipients=[{'address': 'foobar_a@testing.com'}]
     )
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -771,6 +658,7 @@ async def test_mandrill_send_500_not_ok(cli, send_email, mocker, db_conn):
 
             async def json(self):
                 return [{'body': 'center>Foobar</center'}]
+
         return FakeResponse()
 
     mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
@@ -782,7 +670,7 @@ async def test_mandrill_send_500_not_ok(cli, send_email, mocker, db_conn):
         status_code=500,
         method='email-mandrill',
         company_code='mandrill-error-ok-test',
-        recipients=[{'address': 'foobar_a@testing.com'}]
+        recipients=[{'address': 'foobar_a@testing.com'}],
     )
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
@@ -803,6 +691,7 @@ async def test_mandrill_send_500_ok(cli, send_email, mocker, db_conn):
 
             async def json(self):
                 return [dict(email='foobar_a@testing.com', _id='abc')]
+
         return FakeResponse()
 
     mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
@@ -811,9 +700,7 @@ async def test_mandrill_send_500_ok(cli, send_email, mocker, db_conn):
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
     await send_email(
-        method='email-mandrill',
-        company_code='mandrill-error-ok-test',
-        recipients=[{'address': 'foobar_a@testing.com'}]
+        method='email-mandrill', company_code='mandrill-error-ok-test', recipients=[{'address': 'foobar_a@testing.com'}]
     )
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -844,19 +731,18 @@ async def test_link_shortening(send_email, tmpdir, cli, db_conn):
 
     assert 1 == await db_conn.fetchval('select count(*) from links')
     link = await db_conn.fetchrow('select * from links')
-    assert dict(link) == {
-        'id': AnyInt(),
-        'message_id': m['id'],
-        'token': token,
-        'url': 'https://www.foobar.com',
-    }
+    assert dict(link) == {'id': AnyInt(), 'message_id': m['id'], 'token': token, 'url': 'https://www.foobar.com'}
 
-    r = await cli.get('/l' + token, allow_redirects=False, headers={
-        'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
-        'X-Request-Start': '1969660800',
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                      'Chrome/59.0.3071.115 Safari/537.36',
-    })
+    r = await cli.get(
+        '/l' + token,
+        allow_redirects=False,
+        headers={
+            'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
+            'X-Request-Start': '1969660800',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/59.0.3071.115 Safari/537.36',
+        },
+    )
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'https://www.foobar.com'
 
@@ -870,8 +756,10 @@ async def test_link_shortening(send_email, tmpdir, cli, db_conn):
     assert extra == {
         'ip': '54.170.228.0',
         'target': 'https://www.foobar.com',
-        'user_agent': ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                       'Chrome/59.0.3071.115 Safari/537.36'),
+        'user_agent': (
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/59.0.3071.115 Safari/537.36'
+        ),
         'user_agent_display': 'Chrome 59 on Linux',
     }
 
@@ -906,10 +794,7 @@ async def test_link_shortening_repeat(send_email, tmpdir, cli, db_conn):
 
 async def test_link_shortening_in_render(send_email, tmpdir, db_conn):
     mid = await send_email(
-        context={
-            'message__render': 'test email {{ xyz }}\n',
-            'xyz': 'http://example.com/foobar'
-        },
+        context={'message__render': 'test email {{ xyz }}\n', 'xyz': 'http://example.com/foobar'},
         company_code='test_link_shortening_in_render',
     )
     assert len(tmpdir.listdir()) == 1
@@ -927,10 +812,7 @@ async def test_link_shortening_in_render(send_email, tmpdir, db_conn):
 
 async def test_link_shortening_keep_long_link(send_email, tmpdir, cli):
     mid = await send_email(
-        context={
-            'message__render': 'test email {{ xyz_original }}\n',
-            'xyz': 'http://example.org/foobar'
-        },
+        context={'message__render': 'test email {{ xyz_original }}\n', 'xyz': 'http://example.org/foobar'},
         company_code='test_link_shortening_in_render',
     )
     msg_file = tmpdir.join(f'{mid}.txt').read()
@@ -943,7 +825,7 @@ async def test_link_shortening_not_image(send_email, tmpdir, cli):
         context={
             'message__render': '{{ foo }} {{ bar}}',
             'foo': 'http://example.com/foobar',
-            'bar': 'http://whatever.com/img.jpg'
+            'bar': 'http://whatever.com/img.jpg',
         },
         company_code='test_link_shortening_in_render',
     )
@@ -1005,9 +887,7 @@ async def test_mandrill_key_fail(settings, loop):
 async def test_not_json(cli, tmpdir):
     r = await cli.post('/send/email/', data='xxx', headers={'Authorization': 'testing-key'})
     assert r.status == 400, await r.text()
-    assert {
-        'message': 'Error decoding JSON',
-    } == await r.json()
+    assert {'message': 'Error decoding JSON'} == await r.json()
 
 
 async def test_invalid_json(cli, tmpdir):
@@ -1018,17 +898,11 @@ async def test_invalid_json(cli, tmpdir):
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
         'context': {},
-        'recipients': [{'address': 'foobar_a@testing.com'}]
+        'recipients': [{'address': 'foobar_a@testing.com'}],
     }
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 400, await r.text()
     assert {
         'message': 'Invalid Data',
-        'details': [
-            {
-                'loc': ['uid'],
-                'msg': 'value is not a valid uuid',
-                'type': 'type_error.uuid',
-            },
-        ],
+        'details': [{'loc': ['uid'], 'msg': 'value is not a valid uuid', 'type': 'type_error.uuid'}],
     } == await r.json()

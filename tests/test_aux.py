@@ -109,14 +109,7 @@ async def test_message_stats(cli, send_email):
     r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
-    assert data == [
-        {
-            'count': 5,
-            'age': 0,
-            'method': 'email-test',
-            'status': 'send',
-        },
-    ]
+    assert data == [{'count': 5, 'age': 0, 'method': 'email-test', 'status': 'send'}]
 
     await send_email()
 
@@ -135,34 +128,24 @@ async def test_message_stats_old(cli, send_email, db_conn):
 
     old = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(minutes=20)
 
-    await db_conn.execute('update messages set send_ts=$1, update_ts=$2 where external_id=$3',
-                          old, old, expected_msg_ids[0])
-    await db_conn.execute('update messages set send_ts=$1, status=$2 where external_id=$3',
-                          old, 'open', expected_msg_ids[1])
+    await db_conn.execute(
+        'update messages set send_ts=$1, update_ts=$2 where external_id=$3', old, old, expected_msg_ids[0]
+    )
+    await db_conn.execute(
+        'update messages set send_ts=$1, status=$2 where external_id=$3', old, 'open', expected_msg_ids[1]
+    )
 
     r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
     assert r.status == 200, await r.text()
     data = await r.json()
     assert data == [
-        {
-            'count': 3,
-            'age': 0,
-            'method': 'email-test',
-            'status': 'send',
-        },
-        {
-            'count': 1,
-            'age': 1200,
-            'method': 'email-test',
-            'status': 'open',
-        },
+        {'count': 3, 'age': 0, 'method': 'email-test', 'status': 'send'},
+        {'count': 1, 'age': 1200, 'method': 'email-test', 'status': 'open'},
     ]
 
 
 async def test_create_sub_account_new_few_sent(cli, mock_external):
-    data = {
-        'company_code': 'foobar'
-    }
+    data = {'company_code': 'foobar'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert 'subaccount created\n' == await r.text()
@@ -179,9 +162,7 @@ async def test_create_sub_account_new_few_sent(cli, mock_external):
 
 
 async def test_create_sub_account_lots(cli, mock_external):
-    data = {
-        'company_code': 'lots-sent'
-    }
+    data = {'company_code': 'lots-sent'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
 
@@ -196,9 +177,7 @@ async def test_create_sub_account_lots(cli, mock_external):
 
 
 async def test_create_sub_account_wrong_response(cli, mock_external):
-    data = {
-        'company_code': 'broken'
-    }
+    data = {'company_code': 'broken'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 400, await r.text()
 
@@ -223,8 +202,10 @@ async def test_missing_link(cli):
     r = await cli.get('/lxxx')
     assert r.status == 404, await r.text()
     text = await r.text()
-    assert (f'<p>404: No redirect could be found for "http://127.0.0.1:{cli.server.port}/lxxx", '
-            f'this link may have expired.</p>') in text
+    assert (
+        f'<p>404: No redirect could be found for "http://127.0.0.1:{cli.server.port}/lxxx", '
+        f'this link may have expired.</p>'
+    ) in text
 
 
 async def test_missing_url_with_arg(cli):

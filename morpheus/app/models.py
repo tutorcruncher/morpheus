@@ -16,6 +16,7 @@ class SendMethod(str, Enum):
     """
     Should match SEND_METHODS sql enum
     """
+
     email_mandrill = 'email-mandrill'
     email_ses = 'email-ses'
     email_test = 'email-test'
@@ -39,6 +40,7 @@ class MandrillMessageStatus(str, Enum):
     compatible with mandrill webhook event field
     https://mandrill.zendesk.com/hc/en-us/articles/205583307-Message-Event-Webhook-format
     """
+
     send = 'send'
     deferral = 'deferral'
     hard_bounce = 'hard_bounce'
@@ -54,6 +56,7 @@ class MessageBirdMessageStatus(str, Enum):
     """
     https://developers.messagebird.com/docs/messaging#messaging-dlr
     """
+
     scheduled = 'scheduled'
     send = 'send'
     buffered = 'buffered'
@@ -68,6 +71,7 @@ class MessageStatus(str, Enum):
 
     Should match MESSAGE_STATUSES sql enum
     """
+
     render_failed = 'render_failed'
     send_request_failed = 'send_request_failed'
 
@@ -211,28 +215,19 @@ class MandrillSingleWebhook(BaseWebhook):
     msg: dict = {}
 
     def extra_json(self, sort_keys=False):
-        return json.dumps({
-            'user_agent': self.user_agent,
-            'location': self.location,
-            **{f: self.msg.get(f) for f in self.__config__.msg_fields},
-        }, sort_keys=sort_keys)
+        return json.dumps(
+            {
+                'user_agent': self.user_agent,
+                'location': self.location,
+                **{f: self.msg.get(f) for f in self.__config__.msg_fields},
+            },
+            sort_keys=sort_keys,
+        )
 
     class Config:
         ignore_extra = True
-        fields = {
-            'message_id': '_id',
-            'status': 'event'
-        }
-        msg_fields = (
-            'bounce_description',
-            'clicks',
-            'diag',
-            'reject',
-            'opens',
-            'resends',
-            'smtp_events',
-            'state',
-        )
+        fields = {'message_id': '_id', 'status': 'event'}
+        msg_fields = ('bounce_description', 'clicks', 'diag', 'reject', 'opens', 'resends', 'smtp_events', 'state')
 
 
 class MandrillWebhook(BaseModel):
@@ -250,8 +245,4 @@ class MessageBirdWebHook(BaseWebhook):
 
     class Config:
         ignore_extra = True
-        fields = {
-            'message_id': 'id',
-            'ts': 'statusDatetime',
-            'error_code': 'statusErrorCode',
-        }
+        fields = {'message_id': 'id', 'ts': 'statusDatetime', 'error_code': 'statusErrorCode'}

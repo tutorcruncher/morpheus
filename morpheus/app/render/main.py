@@ -42,11 +42,7 @@ def _update_context(context, partials, macros):
         elif k.endswith('__sass'):
             yield k[:-6], sass.compile(string=v, output_style='compressed', precision=10).strip('\n')
         elif k.endswith('__render'):
-            v = chevron.render(
-                _apply_macros(v, macros),
-                data=context,
-                partials_dict=partials
-            )
+            v = chevron.render(_apply_macros(v, macros), data=context, partials_dict=partials)
             yield k[:-8], markdown(v)
 
 
@@ -80,11 +76,7 @@ SKIPPED_LINKS = [
 
 
 def looks_like_link(s):
-    return (
-        isinstance(s, str) and
-        re.match('^https?://', s) and
-        not any(m.search(s) for m in SKIPPED_LINKS)
-    )
+    return isinstance(s, str) and re.match('^https?://', s) and not any(m.search(s) for m in SKIPPED_LINKS)
 
 
 def apply_short_links(context, click_url, click_random=30, backup_arg=False):
@@ -118,10 +110,7 @@ def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
     shortened_link = []
     if click_url:
         shortened_link = apply_short_links(m.context, click_url, click_random, backup_arg=True)
-    m.context.update(
-        email_subject=subject,
-        **dict(_update_context(m.context, m.mustache_partials, m.macros))
-    )
+    m.context.update(email_subject=subject, **dict(_update_context(m.context, m.mustache_partials, m.macros)))
     unsubscribe_link = m.context.get('unsubscribe_link')
     if unsubscribe_link:
         m.headers.setdefault('List-Unsubscribe', f'<{unsubscribe_link}>')
@@ -130,9 +119,7 @@ def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
         full_name=full_name,
         subject=subject,
         html_body=chevron.render(
-            _apply_macros(m.main_template, m.macros),
-            data=m.context,
-            partials_dict=m.mustache_partials,
+            _apply_macros(m.main_template, m.macros), data=m.context, partials_dict=m.mustache_partials
         ),
         headers=m.headers,
         shortened_link=shortened_link,
@@ -142,18 +129,135 @@ def render_email(m: MessageDef, click_url=None, click_random=30) -> EmailInfo:
 BASIC_CHARACTERS = {
     # basic characters from https://support.messagebird.com/hc/en-us/articles/208739765-Which-special-
     # characters-count-as-two-characters-in-a-text-message- ordered and repeats removed!
-    ' ', '!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/',
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?', '@',
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
-    'V', 'W', 'X', 'Y', 'Z',
+    ' ',
+    '!',
+    '"',
+    '#',
+    '$',
+    '%',
+    '&',
+    "'",
+    '(',
+    ')',
+    '*',
+    '+',
+    ',',
+    '-',
+    '.',
+    '/',
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    ':',
+    ';',
+    '<',
+    '=',
+    '>',
+    '?',
+    '@',
+    'A',
+    'B',
+    'C',
+    'D',
+    'E',
+    'F',
+    'G',
+    'H',
+    'I',
+    'J',
+    'K',
+    'L',
+    'M',
+    'N',
+    'O',
+    'P',
+    'Q',
+    'R',
+    'S',
+    'T',
+    'U',
+    'V',
+    'W',
+    'X',
+    'Y',
+    'Z',
     '_',
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u',
-    'v', 'w', 'x', 'y', 'z',
-    '¡', '£', '¤', '¥', '§', '¿', 'Ä', 'Å', 'Æ', 'Ç', 'É', 'Ñ', 'Ö', 'Ø', 'Ü', 'ß', 'à', 'ä', 'å', 'æ', 'è',
-    'é', 'ì', 'ñ', 'ò', 'ö', 'ø', 'ù', 'ü', 'Γ', 'Δ', 'Θ', 'Λ', 'Ξ', 'Π', 'Σ', 'Φ', 'Ψ', 'Ω',
+    'a',
+    'b',
+    'c',
+    'd',
+    'e',
+    'f',
+    'g',
+    'h',
+    'i',
+    'j',
+    'k',
+    'l',
+    'm',
+    'n',
+    'o',
+    'p',
+    'q',
+    'r',
+    's',
+    't',
+    'u',
+    'v',
+    'w',
+    'x',
+    'y',
+    'z',
+    '¡',
+    '£',
+    '¤',
+    '¥',
+    '§',
+    '¿',
+    'Ä',
+    'Å',
+    'Æ',
+    'Ç',
+    'É',
+    'Ñ',
+    'Ö',
+    'Ø',
+    'Ü',
+    'ß',
+    'à',
+    'ä',
+    'å',
+    'æ',
+    'è',
+    'é',
+    'ì',
+    'ñ',
+    'ò',
+    'ö',
+    'ø',
+    'ù',
+    'ü',
+    'Γ',
+    'Δ',
+    'Θ',
+    'Λ',
+    'Ξ',
+    'Π',
+    'Σ',
+    'Φ',
+    'Ψ',
+    'Ω',
     # special cases from https://support.messagebird.com/hc/en-gb/articles/200731072-In-which-charset-can-I-deliver-
     # SMS-messages-and-what-should-I-take-into-consideration- this is not an exhaustive list :(
-    'ç', '®'
+    'ç',
+    '®',
 }
 
 # from first link above
@@ -162,17 +266,7 @@ BASIC_CHARACTERS = {
 EXTENSION_CHARACTERS = {'\n', '[', '\\', ']', '^', '{', '|', '}', '~', '€'}
 
 # from https://support.messagebird.com/hc/en-us/articles/208739745-How-long-is-1-SMS-Message-
-MULTIPART_LENGTHS = [
-    (1, 160),
-    (2, 306),
-    (3, 459),
-    (4, 612),
-    (5, 765),
-    (6, 918),
-    (7, 1071),
-    (8, 1224),
-    (9, 1377),
-]
+MULTIPART_LENGTHS = [(1, 160), (2, 306), (3, 459), (4, 612), (5, 765), (6, 918), (7, 1071), (8, 1224), (9, 1377)]
 
 
 @dataclass

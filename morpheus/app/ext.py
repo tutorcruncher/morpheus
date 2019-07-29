@@ -38,10 +38,7 @@ class ApiSession:
     def __init__(self, root_url, settings: Settings, loop=None):
         self.settings = settings
         self.loop = loop or asyncio.get_event_loop()
-        self.session = ClientSession(
-            loop=self.loop,
-            json_serialize=ujson.dumps,
-        )
+        self.session = ClientSession(loop=self.loop, json_serialize=ujson.dumps)
         self.root = root_url.rstrip('/') + '/'
 
     async def close(self):
@@ -68,7 +65,7 @@ class ApiSession:
             response_text = await r.text()
 
         if isinstance(allowed_statuses, int):
-            allowed_statuses = allowed_statuses,
+            allowed_statuses = (allowed_statuses,)
         if allowed_statuses != '*' and r.status not in allowed_statuses:
             data = {
                 'request_real_url': str(r.request_info.real_url),
@@ -77,8 +74,14 @@ class ApiSession:
                 'response_headers': dict(r.headers),
                 'response_content': lenient_json(response_text),
             }
-            logger.warning('%s unexpected response %s /%s -> %s', self.__class__.__name__, method, uri, r.status,
-                           extra={'data': data})
+            logger.warning(
+                '%s unexpected response %s /%s -> %s',
+                self.__class__.__name__,
+                method,
+                uri,
+                r.status,
+                extra={'data': data},
+            )
             raise ApiError(method, url, r, response_text)
         else:
             logger.debug('%s /%s -> %s', method, uri, r.status)
@@ -108,10 +111,7 @@ class MorpheusUserApi(ApiSession):
         return method, self.modify_url(url), data
 
     def modify_url(self, url):
-        args = dict(
-            company='__all__',
-            expires=far_future,
-        )
+        args = dict(company='__all__', expires=far_future)
         body = '{company}:{expires}'.format(**args).encode()
         args['signature'] = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
         url = str(url)

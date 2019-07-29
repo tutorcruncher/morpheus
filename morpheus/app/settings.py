@@ -57,10 +57,7 @@ class Settings(BaseSettings):
     @property
     def redis_settings(self) -> RedisSettings:
         return RedisSettings(
-            host=self.redis_host,
-            port=self.redis_port,
-            database=self.redis_database,
-            password=self.redis_password,
+            host=self.redis_host, port=self.redis_port, database=self.redis_database, password=self.redis_password
         )
 
     @validator('pg_host', always=True, pre=True)
