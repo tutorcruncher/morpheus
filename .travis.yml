@@ -17,7 +17,7 @@ python:
 - '3.7'
 
 before_install:
-- mkdir $HOME/bin
+- mkdir -p $HOME/bin
 - curl -Lf https://github.com/samuelcolvin/donkey-make/releases/download/v0.3/donk > $HOME/bin/donk
 - chmod +x $HOME/bin/donk
 - export PATH="$HOME/bin:$PATH"
