@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 
-async def test_send_message(cli, tmpdir):
+async def test_send_message(cli, tmpdir, worker):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d71',
         'company_code': 'foobar',
@@ -14,6 +14,7 @@ async def test_send_message(cli, tmpdir):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d71-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
@@ -28,7 +29,7 @@ async def test_send_message(cli, tmpdir):
     assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
 
 
-async def test_send_message_usa(cli, settings, tmpdir):
+async def test_send_message_usa(cli, settings, tmpdir, worker):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d72',
         'company_code': 'foobar',
@@ -40,6 +41,7 @@ async def test_send_message_usa(cli, settings, tmpdir):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d72-18183373095.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
@@ -96,7 +98,7 @@ async def test_validate_number(cli, tmpdir):
     } == data
 
 
-async def test_repeat_uuid(cli, tmpdir):
+async def test_repeat_uuid(cli, tmpdir, worker):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d73',
         'company_code': 'foobar',
@@ -106,6 +108,7 @@ async def test_repeat_uuid(cli, tmpdir):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     assert str(tmpdir.listdir()[0]).endswith('69eb85e8-1504-40aa-94ff-75bb65fd8d73-447891123856.txt')
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
@@ -114,7 +117,7 @@ async def test_repeat_uuid(cli, tmpdir):
     assert {'message': 'Send group with id "69eb85e8-1504-40aa-94ff-75bb65fd8d73" already exists\n'} == data
 
 
-async def test_invalid_number(cli, tmpdir):
+async def test_invalid_number(cli, tmpdir, worker):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d74',
         'company_code': 'foobar',
@@ -130,6 +133,7 @@ async def test_invalid_number(cli, tmpdir):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 4
     assert len(tmpdir.listdir()) == 2
     files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
     assert files == {
@@ -138,7 +142,7 @@ async def test_invalid_number(cli, tmpdir):
     }
 
 
-async def test_exceed_cost_limit(cli, tmpdir):
+async def test_exceed_cost_limit(cli, tmpdir, worker):
     d = {
         'company_code': 'cost-test',
         'cost_limit': 0.1,
@@ -148,10 +152,12 @@ async def test_exceed_cost_limit(cli, tmpdir):
     }
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 4
     assert {'status': 'enqueued', 'spend': 0.0} == await r.json()
     assert len(tmpdir.listdir()) == 4
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 8
     assert {'status': 'enqueued', 'spend': 0.048} == await r.json()
     assert len(tmpdir.listdir()) == 8
 
@@ -159,6 +165,7 @@ async def test_exceed_cost_limit(cli, tmpdir):
     assert r.status == 201, await r.text()
     obj = await r.json()
     assert 0.095 < obj['spend'] < 0.097
+    assert await worker.run_check() == 12
     assert len(tmpdir.listdir()) == 12
 
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})

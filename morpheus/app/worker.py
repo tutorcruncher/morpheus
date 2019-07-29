@@ -42,7 +42,9 @@ from .models import (
     MandrillWebhook,
     MessageStatus,
     SendMethod,
+    SmsRecipientModel,
     SmsSendMethod,
+    SmsSendModel,
 )
 from .render import EmailInfo, render_email
 from .render.main import MessageDef, MessageTooLong, SmsLength, apply_short_links, sms_length
@@ -161,10 +163,10 @@ class SendEmail:
     def __init__(self, ctx: dict, group_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
         self.ctx = ctx
         self.settings: Settings = ctx['settings']
-        self.recipient: EmailRecipientModel = recipient
         self.group_id = group_id
+        self.recipient: EmailRecipientModel = recipient
         self.m: EmailSendModel = m
-        self.tags = list(set(self.recipient.tags + self.m.tags + [self.m.uid.hex]))
+        self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
 
     async def run(self):
         if self.ctx['job_try'] > len(email_retrying):
@@ -178,7 +180,7 @@ class SendEmail:
 
         headers = dict(self.m.headers, **self.recipient.headers)
 
-        email_info: EmailInfo = await self._render_email(context, headers)
+        email_info = await self._render_email(context, headers)
         if not email_info:
             return
 
@@ -241,7 +243,7 @@ class SendEmail:
         data = dict(
             from_email=self.m.from_address.email,
             from_name=self.m.from_address.name,
-            group_uuid=self.group_id,
+            group_uuid=str(self.m.uid),
             headers=email_info.headers,
             to_address=self.recipient.address,
             to_name=email_info.full_name,
@@ -252,7 +254,7 @@ class SendEmail:
                 f'{a["name"]}:{base64.b64decode(a["content"]).decode(errors="ignore"):.40}' for a in attachments
             ],
         )
-        msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{self.m.uid.hex}-{self.recipient.address}')
+        msg_id = re.sub(r'[^a-zA-Z0-9\-]', '', f'{self.m.uid}-{self.recipient.address}')
         send_ts = utcnow()
         output = (
             f'to: {self.recipient.address}\n'
@@ -270,7 +272,7 @@ class SendEmail:
             save_path.write_text(output)
         await self._store_email(msg_id, send_ts, email_info)
 
-    async def _render_email(self, context, headers) -> EmailInfo:
+    async def _render_email(self, context, headers) -> Optional[EmailInfo]:
         m = MessageDef(
             first_name=self.recipient.first_name,
             last_name=self.recipient.last_name,
@@ -350,96 +352,55 @@ class SendEmail:
         )
 
 
-class SMS:
-    @classmethod
-    def validate_number(cls, number, country, include_description=True) -> Optional[Number]:
-        try:
-            p = parse_number(number, country)
-        except NumberParseException:
+@worker_function
+async def send_sms(ctx, group_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
+    s = SendSMS(ctx, group_id, recipient, m)
+    return await s.run()
+
+
+class SendSMS:
+    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'm', 'tags', 'messagebird', 'from_name'
+
+    def __init__(self, ctx: dict, group_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
+        self.ctx = ctx
+        self.settings: Settings = ctx['settings']
+        self.group_id = group_id
+        self.recipient: SmsRecipientModel = recipient
+        self.m: SmsSendModel = m
+        self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
+        self.messagebird: MessageBird = ctx['messagebird']
+        self.from_name = self.m.from_name if self.m.country_code != 'US' else self.settings.us_send_number
+
+    async def run(self):
+        # if self.ctx['job_try'] > len(email_retrying):
+        #     main_logger.error('%s: tried to send email %d times, all failed', self.group_id, self.ctx['job_try'])
+        #     await self._store_email_failed(MessageStatus.send_request_failed, 'upstream error')
+        #     return
+
+        sms_data = await self._sms_prep()
+        if not sms_data:
             return
 
-        if not is_valid_number(p):
-            return
-
-        is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
-        descr = None
-        if include_description:
-            country = country_name_for_number(p, 'en')
-            region = description_for_number(p, 'en')
-            descr = country if country == region else f'{region}, {country}'
-
-        return Number(
-            number=format_number(p, PhoneNumberFormat.E164),
-            country_code=f'{p.country_code}',
-            number_formatted=format_number(p, PhoneNumberFormat.INTERNATIONAL),
-            descr=descr,
-            is_mobile=is_mobile,
-        )
-
-    # @concurrent
-    async def send_smss(
-        self,
-        recipients_key,
-        *,
-        uid,
-        main_template,
-        company_code,
-        cost_limit,
-        country_code,
-        from_name,
-        method,
-        context,
-        tags,
-    ):
-        if method == SmsSendMethod.sms_test:
-            coro = self._test_send_sms
-        elif method == SmsSendMethod.sms_messagebird:
-            coro = self._messagebird_send_sms
+        if self.m.method == SmsSendMethod.sms_test:
+            await self._test_send_sms(sms_data)
+        elif self.m.method == SmsSendMethod.sms_messagebird:
+            await self._messagebird_send_sms(sms_data)
         else:
             raise NotImplementedError()
-        tags.append(uid)
-        main_logger.info('sending group %s via %s', uid, method)
-        group_id = await self._store_sms_group(group_uuid=uid, company=company_code, method=method, from_name=from_name)
-        base_kwargs = dict(
-            group_id=group_id,
-            group_uuid=uid,
-            send_method=method,
-            main_template=main_template,
-            company_code=company_code,
-            country_code=country_code,
-            from_name=from_name if country_code != 'US' else self.settings.us_send_number,
-        )
-        drain = Drain(
-            redis=await self.get_redis(), raise_task_exception=True, max_concurrent_tasks=10, shutdown_delay=60
-        )
-        jobs = 0
-        async with drain:
-            async for raw_queue, raw_data in drain.iter(recipients_key):
-                if not raw_queue:
-                    break
 
-                msg_data = msgpack.unpackb(raw_data, encoding='utf8')
-                data = dict(
-                    context=dict(context, **msg_data.pop('context')),
-                    tags=list(set(tags + msg_data.pop('tags'))),
-                    **base_kwargs,
-                    **msg_data,
-                )
-                drain.add(coro, SmsJob(**data))
-                # TODO stop if worker is not running
-                jobs += 1
-        return jobs
-
-    async def _sms_prep(self, j: SmsJob) -> Optional[SmsData]:
-        number_info = self.validate_number(j.number, j.country_code, include_description=False)
+    async def _sms_prep(self) -> Optional[SmsData]:
+        number_info = validate_number(self.recipient.number, self.m.country_code, include_description=False)
         msg, error, shortened_link, msg_length = None, None, None, None
         if not number_info or not number_info.is_mobile:
-            error = f'invalid mobile number "{j.number}"'
-            main_logger.warning('invalid mobile number "%s" for "%s", not sending', j.number, j.company_code)
+            error = f'invalid mobile number "{self.recipient.number}"'
+            main_logger.warning(
+                'invalid mobile number "%s" for "%s", not sending', self.recipient.number, self.m.company_code
+            )
         else:
-            shortened_link = apply_short_links(j.context, self.sms_click_url, 12)
+            context = dict(self.m.context, **self.recipient.context)
+            shortened_link = apply_short_links(context, self.ctx['sms_click_url'], 12)
             try:
-                msg = chevron.render(j.main_template, data=j.context)
+                msg = chevron.render(self.m.main_template, data=context)
             except ChevronError as e:
                 error = f'Error rendering SMS: {e}'
             else:
@@ -449,40 +410,35 @@ class SMS:
                     error = str(e)
 
         if error:
-            async with self.pg.acquire() as conn:
-                await conn.execute_b(
-                    'insert into messages (:values__names) values :values',
-                    values=Values(
-                        group_id=j.group_id,
-                        status=MessageStatus.render_failed,
-                        to_first_name=j.first_name,
-                        to_last_name=j.last_name,
-                        to_user_link=j.user_link,
-                        to_address=number_info.number_formatted if number_info else j.number,
-                        tags=j.tags,
-                        body=error,
-                    ),
-                )
+            await self.ctx['pg'].execute_b(
+                'insert into messages (:values__names) values :values',
+                values=Values(
+                    group_id=self.group_id,
+                    status=MessageStatus.render_failed,
+                    to_first_name=self.recipient.first_name,
+                    to_last_name=self.recipient.last_name,
+                    to_user_link=self.recipient.user_link,
+                    to_address=number_info.number_formatted if number_info else self.recipient.number,
+                    tags=self.tags,
+                    body=error,
+                ),
+            )
         else:
             return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
 
-    async def _test_send_sms(self, j: SmsJob):
-        sms_data = await self._sms_prep(j)
-        if not sms_data:
-            return
-
+    async def _test_send_sms(self, sms_data: SmsData):
         # remove the + from the beginning of the number
-        msg_id = f'{j.group_uuid}-{sms_data.number.number[1:]}'
+        msg_id = f'{self.m.uid}-{sms_data.number.number[1:]}'
         send_ts = utcnow()
         cost = 0.012 * sms_data.length.parts
         output = (
             f'to: {sms_data.number}\n'
             f'msg id: {msg_id}\n'
             f'ts: {send_ts}\n'
-            f'group_id: {j.group_id}\n'
-            f'tags: {j.tags}\n'
-            f'company_code: {j.company_code}\n'
-            f'from_name: {j.from_name}\n'
+            f'group_id: {self.group_id}\n'
+            f'tags: {self.tags}\n'
+            f'company_code: {self.m.company_code}\n'
+            f'from_name: {self.from_name}\n'
             f'cost: {cost}\n'
             f'length: {sms_data.length}\n'
             f'message:\n'
@@ -493,7 +449,7 @@ class SMS:
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_sms(msg_id, send_ts, j, sms_data, cost)
+        await self._store_sms(msg_id, send_ts, sms_data, cost)
 
     async def _messagebird_get_mcc_cost(self, redis, mcc):
         rates_key = 'messagebird-rates'
@@ -521,8 +477,7 @@ class SMS:
 
     async def _messagebird_get_number_cost(self, number: Number):
         cc_mcc_key = f'messagebird-cc:{number.country_code}'
-        pool = await self.get_redis()
-        with await pool as redis:
+        with await self.ctx['redis'] as redis:
             mcc = await redis.get(cc_mcc_key)
             if mcc is None:
                 main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
@@ -548,10 +503,7 @@ class SMS:
                 await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
             return await self._messagebird_get_mcc_cost(redis, mcc)
 
-    async def _messagebird_send_sms(self, j: SmsJob):
-        sms_data = await self._sms_prep(j)
-        if sms_data is None:
-            return
+    async def _messagebird_send_sms(self, sms_data: SmsData):
         msg_cost = await self._messagebird_get_number_cost(sms_data.number)
         if msg_cost is None:
             return
@@ -563,7 +515,7 @@ class SMS:
         )
         r = await self.messagebird.post(
             'messages',
-            originator=j.from_name,
+            originator=self.from_name,
             body=sms_data.message,
             recipients=[sms_data.number.number],
             datacoding='auto',
@@ -573,29 +525,22 @@ class SMS:
         data = await r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
-        await self._store_sms(data['id'], send_ts, j, sms_data, cost)
+        await self._store_sms(data['id'], send_ts, sms_data, cost)
 
-    async def _store_sms_group(self, *, group_uuid: str, company: str, method: EmailSendMethod, from_name: str):
-        async with self.pg.acquire() as conn:
-            return await conn.fetchval_b(
-                'insert into message_groups (:values__names) values :values returning id',
-                values=Values(uuid=group_uuid, company=company, method=method, from_name=from_name),
-            )
-
-    async def _store_sms(self, external_id, send_ts, j: SmsJob, sms_data: SmsData, cost: float):
-        async with self.pg.acquire() as conn:
+    async def _store_sms(self, external_id, send_ts, sms_data: SmsData, cost: float):
+        async with self.ctx['pg'].acquire() as conn:
             message_id = await conn.fetchval_b(
                 'insert into messages (:values__names) values :values returning id',
                 values=Values(
                     external_id=external_id,
-                    group_id=j.group_id,
+                    group_id=self.group_id,
                     send_ts=send_ts,
                     status=MessageStatus.send,
-                    to_first_name=j.first_name,
-                    to_last_name=j.last_name,
-                    to_user_link=j.user_link,
+                    to_first_name=self.recipient.first_name,
+                    to_last_name=self.recipient.last_name,
+                    to_user_link=self.recipient.user_link,
                     to_address=sms_data.number.number_formatted,
-                    tags=j.tags,
+                    tags=self.tags,
                     body=sms_data.message,
                     cost=cost,
                     extra=json.dumps(asdict(sms_data.length)),
@@ -609,20 +554,30 @@ class SMS:
                     ),
                 )
 
-    async def check_sms_limit(self, company_code):
-        async with self.pg.acquire() as conn:
-            return (
-                await conn.fetchval(
-                    """
-                select sum(m.cost)
-                from messages as m
-                join message_groups j on m.group_id = j.id
-                where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
-                """,
-                    company_code,
-                )
-                or 0
-            )
+
+def validate_number(number, country, include_description=True) -> Optional[Number]:
+    try:
+        p = parse_number(number, country)
+    except NumberParseException:
+        return
+
+    if not is_valid_number(p):
+        return
+
+    is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
+    descr = None
+    if include_description:
+        country = country_name_for_number(p, 'en')
+        region = description_for_number(p, 'en')
+        descr = country if country == region else f'{region}, {country}'
+
+    return Number(
+        number=format_number(p, PhoneNumberFormat.E164),
+        country_code=f'{p.country_code}',
+        number_formatted=format_number(p, PhoneNumberFormat.INTERNATIONAL),
+        descr=descr,
+        is_mobile=is_mobile,
+    )
 
 
 @worker_function

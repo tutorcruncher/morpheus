@@ -96,7 +96,7 @@ async def _fix_cli(loop, test_client, settings, db_conn):
 def send_email(cli, worker):
     async def _send_message(status_code=201, **extra):
         data = dict(
-            uid=uuid.uuid4().hex,
+            uid=str(uuid.uuid4()),
             main_template='<body>\n{{{ message }}}\n</body>',
             company_code='foobar',
             from_address='Sender Name <sender@example.com>',
@@ -165,7 +165,7 @@ async def _fix_worker(cli, worker_ctx, settings):
 def _fix_call_send_emails(db_conn):
     async def run(**kwargs):
         base_kwargs = dict(
-            uid=uuid.uuid4().hex,
+            uid=str(uuid.uuid4()),
             subject_template='hello',
             company_code='test',
             from_address='testing@example.com',

@@ -7,19 +7,17 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from aiohttp import ClientError, ClientOSError
 from arq import Retry
-from buildpg import Values
 from pytest_toolbox.comparison import AnyInt, RegexStr
 
 from morpheus.app.ext import ApiError
 from morpheus.app.main import create_app, get_mandrill_webhook_key
-from morpheus.app.models import EmailRecipientModel, EmailSendModel, SendMethod
+from morpheus.app.models import EmailRecipientModel
 from morpheus.app.worker import email_retrying, send_email as worker_send_email
 
 
 async def test_send_email(cli, worker, tmpdir):
-    uuid = uuid4().hex
+    uuid = str(uuid4())
     data = {
         'uid': uuid,
         'company_code': 'foobar',
@@ -53,7 +51,7 @@ async def test_send_email(cli, worker, tmpdir):
 
 
 async def test_webhook(cli, send_email, db_conn, worker):
-    uuid = uuid4().hex
+    uuid = str(uuid4())
     message_id = await send_email(uid=uuid)
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', message_id)
@@ -244,7 +242,7 @@ async def test_mandrill_send_bad_template(cli, send_email, db_conn):
 
 
 async def test_send_email_headers(cli, tmpdir, worker):
-    uid = uuid4().hex
+    uid = str(uuid4())
     data = {
         'uid': uid,
         'company_code': 'foobar',
@@ -281,7 +279,7 @@ async def test_send_email_headers(cli, tmpdir, worker):
 
 
 async def test_send_unsub_context(send_email, tmpdir):
-    uid = uuid4().hex
+    uid = str(uuid4())
     await send_email(
         uid=uid,
         context={
@@ -448,7 +446,7 @@ async def test_send_md_options(send_email, tmpdir):
 
 async def test_standard_sass(cli, tmpdir, worker):
     data = dict(
-        uid=uuid4().hex,
+        uid=str(uuid4()),
         company_code='foobar',
         from_address='Sender Name <sender@example.org>',
         method='email-test',
