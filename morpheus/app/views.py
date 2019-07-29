@@ -17,7 +17,7 @@ import ujson
 from aiohttp.web import HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
 from arq.utils import truncate
-from buildpg import Func, Var
+from buildpg import Func, Values, Var
 from buildpg.clauses import Select, Where
 from markupsafe import Markup
 from pygments import highlight
@@ -86,23 +86,31 @@ class ClickRedirectView(TemplateView):
 
 class EmailSendView(ServiceView):
     async def call(self, request):
-        m = await self.request_data(EmailSendModel)
-        redis_pool = await request.app['sender'].get_redis()
-        with await redis_pool as redis:
+        m: EmailSendModel = await self.request_data(EmailSendModel)
+        with await request.app['redis'] as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
                 raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
-            recipients_key = f'recipients:{m.uid}'
-            data = m.dict(exclude={'recipients', 'from_address'})
-            data.update(from_email=m.from_address.email, from_name=m.from_address.name)
-            pipe = redis.pipeline()
-            pipe.lpush(recipients_key, *[msgpack.packb(r.dict(), use_bin_type=True) for r in m.recipients])
-            pipe.expire(group_key, 86400)
-            pipe.expire(recipients_key, 86400)
-            await pipe.execute()
-            await self.sender.send_emails(recipients_key, **data)
-            logger.info('%s sending %d emails', m.company_code, len(m.recipients))
+            await redis.expire(group_key, 86400)
+
+        logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
+        m.tags.append(m.uid.hex)
+        group_id = await self.app['pg'].fetchval_b(
+            'insert into message_groups (:values__names) values :values returning id',
+            values=Values(
+                uuid=m.uid,
+                company=m.company_code,
+                method=m.method,
+                from_email=m.from_address.email,
+                from_name=m.from_address.name,
+            ),
+        )
+        recipients = m.recipients
+        m_base = m.copy(exclude={'recipients'})
+        del m
+        for recipient in recipients:
+            await request.app['redis'].enqueue_job('send_email', group_id, recipient, m_base)
         return PreResponse(text='201 job enqueued\n', status=201)
 
 

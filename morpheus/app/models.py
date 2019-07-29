@@ -140,10 +140,6 @@ class EmailSendModel(BaseModel):
     important = False
     recipients: List[EmailRecipientModel] = ...
 
-    @validator('uid')
-    def validate_uid(cls, v):
-        return str(v)
-
 
 class SubaccountModel(BaseModel):
     company_code: str = ...

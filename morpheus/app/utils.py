@@ -85,13 +85,10 @@ class View:
     headers = None
 
     def __init__(self, request):
-        from .worker import Sender  # noqa
-
         self.request: Request = request
         self.app: Application = request.app
         self.settings: Settings = self.app['settings']
         self.session: Optional[Session] = None
-        self.sender: Sender = request.app['sender']
 
     def full_url(self, path=''):
         return Markup(f'{self.request.scheme}://{self.request.host}{path}')

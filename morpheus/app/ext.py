@@ -35,9 +35,9 @@ class ApiError(RuntimeError):
 
 
 class ApiSession:
-    def __init__(self, root_url, settings: Settings, loop=None):
+    def __init__(self, root_url, settings: Settings):
         self.settings = settings
-        self.loop = loop or asyncio.get_event_loop()
+        self.loop = asyncio.get_event_loop()
         self.session = ClientSession(loop=self.loop, json_serialize=ujson.dumps)
         self.root = root_url.rstrip('/') + '/'
 
@@ -92,8 +92,8 @@ class ApiSession:
 
 
 class Mandrill(ApiSession):
-    def __init__(self, settings, loop):
-        super().__init__(settings.mandrill_url, settings, loop)
+    def __init__(self, settings):
+        super().__init__(settings.mandrill_url, settings)
 
     def _modify_request(self, method, url, data):
         data['key'] = self.settings.mandrill_key
@@ -104,8 +104,8 @@ far_future = '2032-01-01T00:00:00+00'
 
 
 class MorpheusUserApi(ApiSession):
-    def __init__(self, settings, loop):
-        super().__init__(settings.local_api_url, settings, loop)
+    def __init__(self, settings):
+        super().__init__(settings.local_api_url, settings)
 
     def _modify_request(self, method, url, data):
         return method, self.modify_url(url), data
@@ -119,8 +119,8 @@ class MorpheusUserApi(ApiSession):
 
 
 class MessageBird(ApiSession):
-    def __init__(self, settings, loop):
-        super().__init__(settings.messagebird_url, settings, loop)
+    def __init__(self, settings):
+        super().__init__(settings.messagebird_url, settings)
 
     def _modify_request(self, method, url, data):
         data['headers_'] = {'Authorization': f'AccessKey {self.settings.messagebird_key}'}

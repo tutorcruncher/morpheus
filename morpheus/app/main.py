@@ -5,6 +5,8 @@ import aiohttp_jinja2
 import async_timeout
 import jinja2
 from aiohttp.web import Application
+from arq import create_pool
+from arq.connections import log_redis_info
 from buildpg import asyncpg
 
 from .db import prepare_database
@@ -88,23 +90,21 @@ async def get_mandrill_webhook_key(app):
 
 async def app_startup(app):
     loop = app.loop or asyncio.get_event_loop()
-    with async_timeout.timeout(5, loop=loop):
-        redis = await app['sender'].get_redis()
-        info = await redis.info()
-        logger.info('redis version: %s', info['server']['redis_version'])
-
     settings: Settings = app['settings']
+    redis = await create_pool(settings.redis_settings)
+    with async_timeout.timeout(5, loop=loop):
+        await log_redis_info(redis, logger.info)
+
     await prepare_database(settings, False)
-    app['pg'] = app.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=10, max_size=50)
+    app.update(
+        pg=app.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=10, max_size=50), redis=redis
+    )
 
     loop.create_task(get_mandrill_webhook_key(app))
 
-    # the Sender actor shares the same pg pool as the app
-    app['sender'].pg = app['pg']
-
 
 async def app_cleanup(app):
-    await asyncio.gather(app['pg'].close(), app['sender'].close(), app['morpheus_api'].close(), app['mandrill'].close())
+    await asyncio.gather(app['pg'].close(), app['redis'].close(), app['morpheus_api'].close(), app['mandrill'].close())
 
 
 def create_app(loop, settings: Settings = None):
@@ -121,11 +121,10 @@ def create_app(loop, settings: Settings = None):
 
     app.update(
         settings=settings,
-        sender=settings.sender_cls(settings=settings, loop=loop),
         mandrill_webhook_url=f'https://{settings.host_name}/webhook/mandrill/',
-        mandrill=Mandrill(settings=settings, loop=loop),
+        mandrill=Mandrill(settings=settings),
         webhook_auth_key=None,
-        morpheus_api=MorpheusUserApi(settings=settings, loop=loop),
+        morpheus_api=MorpheusUserApi(settings=settings),
         stats_request_count='request-stats-count',
         stats_request_list='request-stats-list',
         server_up_wait=5,

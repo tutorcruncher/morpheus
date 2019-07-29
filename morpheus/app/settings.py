@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from arq import RedisSettings
+from arq.connections import RedisSettings
 from pydantic import BaseSettings, NoneStr, PyObject, validator
 
 THIS_DIR = Path(__file__).parent
@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     deploy_name = 'testing'
     host_name: NoneStr = 'localhost'
     click_host_name: str = 'click.example.com'
-    sender_cls: PyObject = 'morpheus.app.worker.Sender'
     mandrill_key: str = ''
     mandrill_url = 'https://mandrillapp.com/api/1.0'
     raven_dsn: str = None
