@@ -146,9 +146,11 @@ def reset_database(settings: Settings):
 
 def run_patch(settings: Settings, live, patch_name):
     if patch_name is None:
-        logger.info('available patches:\n{}'.format(
-            '\n'.join('  {}: {}'.format(p.func.__name__, p.func.__doc__.strip('\n ')) for p in patches)
-        ))
+        logger.info(
+            'available patches:\n{}'.format(
+                '\n'.join('  {}: {}'.format(p.func.__name__, p.func.__doc__.strip('\n ')) for p in patches)
+            )
+        )
         return
     patch_lookup = {p.func.__name__: p for p in patches}
     try:
@@ -203,6 +205,7 @@ def patch(*args, direct=False):
         patches.append(Patch(func=func))
         return func
     else:
+
         def wrapper(func):
             patches.append(Patch(func=func, direct=direct))
             return func
@@ -234,11 +237,13 @@ async def correct_indexes(conn, settings, **kwargs):
     """
     modify indexes to improve query performance
     """
-    await conn.execute("""
+    await conn.execute(
+        """
     DROP INDEX IF EXISTS message_group_company;
     DROP INDEX IF EXISTS message_group_company_method;
     CREATE INDEX message_group_company_method ON message_groups USING btree (company, method);
     DROP INDEX IF EXISTS message_group_id;
     DROP INDEX IF EXISTS message_group_id_send_ts;
     CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts);
-    """)
+    """
+    )

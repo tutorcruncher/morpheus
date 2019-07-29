@@ -126,10 +126,9 @@ EXEC_LINES = [
     '',
     'from app.settings import Settings',
 ]
-EXEC_LINES += (
-    ['print("\\n    Python {v.major}.{v.minor}.{v.micro}\\n".format(v=sys.version_info))'] +
-    [f'print("    {l}")' for l in EXEC_LINES]
-)
+EXEC_LINES += ['print("\\n    Python {v.major}.{v.minor}.{v.micro}\\n".format(v=sys.version_info))'] + [
+    f'print("    {l}")' for l in EXEC_LINES
+]
 
 
 @cli.command()
@@ -139,6 +138,7 @@ def shell():
     """
     from IPython import start_ipython
     from IPython.terminal.ipapp import load_default_config
+
     c = load_default_config()
 
     c.TerminalIPythonApp.display_banner = False

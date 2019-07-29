@@ -75,24 +75,29 @@ class ErrorLoggingMiddleware:
         )
 
     async def log_warning(self, request, response, start):
-        self.logger.warning('%d %s', response.status, request.rel_url, extra={
-            'fingerprint': [str(request.rel_url), str(response.status)],
-            'data': await self.log_extra_data(request, time() - start, response)
-        })
+        self.logger.warning(
+            '%d %s',
+            response.status,
+            request.rel_url,
+            extra={
+                'fingerprint': [str(request.rel_url), str(response.status)],
+                'data': await self.log_extra_data(request, time() - start, response),
+            },
+        )
 
     async def log_exception(self, exc, request, start):
-        self.logger.exception('%s: %s', exc.__class__.__name__, exc, extra={
-            'data': await self.log_extra_data(request, time() - start)
-        })
+        self.logger.exception(
+            '%s: %s', exc.__class__.__name__, exc, extra={'data': await self.log_extra_data(request, time() - start)}
+        )
 
     def should_warning(self, req, resp):
         return (
-            self.should_log_warnings and
-            resp.status >= 400 and
-            not (resp.status == 401 and 'WWW-Authenticate' in resp.headers) and
-            not resp.status == 409 and
-            not self.is_local(resp) and
-            not (resp.status == 403 and self.get_route_name(req) == 'user-messages' and 'company' in req.query)
+            self.should_log_warnings
+            and resp.status >= 400
+            and not (resp.status == 401 and 'WWW-Authenticate' in resp.headers)
+            and not resp.status == 409
+            and not self.is_local(resp)
+            and not (resp.status == 403 and self.get_route_name(req) == 'user-messages' and 'company' in req.query)
         )
 
     @staticmethod

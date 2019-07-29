@@ -18,9 +18,15 @@ from arq import Actor, BaseWorker, Drain, concurrent
 from arq.utils import to_unix_ms
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
-from phonenumbers import (NumberParseException, PhoneNumberFormat, PhoneNumberType, format_number, is_valid_number,
-                          number_type)
-from phonenumbers import parse as parse_number
+from phonenumbers import (
+    NumberParseException,
+    PhoneNumberFormat,
+    PhoneNumberType,
+    format_number,
+    is_valid_number,
+    number_type,
+    parse as parse_number,
+)
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic.datetime_parse import parse_datetime
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
@@ -121,30 +127,28 @@ class Sender(Actor):
         self.messagebird = MessageBird(settings=self.settings, loop=self.loop)
 
     async def shutdown(self):
-        await asyncio.gather(
-            self.session.close(),
-            self.pg.close(),
-            self.mandrill.close(),
-            self.messagebird.close(),
-        )
+        await asyncio.gather(self.session.close(), self.pg.close(), self.mandrill.close(), self.messagebird.close())
 
     @concurrent
-    async def send_emails(self,
-                          recipients_key, *,
-                          uid,
-                          main_template,
-                          mustache_partials,
-                          macros,
-                          subject_template,
-                          company_code,
-                          from_email,
-                          from_name,
-                          method,
-                          subaccount,
-                          important,
-                          tags,
-                          context,
-                          headers):
+    async def send_emails(
+        self,
+        recipients_key,
+        *,
+        uid,
+        main_template,
+        mustache_partials,
+        macros,
+        subject_template,
+        company_code,
+        from_email,
+        from_name,
+        method,
+        subaccount,
+        important,
+        tags,
+        context,
+        headers,
+    ):
         if method == EmailSendMethod.email_mandrill:
             coro = self._send_mandrill
         elif method == EmailSendMethod.email_test:
@@ -154,11 +158,7 @@ class Sender(Actor):
         tags.append(uid)
         main_logger.info('sending email group %s via %s', uid, method)
         group_id = await self._store_email_group(
-            group_uuid=uid,
-            company=company_code,
-            method=method,
-            from_email=from_email,
-            from_name=from_name,
+            group_uuid=uid, company=company_code, method=method, from_email=from_email, from_name=from_name
         )
         base_kwargs = dict(
             group_id=group_id,
@@ -217,19 +217,13 @@ class Sender(Actor):
                 subject=email_info.subject,
                 from_email=j.from_email,
                 from_name=j.from_name,
-                to=[
-                    dict(
-                        email=j.address,
-                        name=email_info.full_name,
-                        type='to'
-                    )
-                ],
+                to=[dict(email=j.address, name=email_info.full_name, type='to')],
                 headers=email_info.headers,
                 track_opens=True,
                 track_clicks=False,
                 auto_text=True,
                 view_content_link=False,
-                signing_domain=j.from_email[j.from_email.index('@') + 1:],
+                signing_domain=j.from_email[j.from_email.index('@') + 1 :],
                 subaccount=j.subaccount,
                 tags=j.tags,
                 inline_css=True,
@@ -268,8 +262,9 @@ class Sender(Actor):
 
         if exc or response is None:
             e_name = exc.__class__.__name__
-            main_logger.exception('%s: error while posting to mandrill, email: "%s", %s: %s',
-                                  j.group_id, j.address, e_name, exc)
+            main_logger.exception(
+                '%s: error while posting to mandrill, email: "%s", %s: %s', j.group_id, j.address, e_name, exc
+            )
             await self._store_email_failed(MessageStatus.send_request_failed, j, f'Error sending email: {e_name}')
             return
 
@@ -322,21 +317,12 @@ class Sender(Actor):
             await self._store_email_failed(MessageStatus.render_failed, j, f'Error rendering email: {e}')
 
     async def _generate_base64_pdf(self, pdf_attachments):
-        headers = dict(
-            pdf_page_size='A4',
-            pdf_zoom='1.25',
-            pdf_margin_left='8mm',
-            pdf_margin_right='8mm',
-        )
+        headers = dict(pdf_page_size='A4', pdf_zoom='1.25', pdf_margin_left='8mm', pdf_margin_right='8mm')
         for a in pdf_attachments:
             async with self.session.get(self.settings.pdf_generation_url, data=a['html'], headers=headers) as r:
                 if r.status == 200:
                     pdf_content = await r.read()
-                    yield dict(
-                        type='application/pdf',
-                        name=a['name'],
-                        content=base64.b64encode(pdf_content).decode(),
-                    )
+                    yield dict(type='application/pdf', name=a['name'], content=base64.b64encode(pdf_content).decode())
                 else:
                     data = await r.text()
                     main_logger.warning('error generating pdf %s, data: %s', r.status, data)
@@ -349,18 +335,15 @@ class Sender(Actor):
                 content=base64.b64encode(attachment['content']).decode(),
             )
 
-    async def _store_email_group(self, *, group_uuid: str, company: str, method: EmailSendMethod, from_email: str,
-                                 from_name: str):
+    async def _store_email_group(
+        self, *, group_uuid: str, company: str, method: EmailSendMethod, from_email: str, from_name: str
+    ):
         async with self.pg.acquire() as conn:
             return await conn.fetchval_b(
                 'insert into message_groups (:values__names) values :values returning id',
                 values=Values(
-                    uuid=group_uuid,
-                    company=company,
-                    method=method,
-                    from_email=from_email,
-                    from_name=from_name,
-                )
+                    uuid=group_uuid, company=company, method=method, from_email=from_email, from_name=from_name
+                ),
             )
 
     async def _store_email(self, external_id, send_ts, j: EmailJob, email_info: EmailInfo):
@@ -387,13 +370,12 @@ class Sender(Actor):
             if email_info.shortened_link:
                 await conn.execute_b(
                     'insert into links (:values__names) values :values',
-                    values=MultipleValues(*[
-                        Values(
-                            message_id=message_id,
-                            token=token,
-                            url=url,
-                        ) for url, token in email_info.shortened_link
-                    ])
+                    values=MultipleValues(
+                        *[
+                            Values(message_id=message_id, token=token, url=url)
+                            for url, token in email_info.shortened_link
+                        ]
+                    ),
                 )
 
     async def _store_email_failed(self, status: MessageStatus, j: EmailJob, error_msg):
@@ -409,7 +391,7 @@ class Sender(Actor):
                     to_address=j.address,
                     tags=j.tags,
                     body=error_msg,
-                )
+                ),
             )
 
     @classmethod
@@ -438,17 +420,20 @@ class Sender(Actor):
         )
 
     @concurrent
-    async def send_smss(self,
-                        recipients_key, *,
-                        uid,
-                        main_template,
-                        company_code,
-                        cost_limit,
-                        country_code,
-                        from_name,
-                        method,
-                        context,
-                        tags):
+    async def send_smss(
+        self,
+        recipients_key,
+        *,
+        uid,
+        main_template,
+        company_code,
+        cost_limit,
+        country_code,
+        from_name,
+        method,
+        context,
+        tags,
+    ):
         if method == SmsSendMethod.sms_test:
             coro = self._test_send_sms
         elif method == SmsSendMethod.sms_messagebird:
@@ -457,12 +442,7 @@ class Sender(Actor):
             raise NotImplementedError()
         tags.append(uid)
         main_logger.info('sending group %s via %s', uid, method)
-        group_id = await self._store_sms_group(
-            group_uuid=uid,
-            company=company_code,
-            method=method,
-            from_name=from_name,
-        )
+        group_id = await self._store_sms_group(group_uuid=uid, company=company_code, method=method, from_name=from_name)
         base_kwargs = dict(
             group_id=group_id,
             group_uuid=uid,
@@ -473,10 +453,7 @@ class Sender(Actor):
             from_name=from_name if country_code != 'US' else self.settings.us_send_number,
         )
         drain = Drain(
-            redis=await self.get_redis(),
-            raise_task_exception=True,
-            max_concurrent_tasks=10,
-            shutdown_delay=60,
+            redis=await self.get_redis(), raise_task_exception=True, max_concurrent_tasks=10, shutdown_delay=60
         )
         jobs = 0
         async with drain:
@@ -527,7 +504,7 @@ class Sender(Actor):
                         to_address=number_info.number_formatted if number_info else j.number,
                         tags=j.tags,
                         body=error,
-                    )
+                    ),
                 )
         else:
             return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
@@ -575,14 +552,9 @@ class Sender(Actor):
                 assert r.status == 200, (r.status, await r.text())
                 data = await r.json()
             if not next((1 for g in data if g['mcc'] == '0'), None):
-                main_logger.error('no default messagebird pricing with mcc "0"', extra={
-                    'data': data,
-                })
+                main_logger.error('no default messagebird pricing with mcc "0"', extra={'data': data})
             data = {g['mcc']: f'{float(g["rate"]):0.5f}' for g in data}
-            await asyncio.gather(
-                redis.hmset_dict(rates_key, data),
-                redis.expire(rates_key, ONE_DAY),
-            )
+            await asyncio.gather(redis.hmset_dict(rates_key, data), redis.expire(rates_key, ONE_DAY))
         rate = await redis.hget(rates_key, mcc, encoding='utf8')
         if not rate:
             main_logger.warning('no rate found for mcc: "%s", using default', mcc)
@@ -610,8 +582,9 @@ class Sender(Actor):
                     if not network:
                         return
                     elif hlr['status'] == 'active':
-                        main_logger.info('found result for %s after %d attempts %s',
-                                         number.number, i, json.dumps(data, indent=2))
+                        main_logger.info(
+                            'found result for %s after %d attempts %s', number.number, i, json.dumps(data, indent=2)
+                        )
                         break
                     await asyncio.sleep(1)
                 mcc = str(network)[:3]
@@ -628,8 +601,9 @@ class Sender(Actor):
 
         cost = sms_data.length.parts * msg_cost
         send_ts = utcnow()
-        main_logger.info('sending SMS to %s, parts: %d, cost: %0.2fp',
-                         sms_data.number.number, sms_data.length.parts, cost * 100)
+        main_logger.info(
+            'sending SMS to %s, parts: %d, cost: %0.2fp', sms_data.number.number, sms_data.length.parts, cost * 100
+        )
         r = await self.messagebird.post(
             'messages',
             originator=j.from_name,
@@ -648,12 +622,7 @@ class Sender(Actor):
         async with self.pg.acquire() as conn:
             return await conn.fetchval_b(
                 'insert into message_groups (:values__names) values :values returning id',
-                values=Values(
-                    uuid=group_uuid,
-                    company=company,
-                    method=method,
-                    from_name=from_name,
-                )
+                values=Values(uuid=group_uuid, company=company, method=method, from_name=from_name),
             )
 
     async def _store_sms(self, external_id, send_ts, j: SmsJob, sms_data: SmsData, cost: float):
@@ -673,31 +642,30 @@ class Sender(Actor):
                     body=sms_data.message,
                     cost=cost,
                     extra=json.dumps(asdict(sms_data.length)),
-                )
+                ),
             )
             if sms_data.shortened_link:
                 await conn.execute_b(
                     'insert into links (:values__names) values :values',
-                    values=MultipleValues(*[
-                        Values(
-                            message_id=message_id,
-                            token=token,
-                            url=url,
-                        ) for url, token in sms_data.shortened_link
-                    ])
+                    values=MultipleValues(
+                        *[Values(message_id=message_id, token=token, url=url) for url, token in sms_data.shortened_link]
+                    ),
                 )
 
     async def check_sms_limit(self, company_code):
         async with self.pg.acquire() as conn:
-            return await conn.fetchval(
-                """
+            return (
+                await conn.fetchval(
+                    """
                 select sum(m.cost)
                 from messages as m
                 join message_groups j on m.group_id = j.id
                 where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
                 """,
-                company_code
-            ) or 0
+                    company_code,
+                )
+                or 0
+            )
 
     @concurrent(Actor.LOW_QUEUE)
     async def update_mandrill_webhooks(self, events):
@@ -709,8 +677,9 @@ class Sender(Actor):
                 statuses[status] += 1
             else:
                 statuses[status] = 1
-        main_logger.info('updating %d messages: %s', len(mandrill_webhook.events),
-                         ' '.join(f'{k}={v}' for k, v in statuses.items()))
+        main_logger.info(
+            'updating %d messages: %s', len(mandrill_webhook.events), ' '.join(f'{k}={v}' for k, v in statuses.items())
+        )
         return len(mandrill_webhook.events)
 
     @concurrent
@@ -725,29 +694,23 @@ class Sender(Actor):
 
         async with self.pg.acquire() as conn:
             message_id, target = await conn.fetchrow('select message_id, url from links where id=$1', link_id)
-            extra = {
-                'target': target,
-                'ip': ip,
-                'user_agent': user_agent,
-            }
+            extra = {'target': target, 'ip': ip, 'user_agent': user_agent}
             if user_agent:
                 ua_dict = ParseUserAgent(user_agent)
                 platform = ua_dict['device']['family']
                 if platform in {'Other', None}:
                     platform = ua_dict['os']['family']
-                extra['user_agent_display'] = ('{user_agent[family]} {user_agent[major]} on '
-                                               '{platform}').format(platform=platform, **ua_dict).strip(' ')
+                extra['user_agent_display'] = (
+                    ('{user_agent[family]} {user_agent[major]} on ' '{platform}')
+                    .format(platform=platform, **ua_dict)
+                    .strip(' ')
+                )
 
             ts = parse_datetime(ts)
             status = 'click'
             await conn.execute_b(
                 'insert into events (:values__names) values :values',
-                values=Values(
-                    message_id=message_id,
-                    status=status,
-                    ts=ts,
-                    extra=json.dumps(extra),
-                )
+                values=Values(message_id=message_id, status=status, ts=ts, extra=json.dumps(extra)),
             )
 
     async def update_message_status(self, send_method: SendMethod, m: BaseWebhook, log_each=True) -> UpdateStatus:
@@ -757,8 +720,9 @@ class Sender(Actor):
         with await redis_pool as redis:
             v = await redis.incr(ref)
             if v > 1:
-                log_each and main_logger.info('event already exists %s, ts: %s, '
-                                              'status: %s. skipped', m.message_id, m.ts, m.status)
+                log_each and main_logger.info(
+                    'event already exists %s, ts: %s, ' 'status: %s. skipped', m.message_id, m.ts, m.status
+                )
                 return UpdateStatus.duplicate
             await redis.expire(ref, 86400)
 
@@ -770,7 +734,7 @@ class Sender(Actor):
                 where j.method = $1 and m.external_id = $2
                 """,
                 send_method,
-                m.message_id
+                m.message_id,
             )
             if not message_id:
                 return UpdateStatus.missing
@@ -782,12 +746,7 @@ class Sender(Actor):
 
             await conn.execute_b(
                 'insert into events (:values__names) values :values',
-                values=Values(
-                    message_id=message_id,
-                    status=m.status,
-                    ts=m.ts,
-                    extra=m.extra_json(),
-                )
+                values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
             )
             return UpdateStatus.added
 

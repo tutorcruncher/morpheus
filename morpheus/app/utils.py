@@ -48,11 +48,7 @@ class JsonErrors:
             data = {'message': message}
             if details:
                 data['details'] = details
-            super().__init__(
-                text=pretty_lenient_json(data),
-                content_type=CONTENT_TYPE_JSON,
-                headers=headers,
-            )
+            super().__init__(text=pretty_lenient_json(data), content_type=CONTENT_TYPE_JSON, headers=headers)
 
     class HTTPBadRequest(_HTTPClientErrorJson):
         status_code = 400
@@ -90,6 +86,7 @@ class View:
 
     def __init__(self, request):
         from .worker import Sender  # noqa
+
         self.request: Request = request
         self.app: Application = request.app
         self.settings: Settings = self.app['settings']
@@ -140,8 +137,9 @@ class View:
                 body = response.body
             else:
                 raise RuntimeError('either body or text are required on PreResponse')
-            response = Response(body=body, status=response.status, headers=response.headers,
-                                content_type=response.content_type)
+            response = Response(
+                body=body, status=response.status, headers=response.headers, content_type=response.content_type
+            )
 
         if cls.headers:
             response.headers.update(cls.headers)
@@ -166,10 +164,7 @@ class View:
                 error_msg = 'Invalid Data'
                 error_details = e.errors()
 
-        raise JsonErrors.HTTPBadRequest(
-            message=error_msg,
-            details=error_details,
-        )
+        raise JsonErrors.HTTPBadRequest(message=error_msg, details=error_details)
 
     def get_arg_int(self, name, default=None):
         v = self.request.query.get(name)
@@ -184,18 +179,14 @@ class View:
     def json_response(cls, *, status_=200, json_str_=None, headers_=None, **data):
         if not json_str_:
             json_str_ = ujson.dumps(data)
-        return Response(
-            text=json_str_,
-            status=status_,
-            content_type=CONTENT_TYPE_JSON,
-            headers=headers_,
-        )
+        return Response(text=json_str_, status=status_, content_type=CONTENT_TYPE_JSON, headers=headers_)
 
 
 class AuthView(View):
     """
     token authentication with no "Token " prefix
     """
+
     auth_token_field = None
 
     async def authenticate(self, request):
@@ -208,6 +199,7 @@ class ServiceView(AuthView):
     """
     Views used by services. Services are in charge and can be trusted to do "whatever they like".
     """
+
     auth_token_field = 'auth_key'
 
 
@@ -215,6 +207,7 @@ class UserView(View):
     """
     Views used by users via ajax
     """
+
     headers = {'Access-Control-Allow-Origin': '*'}
 
     async def authenticate(self, request):
@@ -227,10 +220,7 @@ class UserView(View):
             raise JsonErrors.HTTPForbidden('Invalid token', headers=self.headers)
 
         try:
-            self.session = Session(
-                company=company,
-                expires=expires,
-            )
+            self.session = Session(company=company, expires=expires)
         except ValidationError as e:
             raise JsonErrors.HTTPBadRequest(message='Invalid Data', details=e.errors(), headers=self.headers)
         if self.session.expires < datetime.utcnow().replace(tzinfo=timezone.utc):
@@ -241,6 +231,7 @@ class BasicAuthView(View):
     """
     Views used by admin, applies basic auth.
     """
+
     async def authenticate(self, request):
         token = re.sub('^Basic *', '', request.headers.get('Authorization', '')) or 'x'
         try:
@@ -275,8 +266,7 @@ class AdminView(TemplateView, BasicAuthView):
         ctx = dict(
             methods=[m.value for m in SendMethod],
             method=self.request.match_info.get(
-                'method',
-                self.request.query.get('method', SendMethod.email_mandrill.value)
+                'method', self.request.query.get('method', SendMethod.email_mandrill.value)
             ),
         )
         try:
