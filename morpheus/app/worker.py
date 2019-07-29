@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+from asyncio import TimeoutError
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -145,7 +146,7 @@ async def shutdown(ctx):
     await asyncio.gather(ctx['session'].close(), ctx['pg'].close(), ctx['mandrill'].close(), ctx['messagebird'].close())
 
 
-email_retrying = [5, 10, 60, 600, 1800, 3600]
+email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
 
 
 @worker_function
@@ -166,8 +167,8 @@ class SendEmail:
         self.tags = list(set(self.recipient.tags + self.m.tags + [self.m.uid.hex]))
 
     async def run(self):
-        if self.ctx['job_try'] >= len(email_retrying):
-            main_logger.error('%s: tried to send email %d times, all failed', self.ctx['job_try'])
+        if self.ctx['job_try'] > len(email_retrying):
+            main_logger.error('%s: tried to send email %d times, all failed', self.group_id, self.ctx['job_try'])
             await self._store_email_failed(MessageStatus.send_request_failed, 'upstream error')
             return
 
@@ -220,15 +221,15 @@ class SendEmail:
         send_ts = utcnow()
         try:
             response = await self.ctx['mandrill'].post('messages/send.json', **data)
-        except ClientConnectionError as e:
+        except (ClientConnectionError, TimeoutError) as e:
             main_logger.info('%s: client connection error, retrying %d...', self.group_id, self.ctx['job_try'])
-            raise Retry(defer=email_retrying[self.ctx['job_try']]) from e
+            raise Retry(defer=email_retrying[self.ctx['job_try'] - 1]) from e
         except ApiError as e:
-            if e.status not in {502, 504} and not (e.status == 500 and 'center>nginx/1.1.19</center' not in e.body):
+            if e.status in {502, 504} or (e.status == 500 and '<center>nginx/' in e.body):
+                raise Retry(defer=email_retrying[self.ctx['job_try'] - 1]) from e
+            else:
                 # if the status is not 502 or 504, or 500 from nginx then raise
                 raise
-            else:
-                raise Retry(defer=email_retrying[self.ctx['job_try']]) from e
 
         data = await response.json()
         assert len(data) == 1, data
@@ -715,6 +716,7 @@ def utcnow():
 
 class WorkerSettings:
     max_jobs = 4
+    max_tries = len(email_retrying) + 1  # so we try all values in email_retrying
     functions = worker_functions
     on_startup = startup
     on_shutdown = shutdown

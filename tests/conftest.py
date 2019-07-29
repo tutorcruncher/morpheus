@@ -6,10 +6,11 @@ import pytest
 from aiohttp.test_utils import teardown_test_loop
 from arq import Worker
 from atoolbox.db.helpers import DummyPgPool
-from buildpg import asyncpg
+from buildpg import Values, asyncpg
 
 from morpheus.app.db import prepare_database
 from morpheus.app.main import create_app
+from morpheus.app.models import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
 from morpheus.app.worker import startup as worker_startup, worker_functions
 
@@ -65,6 +66,7 @@ def settings(tmpdir, mock_external):
         mandrill_key='good-mandrill-testing-key',
         log_level='ERROR',
         mandrill_url=mock_external.app['server_name'] + '/mandrill',
+        mandrill_timeout=0.5,
         host_name=None,
         click_host_name='click.example.com',
         messagebird_key='good-messagebird-testing-key',
@@ -157,3 +159,30 @@ async def _fix_worker(cli, worker_ctx, settings):
 
     worker.pool = None
     await worker.close()
+
+
+@pytest.fixture(name='call_send_emails')
+def _fix_call_send_emails(db_conn):
+    async def run(**kwargs):
+        base_kwargs = dict(
+            uid=uuid.uuid4().hex,
+            subject_template='hello',
+            company_code='test',
+            from_address='testing@example.com',
+            method=SendMethod.email_mandrill,
+            recipients=[],
+        )
+        m = EmailSendModel(**dict(base_kwargs, **kwargs))
+        group_id = await db_conn.fetchval_b(
+            'insert into message_groups (:values__names) values :values returning id',
+            values=Values(
+                uuid=m.uid,
+                company=m.company_code,
+                method=m.method.value,
+                from_email=m.from_address.email,
+                from_name=m.from_address.name,
+            ),
+        )
+        return group_id, m
+
+    return run

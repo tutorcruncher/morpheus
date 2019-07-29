@@ -6,7 +6,7 @@ import logging
 from urllib.parse import urlencode
 
 import ujson
-from aiohttp import ClientResponse, ClientSession
+from aiohttp import ClientResponse, ClientSession, ClientTimeout
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 
 from .settings import Settings
@@ -35,10 +35,9 @@ class ApiError(RuntimeError):
 
 
 class ApiSession:
-    def __init__(self, root_url, settings: Settings):
+    def __init__(self, root_url, settings: Settings, *, client_timeout=30):
         self.settings = settings
-        self.loop = asyncio.get_event_loop()
-        self.session = ClientSession(loop=self.loop, json_serialize=ujson.dumps)
+        self.session = ClientSession(json_serialize=ujson.dumps, timeout=ClientTimeout(total=client_timeout))
         self.root = root_url.rstrip('/') + '/'
 
     async def close(self):
@@ -58,9 +57,14 @@ class ApiSession:
 
     async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> ClientResponse:
         method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)
-        headers = data.pop('headers_', {})
-        timeout = data.pop('timeout_', 30)
-        async with self.session.request(method, url, json=data or None, headers=headers, timeout=timeout) as r:
+        kwargs = {}
+        headers = data.pop('headers_', None)
+        if headers is not None:
+            kwargs['headers'] = headers
+        timeout = data.pop('timeout_', None)
+        if timeout is not None:
+            kwargs['timeout'] = timeout
+        async with self.session.request(method, url, json=data or None, **kwargs) as r:
             # always read entire response before closing the connection
             response_text = await r.text()
 
@@ -93,7 +97,7 @@ class ApiSession:
 
 class Mandrill(ApiSession):
     def __init__(self, settings):
-        super().__init__(settings.mandrill_url, settings)
+        super().__init__(settings.mandrill_url, settings, client_timeout=settings.mandrill_timeout)
 
     def _modify_request(self, method, url, data):
         data['key'] = self.settings.mandrill_key

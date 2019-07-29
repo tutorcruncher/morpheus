@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     click_host_name: str = 'click.example.com'
     mandrill_key: str = ''
     mandrill_url = 'https://mandrillapp.com/api/1.0'
+    mandrill_timeout = 30.0
     raven_dsn: str = None
     log_level = 'INFO'
     commit: str = '-'
