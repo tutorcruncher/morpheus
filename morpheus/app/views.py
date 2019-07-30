@@ -11,13 +11,12 @@ from operator import itemgetter
 from statistics import mean, stdev
 from time import time
 
-import msgpack
 import pytz
 import ujson
 from aiohttp.web import HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
 from arq.utils import truncate
-from buildpg import Func, Var
+from buildpg import Func, Values, Var
 from buildpg.clauses import Select, Where
 from markupsafe import Markup
 from pygments import highlight
@@ -35,6 +34,7 @@ from .models import (
     SubaccountModel,
 )
 from .utils import AdminView, AuthView, JsonErrors, PreResponse, ServiceView, TemplateView, UserView, View
+from .worker import validate_number
 
 logger = logging.getLogger('morpheus.web')
 
@@ -71,8 +71,9 @@ class ClickRedirectView(TemplateView):
                 ts = time()
 
             link_id, url = link
-            await self.sender.store_click(
-                link_id=link_id, ip=ip_address, user_agent=request.headers.get('User-Agent'), ts=ts
+
+            await self.redis.enqueue_job(
+                'store_click', link_id=link_id, ip=ip_address, user_agent=request.headers.get('User-Agent'), ts=ts
             )
             if arg_url and arg_url != url:
                 logger.warning('db url does not match arg url: %r !+ %r', url, arg_url)
@@ -86,58 +87,83 @@ class ClickRedirectView(TemplateView):
 
 class EmailSendView(ServiceView):
     async def call(self, request):
-        m = await self.request_data(EmailSendModel)
-        redis_pool = await request.app['sender'].get_redis()
-        with await redis_pool as redis:
+        m: EmailSendModel = await self.request_data(EmailSendModel)
+        with await self.redis as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
                 raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
-            recipients_key = f'recipients:{m.uid}'
-            data = m.dict(exclude={'recipients', 'from_address'})
-            data.update(from_email=m.from_address.email, from_name=m.from_address.name)
-            pipe = redis.pipeline()
-            pipe.lpush(recipients_key, *[msgpack.packb(r.dict(), use_bin_type=True) for r in m.recipients])
-            pipe.expire(group_key, 86400)
-            pipe.expire(recipients_key, 86400)
-            await pipe.execute()
-            await self.sender.send_emails(recipients_key, **data)
-            logger.info('%s sending %d emails', m.company_code, len(m.recipients))
+            await redis.expire(group_key, 86400)
+
+        logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
+        group_id = await self.app['pg'].fetchval_b(
+            'insert into message_groups (:values__names) values :values returning id',
+            values=Values(
+                uuid=m.uid,
+                company=m.company_code,
+                method=m.method,
+                from_email=m.from_address.email,
+                from_name=m.from_address.name,
+            ),
+        )
+        recipients = m.recipients
+        m_base = m.copy(exclude={'recipients'})
+        del m
+        for recipient in recipients:
+            await self.redis.enqueue_job('send_email', group_id, recipient, m_base)
         return PreResponse(text='201 job enqueued\n', status=201)
+
+
+async def check_sms_limit(conn, company_code):
+    v = await conn.fetchval(
+        """
+        select sum(m.cost)
+        from messages as m
+        join message_groups j on m.group_id = j.id
+        where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
+        """,
+        company_code,
+    )
+    return v or 0
 
 
 class SmsSendView(ServiceView):
     async def call(self, request):
         m = await self.request_data(SmsSendModel)
-        spend = None
-        redis_pool = await request.app['sender'].get_redis()
-        with await redis_pool as redis:
+        with await self.redis as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
                 raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
-            if m.cost_limit is not None:
-                spend = await self.sender.check_sms_limit(m.company_code)
-                if spend >= m.cost_limit:
-                    return self.json_response(
-                        status='send limit exceeded', cost_limit=m.cost_limit, spend=spend, status_=402
-                    )
-            recipients_key = f'recipients:{m.uid}'
-            data = m.dict(exclude={'recipients'})
-            pipe = redis.pipeline()
-            pipe.lpush(recipients_key, *[msgpack.packb(r.dict(), use_bin_type=True) for r in m.recipients])
-            pipe.expire(group_key, 86400)
-            pipe.expire(recipients_key, 86400)
-            await pipe.execute()
-            await self.sender.send_smss(recipients_key, **data)
-            logger.info('%s sending %d SMSs', m.company_code, len(m.recipients))
+            await redis.expire(group_key, 86400)
+
+        spend = None
+        if m.cost_limit is not None:
+            spend = await check_sms_limit(self.app['pg'], m.company_code)
+            if spend >= m.cost_limit:
+                return self.json_response(
+                    status='send limit exceeded', cost_limit=m.cost_limit, spend=spend, status_=402
+                )
+
+        group_id = await self.app['pg'].fetchval_b(
+            'insert into message_groups (:values__names) values :values returning id',
+            values=Values(uuid=m.uid, company=m.company_code, method=m.method, from_name=m.from_name),
+        )
+        logger.info('%s sending %d SMSs', m.company_code, len(m.recipients))
+
+        recipients = m.recipients
+        m_base = m.copy(exclude={'recipients'})
+        del m
+        for recipient in recipients:
+            await self.redis.enqueue_job('send_sms', group_id, recipient, m_base)
+
         return self.json_response(status='enqueued', spend=spend, status_=201)
 
 
 class SmsValidateView(ServiceView):
     async def call(self, request):
         m = await self.request_data(SmsNumbersModel)
-        result = {str(k): self.to_dict(self.sender.validate_number(n, m.country_code)) for k, n in m.numbers.items()}
+        result = {str(k): self.to_dict(validate_number(n, m.country_code)) for k, n in m.numbers.items()}
         return self.json_response(**result)
 
     @classmethod
@@ -152,7 +178,7 @@ class TestWebhookView(View):
 
     async def call(self, request):
         m = await self.request_data(MandrillSingleWebhook)
-        await self.sender.update_message_status(SendMethod.email_test, m)
+        await self.redis.enqueue_job('update_message_status', SendMethod.email_test, m)
         return PreResponse(text='message status updated\n')
 
 
@@ -182,7 +208,7 @@ class MandrillWebhookView(View):
         except ValueError as e:
             raise JsonErrors.HTTPBadRequest(f'invalid json data: {e}')
 
-        await self.sender.update_mandrill_webhooks(events)
+        await self.redis.enqueue_job('update_mandrill_webhooks', events)
         return PreResponse(text='message status updated\n')
 
 
@@ -194,7 +220,7 @@ class MessageBirdWebhookView(View):
     async def call(self, request):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
-        await self.sender.update_message_status(SendMethod.sms_messagebird, m)
+        await self.redis.enqueue_job('update_message_status', SendMethod.sms_messagebird, m)
         return PreResponse(text='message status updated\n')
 
 
@@ -377,7 +403,7 @@ class UserMessagesJsonView(_UserMessagesView):
             query=request.query.get('q'),
         )
         if self.sms_method and self.session.company != '__all__':
-            data['spend'] = await self.sender.check_sms_limit(self.session.company)
+            data['spend'] = await check_sms_limit(self.app['pg'], self.session.company)
 
         if len(data['items']) == 1:
             data['events'] = await self.events(data)
@@ -479,7 +505,7 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         data = await self.query(tags=request.query.getall('tags', None), query=request.query.get('q', None))
         total_sms_spend = None
         if 'sms' in request.match_info['method'] and self.session.company != '__all__':
-            total_sms_spend = '{:,.3f}'.format(await self.sender.check_sms_limit(self.session.company))
+            total_sms_spend = '{:,.3f}'.format(await check_sms_limit(self.app['pg'], self.session.company))
         hits = data['items']
         headings = ['To', 'Send Time', 'Status', 'Subject']
         total = data['count']
@@ -736,11 +762,11 @@ class RequestStatsView(AuthView):
 
     @classmethod
     def process_values(cls, request_count, request_list):
-        groups = {k: {'request_count': int(v.decode())} for k, v in request_count.items()}
+        groups = {k: {'request_count': int(v)} for k, v in request_count.items()}
 
         for v in request_list:
-            k, time_ = v.rsplit(b':', 1)
-            time_ = float(time_.decode()) / 1000
+            k, time_ = v.rsplit(':', 1)
+            time_ = float(time_) / 1000
             g = groups.get(k)
             if g:
                 if 'times' in g:
@@ -752,7 +778,7 @@ class RequestStatsView(AuthView):
 
         data = []
         for k, v in groups.items():
-            method, status = k.decode().split(':')
+            method, status = k.split(':')
             v.update(method=method, status=status + 'XX')
             times = v.pop('times', None)
             if times:
@@ -772,8 +798,7 @@ class RequestStatsView(AuthView):
 
     async def call(self, request):
         stats_cache_key = 'request-stats-cache'
-        redis_pool = await self.sender.get_redis()
-        with await redis_pool as redis:
+        with await self.redis as redis:
             response_data = await redis.get(stats_cache_key)
             if not response_data:
                 tr = redis.multi_exec()
@@ -803,8 +828,7 @@ class MessageStatsView(AuthView):
 
     async def call(self, request):
         cache_key = 'message-stats'
-        redis_pool = await request.app['sender'].get_redis()
-        with await redis_pool as redis:
+        with await self.redis as redis:
             results = await redis.get(cache_key)
             if not results:
                 async with self.app['pg'].acquire() as conn:

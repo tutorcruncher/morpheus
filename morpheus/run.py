@@ -6,12 +6,13 @@ from time import sleep
 import click
 import uvloop
 from aiohttp.web import run_app
-from arq import RunWorkerProcess
+from arq.worker import run_worker
 
 from app.db import patches, reset_database, run_patch
 from app.logs import setup_logging
 from app.main import create_app
 from app.settings import Settings
+from app.worker import WorkerSettings
 
 logger = logging.getLogger('morpheus.main')
 
@@ -60,7 +61,7 @@ def web(wait):
     Serve the application
     If the database doesn't already exist it will be created.
     """
-    settings = Settings(sender_cls='app.worker.Sender')
+    settings = Settings()
     setup_logging(settings)
 
     logger.info('waiting for postgres and redis to come up...')
@@ -80,7 +81,7 @@ def worker(wait):
     """
     Run the worker
     """
-    settings = Settings(sender_cls='app.worker.Sender')
+    settings = Settings()
     setup_logging(settings)
 
     _set_loop()
@@ -90,7 +91,7 @@ def worker(wait):
     # redis/the network occasionally hangs and gets itself in a mess if we try to connect too early,
     # even once it's "up", hence 2 second wait
     wait and sleep(2)
-    RunWorkerProcess('app/worker.py', 'Worker')
+    run_worker(WorkerSettings, ctx={'settings': settings})
 
 
 @cli.command()
@@ -98,7 +99,7 @@ def postgres_reset_database():
     """
     reset the postgres database
     """
-    settings = Settings(sender_cls='app.worker.Sender')
+    settings = Settings()
     setup_logging(settings)
 
     logger.info('running reset_database...')
@@ -112,7 +113,7 @@ def postgres_patch(live, patch):
     """
     run a postgres patch
     """
-    settings = Settings(sender_cls='app.worker.Sender')
+    settings = Settings()
     setup_logging(settings)
 
     logger.info('running reset_database...')

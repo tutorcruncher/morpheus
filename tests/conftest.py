@@ -4,11 +4,15 @@ import uuid
 
 import pytest
 from aiohttp.test_utils import teardown_test_loop
-from buildpg import asyncpg
+from arq import Worker
+from atoolbox.db.helpers import DummyPgPool
+from buildpg import Values, asyncpg
 
-from morpheus.app.db import SimplePgPool, prepare_database
+from morpheus.app.db import prepare_database
 from morpheus.app.main import create_app
+from morpheus.app.models import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
+from morpheus.app.worker import startup as worker_startup, worker_functions
 
 from .dummy_server import create_external_app
 
@@ -62,6 +66,7 @@ def settings(tmpdir, mock_external):
         mandrill_key='good-mandrill-testing-key',
         log_level='ERROR',
         mandrill_url=mock_external.app['server_name'] + '/mandrill',
+        mandrill_timeout=0.5,
         host_name=None,
         click_host_name='click.example.com',
         messagebird_key='good-messagebird-testing-key',
@@ -77,25 +82,18 @@ def settings(tmpdir, mock_external):
 @pytest.fixture(name='cli')
 async def _fix_cli(loop, test_client, settings, db_conn):
     async def modify_startup(app):
-        app['sender']._concurrency_enabled = False
-        await app['sender'].startup()
-        redis = await app['sender'].get_redis()
-        await redis.flushdb()
-
-    async def shutdown(app):
-        await app['sender'].shutdown()
+        await app['redis'].flushdb()
 
     app = create_app(loop, settings=settings)
-    app.update(pg=SimplePgPool(db_conn), webhook_auth_key=b'testing')
+    app.update(pg=DummyPgPool(db_conn), webhook_auth_key=b'testing')
     app.on_startup.append(modify_startup)
-    app.on_shutdown.append(shutdown)
     cli = await test_client(app)
     cli.server.app['morpheus_api'].root = f'http://localhost:{cli.server.port}/'
     return cli
 
 
 @pytest.fixture
-def send_email(cli):
+def send_email(cli, worker):
     async def _send_message(status_code=201, **extra):
         data = dict(
             uid=str(uuid.uuid4()),
@@ -111,6 +109,7 @@ def send_email(cli):
         data.update(**extra)
         r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == status_code
+        await worker.run_check()
         if len(data['recipients']) != 1:
             return NotImplemented
         else:
@@ -120,7 +119,7 @@ def send_email(cli):
 
 
 @pytest.fixture
-def send_sms(cli):
+def send_sms(cli, worker):
     async def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),
@@ -135,6 +134,56 @@ def send_sms(cli):
         data.update(**extra)
         r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
+        await worker.run_check()
         return data['uid'] + '-447896541236'
 
     return _send_message
+
+
+@pytest.yield_fixture(name='worker_ctx')
+async def _fix_worker_ctx(settings, db_conn):
+    ctx = dict(settings=settings, pg=DummyPgPool(db_conn))
+    await worker_startup(ctx)
+
+    yield ctx
+
+    await asyncio.gather(ctx['session'].close(), ctx['mandrill'].close(), ctx['messagebird'].close())
+
+
+@pytest.yield_fixture(name='worker')
+async def _fix_worker(cli, worker_ctx, settings):
+    worker = Worker(
+        functions=worker_functions, redis_pool=cli.server.app['redis'], burst=True, poll_delay=0.01, ctx=worker_ctx
+    )
+
+    yield worker
+
+    worker.pool = None
+    await worker.close()
+
+
+@pytest.fixture(name='call_send_emails')
+def _fix_call_send_emails(db_conn):
+    async def run(**kwargs):
+        base_kwargs = dict(
+            uid=str(uuid.uuid4()),
+            subject_template='hello',
+            company_code='test',
+            from_address='testing@example.com',
+            method=SendMethod.email_mandrill,
+            recipients=[],
+        )
+        m = EmailSendModel(**dict(base_kwargs, **kwargs))
+        group_id = await db_conn.fetchval_b(
+            'insert into message_groups (:values__names) values :values returning id',
+            values=Values(
+                uuid=m.uid,
+                company=m.company_code,
+                method=m.method.value,
+                from_email=m.from_address.email,
+                from_name=m.from_address.name,
+            ),
+        )
+        return group_id, m
+
+    return run

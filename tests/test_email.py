@@ -7,14 +7,16 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from aiohttp import ClientError, ClientOSError
+from arq import Retry
 from pytest_toolbox.comparison import AnyInt, RegexStr
 
 from morpheus.app.ext import ApiError
 from morpheus.app.main import create_app, get_mandrill_webhook_key
+from morpheus.app.models import EmailRecipientModel
+from morpheus.app.worker import email_retrying, send_email as worker_send_email
 
 
-async def test_send_email(cli, tmpdir):
+async def test_send_email(cli, worker, tmpdir):
     uuid = str(uuid4())
     data = {
         'uid': uuid,
@@ -35,6 +37,7 @@ async def test_send_email(cli, tmpdir):
     }
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(uuid + '-foobarexampleorg.txt').read()
     assert '\nsubject: test email Apple\n' in msg_file
@@ -47,7 +50,7 @@ async def test_send_email(cli, tmpdir):
     assert set(data['tags']) == {uuid, 'foobar'}
 
 
-async def test_webhook(cli, send_email, db_conn):
+async def test_webhook(cli, send_email, db_conn, worker):
     uuid = str(uuid4())
     message_id = await send_email(uid=uuid)
 
@@ -61,6 +64,7 @@ async def test_webhook(cli, send_email, db_conn):
     data = {'ts': int(2e9), 'event': 'open', '_id': message_id, 'foobar': ['hello', 'world']}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', message_id)
     assert message['status'] == 'open'
@@ -82,7 +86,7 @@ async def test_webhook(cli, send_email, db_conn):
     assert extra['opens'] is None
 
 
-async def test_webhook_old(cli, send_email, db_conn):
+async def test_webhook_old(cli, send_email, db_conn, worker):
     msg_id = await send_email()
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'send'
@@ -92,6 +96,7 @@ async def test_webhook_old(cli, send_email, db_conn):
     data = {'ts': int(1.4e9), 'event': 'open', '_id': msg_id}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'send'
@@ -100,7 +105,7 @@ async def test_webhook_old(cli, send_email, db_conn):
     assert message['update_ts'] == first_update_ts
 
 
-async def test_webhook_repeat(cli, send_email, db_conn):
+async def test_webhook_repeat(cli, send_email, db_conn, worker):
     msg_id = await send_email()
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'send'
@@ -113,6 +118,7 @@ async def test_webhook_repeat(cli, send_email, db_conn):
     data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id, 'user_agent': 'xx'}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 5
 
     message = await db_conn.fetchrow('select * from messages where external_id=$1', msg_id)
     assert message['status'] == 'open'
@@ -172,7 +178,7 @@ async def test_example_email_address(send_email, db_conn):
     assert m['status'] == 'send'
 
 
-async def test_mandrill_webhook(cli, send_email, db_conn):
+async def test_mandrill_webhook(cli, send_email, db_conn, worker):
     await send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     assert 1 == await db_conn.fetchval('select count(*) from messages')
 
@@ -194,6 +200,7 @@ async def test_mandrill_webhook(cli, send_email, db_conn):
     )
     r = await cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     events = await db_conn.fetch('select * from events')
     assert len(events) == 1
@@ -234,7 +241,7 @@ async def test_mandrill_send_bad_template(cli, send_email, db_conn):
     assert 'render_failed' == await db_conn.fetchval('select status from messages')
 
 
-async def test_send_email_headers(cli, tmpdir):
+async def test_send_email_headers(cli, tmpdir, worker):
     uid = str(uuid4())
     data = {
         'uid': uid,
@@ -255,6 +262,8 @@ async def test_send_email_headers(cli, tmpdir):
     }
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 2
+
     assert len(tmpdir.listdir()) == 2
     msg_file = tmpdir.join(f'{uid}-foobarexampleorg.txt').read()
     assert '<p>test email Apple Banana Carrot.</p>\n' in msg_file
@@ -435,7 +444,7 @@ async def test_send_md_options(send_email, tmpdir):
     assert '<p>we are_testing_emphasis <strong>bold</strong><br>\nnewline</p>' in msg_file
 
 
-async def test_standard_sass(cli, tmpdir):
+async def test_standard_sass(cli, tmpdir, worker):
     data = dict(
         uid=str(uuid4()),
         company_code='foobar',
@@ -447,6 +456,7 @@ async def test_standard_sass(cli, tmpdir):
     )
     r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201
+    assert await worker.run_check() == 1
     message_id = data['uid'] + '-foobartestingcom'
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -562,148 +572,80 @@ async def test_pdf_empty(send_email, tmpdir):
     assert '\n  "attachments": []\n' in msg_file
 
 
-async def test_mandrill_send_client_error(cli, send_email, mocker, db_conn):
-    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
-    mock_mandrill_post.side_effect = ClientError('foobar')
+async def test_mandrill_send_client_error(db_conn, worker_ctx, call_send_emails):
+    group_id, m = await call_send_emails(subject_template='__slow__')
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+    worker_ctx['job_try'] = 1
+
+    with pytest.raises(Retry) as exc_info:
+        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    assert exc_info.value.defer_score == 5_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
-    await send_email(
-        method='email-mandrill', company_code='mandrill-error-test', recipients=[{'address': 'foobar_a@testing.com'}]
-    )
+
+async def test_mandrill_send_many_errors(db_conn, worker_ctx, call_send_emails):
+    group_id, m = await call_send_emails()
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+    worker_ctx['job_try'] = 10
+
+    await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
 
     m = await db_conn.fetchrow('select * from messages')
     assert m['status'] == 'send_request_failed'
-    assert m['body'] == 'Error sending email: ClientError'
+    assert m['body'] == 'upstream error'
 
 
-async def test_mandrill_send_connection_error_ok(cli, send_email, mocker, db_conn):
-    request = 0
+async def test_mandrill_send_502(db_conn, call_send_emails, worker_ctx):
+    group_id, m = await call_send_emails(subject_template='__502__')
 
-    async def fake_response(url, **data):
-        nonlocal request
-        request += 1
-        if request < 7:
-            raise ClientOSError('foobar')
+    worker_ctx['job_try'] = 1
 
-        class FakeResponse:
-            status = 200
-
-            async def json(self):
-                return [dict(email='foobar_a@testing.com', _id='abc')]
-
-        return FakeResponse()
-
-    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
-    mock_mandrill_post.side_effect = fake_response
-
-    assert 0 == await db_conn.fetchval('select count(*) from messages')
-
-    await send_email(
-        method='email-mandrill', company_code='mandrill-error-ok-test', recipients=[{'address': 'foobar_a@testing.com'}]
-    )
-
-    assert 1 == await db_conn.fetchval('select count(*) from messages')
-
-    m = await db_conn.fetchrow('select * from messages')
-    assert m['status'] == 'send'
-    assert m['body'] == '<body>\nthis is a test\n</body>'
-
-
-async def test_mandrill_send_502_ok(cli, send_email, mocker, db_conn):
-    request = 0
-
-    async def fake_response(url, **data):
-        nonlocal request
-        request += 1
-
-        class FakeResponse:
-            status = 504 if request == 1 else 200
-
-            async def json(self):
-                return [dict(email='foobar_a@testing.com', _id='abc')]
-
-        return FakeResponse()
-
-    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
-    mock_mandrill_post.side_effect = fake_response
-
-    assert 0 == await db_conn.fetchval('select count(*) from messages')
-
-    await send_email(
-        method='email-mandrill', company_code='mandrill-error-ok-test', recipients=[{'address': 'foobar_a@testing.com'}]
-    )
-
-    assert 1 == await db_conn.fetchval('select count(*) from messages')
-
-    m = await db_conn.fetchrow('select * from messages')
-    assert m['status'] == 'send'
-    assert m['body'] == '<body>\nthis is a test\n</body>'
-
-
-async def test_mandrill_send_500_not_ok(cli, send_email, mocker, db_conn):
-    request = 0
-
-    async def fake_response(url, **data):
-        nonlocal request
-        request += 1
-
-        class FakeResponse:
-            status = 500
-
-            async def text(self):
-                return 'center>Foobar</center'
-
-            async def json(self):
-                return [{'body': 'center>Foobar</center'}]
-
-        return FakeResponse()
-
-    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
-    mock_mandrill_post.side_effect = fake_response
-
-    assert 0 == await db_conn.fetchval('select count(*) from messages')
-
-    await send_email(
-        status_code=500,
-        method='email-mandrill',
-        company_code='mandrill-error-ok-test',
-        recipients=[{'address': 'foobar_a@testing.com'}],
-    )
+    with pytest.raises(Retry) as exc_info:
+        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    assert exc_info.value.defer_score == 5_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
 
-async def test_mandrill_send_500_ok(cli, send_email, mocker, db_conn):
-    request = 0
+async def test_mandrill_send_502_last(db_conn, call_send_emails, worker_ctx):
+    group_id, m = await call_send_emails(subject_template='__502__')
 
-    async def fake_response(url, **data):
-        nonlocal request
-        request += 1
+    worker_ctx['job_try'] = len(email_retrying)
 
-        class FakeResponse:
-            status = 500 if request == 1 else 200
-
-            async def text(self):
-                return 'center>nginx/1.1.19</center'
-
-            async def json(self):
-                return [dict(email='foobar_a@testing.com', _id='abc')]
-
-        return FakeResponse()
-
-    mock_mandrill_post = mocker.patch.object(cli.server.app['sender'].mandrill, 'post')
-    mock_mandrill_post.side_effect = fake_response
+    with pytest.raises(Retry) as exc_info:
+        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    assert exc_info.value.defer_score == 43_200_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
-    await send_email(
-        method='email-mandrill', company_code='mandrill-error-ok-test', recipients=[{'address': 'foobar_a@testing.com'}]
-    )
 
-    assert 1 == await db_conn.fetchval('select count(*) from messages')
+async def test_mandrill_send_500_nginx(db_conn, call_send_emails, worker_ctx):
+    group_id, m = await call_send_emails(subject_template='__500_nginx__')
+
+    worker_ctx['job_try'] = 2
+
+    with pytest.raises(Retry) as exc_info:
+        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    assert exc_info.value.defer_score == 10_000
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+
+
+async def test_mandrill_send_500_not_nginx(db_conn, call_send_emails, worker_ctx):
+    group_id, m = await call_send_emails(subject_template='__500__')
+
+    worker_ctx['job_try'] = 1
+
+    with pytest.raises(ApiError) as exc_info:
+        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    assert exc_info.value.status == 500
+
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
 
 
 async def send_with_link(send_email, tmpdir):
@@ -722,7 +664,7 @@ async def send_with_link(send_email, tmpdir):
     return token
 
 
-async def test_link_shortening(send_email, tmpdir, cli, db_conn):
+async def test_link_shortening(send_email, tmpdir, cli, db_conn, worker):
     token = await send_with_link(send_email, tmpdir)
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -745,6 +687,7 @@ async def test_link_shortening(send_email, tmpdir, cli, db_conn):
     )
     assert r.status == 307, await r.text()
     assert r.headers['location'] == 'https://www.foobar.com'
+    assert await worker.run_check() == 2
 
     m_status = await db_conn.fetchval('select status from messages where id=$1', m['id'])
     assert m_status == 'click'
@@ -779,10 +722,11 @@ async def test_link_shortening_wrong_url_missing(send_email, tmpdir, cli):
     assert r.headers['location'] == 'different'
 
 
-async def test_link_shortening_repeat(send_email, tmpdir, cli, db_conn):
+async def test_link_shortening_repeat(send_email, tmpdir, cli, db_conn, worker):
     token = await send_with_link(send_email, tmpdir)
     r = await cli.get('/l' + token, allow_redirects=False)
     assert r.status == 307, await r.text()
+    assert await worker.run_check() == 2
     assert r.headers['location'] == 'https://www.foobar.com'
     assert 1 == await db_conn.fetchval('select count(*) from events')
 

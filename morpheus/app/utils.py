@@ -16,6 +16,7 @@ import ujson
 from aiohttp.hdrs import METH_GET, METH_HEAD, METH_OPTIONS
 from aiohttp.web import Application, HTTPClientError, Request, Response
 from aiohttp_jinja2 import render_template
+from arq import ArqRedis
 from markupsafe import Markup
 from pydantic import BaseModel, ValidationError
 from pydantic.json import pydantic_encoder
@@ -85,13 +86,11 @@ class View:
     headers = None
 
     def __init__(self, request):
-        from .worker import Sender  # noqa
-
         self.request: Request = request
         self.app: Application = request.app
         self.settings: Settings = self.app['settings']
         self.session: Optional[Session] = None
-        self.sender: Sender = request.app['sender']
+        self.redis: ArqRedis = self.app['redis']
 
     def full_url(self, path=''):
         return Markup(f'{self.request.scheme}://{self.request.host}{path}')

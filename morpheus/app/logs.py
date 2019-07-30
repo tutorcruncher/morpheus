@@ -21,7 +21,7 @@ def setup_logging(settings: Settings):
         'disable_existing_loggers': False,
         'formatters': {'morpheus.default': {'format': '%(levelname)s %(name)s: %(message)s'}},
         'handlers': {
-            'morpheus.default': {'level': 'DEBUG', 'class': 'arq.logs.ColourHandler', 'formatter': 'morpheus.default'},
+            'morpheus.default': {'level': 'DEBUG', 'class': 'logging.StreamHandler', 'formatter': 'morpheus.default'},
             'sentry': {'level': 'WARNING', 'class': 'raven.handlers.logging.SentryHandler', 'client': client}
             if client
             else {'level': 'WARNING', 'class': 'logging.NullHandler'},

@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from aiohttp.web import Application, HTTPForbidden, Response, json_response
@@ -5,6 +6,17 @@ from aiohttp.web import Application, HTTPForbidden, Response, json_response
 
 async def mandrill_send_view(request):
     data = await request.json()
+
+    message = data.get('message') or {}
+    if message.get('subject') == '__slow__':
+        await asyncio.sleep(30)
+    elif message.get('subject') == '__502__':
+        return Response(status=502)
+    elif message.get('subject') == '__500_nginx__':
+        return Response(text='<hr><center>nginx/1.12.2</center>', status=500)
+    elif message.get('subject') == '__500__':
+        return Response(text='foobar', status=500)
+
     if data['key'] != 'good-mandrill-testing-key':
         return json_response({'auth': 'failed'}, status=403)
     to_email = data['message']['to'][0]['email']
