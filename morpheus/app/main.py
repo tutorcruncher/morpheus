@@ -89,18 +89,16 @@ async def get_mandrill_webhook_key(app):
 
 
 async def app_startup(app):
-    loop = app.loop or asyncio.get_event_loop()
     settings: Settings = app['settings']
-    redis = await create_pool(settings.redis_settings)
-    with async_timeout.timeout(5, loop=loop):
-        await log_redis_info(redis, logger.info)
+    app['redis'] = await create_pool(settings.redis_settings)
+    with async_timeout.timeout(5):
+        await log_redis_info(app['redis'], logger.info)
 
     await prepare_database(settings, False)
-    app.update(
-        pg=app.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=10, max_size=50), redis=redis
-    )
+    if 'pg' not in app:
+        app['pg'] = await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=10, max_size=50)
 
-    loop.create_task(get_mandrill_webhook_key(app))
+    asyncio.get_event_loop().create_task(get_mandrill_webhook_key(app))
 
 
 async def app_cleanup(app):

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import chevron
-from aiohttp import ClientConnectionError, ClientSession
+from aiohttp import ClientConnectionError, ClientSession, ClientTimeout
 from arq import Retry
 from arq.utils import to_unix_ms
 from buildpg import MultipleValues, Values, asyncpg
@@ -138,7 +138,7 @@ async def startup(ctx):
         email_click_url=f'https://{settings.click_host_name}/l',
         sms_click_url=f'{settings.click_host_name}/l',
         pg=ctx.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=2),
-        session=ClientSession(),
+        session=ClientSession(timeout=ClientTimeout(total=30)),
         mandrill=Mandrill(settings=settings),
         messagebird=MessageBird(settings=settings),
     )
@@ -372,11 +372,6 @@ class SendSMS:
         self.from_name = self.m.from_name if self.m.country_code != 'US' else self.settings.us_send_number
 
     async def run(self):
-        # if self.ctx['job_try'] > len(email_retrying):
-        #     main_logger.error('%s: tried to send email %d times, all failed', self.group_id, self.ctx['job_try'])
-        #     await self._store_email_failed(MessageStatus.send_request_failed, 'upstream error')
-        #     return
-
         sms_data = await self._sms_prep()
         if not sms_data:
             return

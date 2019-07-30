@@ -90,7 +90,7 @@ def worker(wait):
     _check_services_ready(settings)
     # redis/the network occasionally hangs and gets itself in a mess if we try to connect too early,
     # even once it's "up", hence 2 second wait
-    # wait and sleep(2)
+    wait and sleep(2)
     run_worker(WorkerSettings, ctx={'settings': settings})
 
 

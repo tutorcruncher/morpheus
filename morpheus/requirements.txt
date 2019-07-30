@@ -13,7 +13,6 @@ ipython==7.6.1
 jinja2==2.10.1
 libsass==0.19.2
 misaka==2.1.1
-msgpack-python==0.5.6
 multidict==4.5.2
 phonenumbers==8.10.14
 pydantic[email]==0.31

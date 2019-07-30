@@ -72,7 +72,7 @@ class ClickRedirectView(TemplateView):
 
             link_id, url = link
 
-            await request.app['redis'].enqueue_job(
+            await self.redis.enqueue_job(
                 'store_click', link_id=link_id, ip=ip_address, user_agent=request.headers.get('User-Agent'), ts=ts
             )
             if arg_url and arg_url != url:
@@ -88,7 +88,7 @@ class ClickRedirectView(TemplateView):
 class EmailSendView(ServiceView):
     async def call(self, request):
         m: EmailSendModel = await self.request_data(EmailSendModel)
-        with await request.app['redis'] as redis:
+        with await self.redis as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
@@ -110,7 +110,7 @@ class EmailSendView(ServiceView):
         m_base = m.copy(exclude={'recipients'})
         del m
         for recipient in recipients:
-            await request.app['redis'].enqueue_job('send_email', group_id, recipient, m_base)
+            await self.redis.enqueue_job('send_email', group_id, recipient, m_base)
         return PreResponse(text='201 job enqueued\n', status=201)
 
 
@@ -130,7 +130,7 @@ async def check_sms_limit(conn, company_code):
 class SmsSendView(ServiceView):
     async def call(self, request):
         m = await self.request_data(SmsSendModel)
-        with await request.app['redis'] as redis:
+        with await self.redis as redis:
             group_key = f'group:{m.uid}'
             v = await redis.incr(group_key)
             if v > 1:
@@ -155,7 +155,7 @@ class SmsSendView(ServiceView):
         m_base = m.copy(exclude={'recipients'})
         del m
         for recipient in recipients:
-            await request.app['redis'].enqueue_job('send_sms', group_id, recipient, m_base)
+            await self.redis.enqueue_job('send_sms', group_id, recipient, m_base)
 
         return self.json_response(status='enqueued', spend=spend, status_=201)
 
@@ -178,7 +178,7 @@ class TestWebhookView(View):
 
     async def call(self, request):
         m = await self.request_data(MandrillSingleWebhook)
-        await request.app['redis'].enqueue_job('update_message_status', SendMethod.email_test, m)
+        await self.redis.enqueue_job('update_message_status', SendMethod.email_test, m)
         return PreResponse(text='message status updated\n')
 
 
@@ -208,7 +208,7 @@ class MandrillWebhookView(View):
         except ValueError as e:
             raise JsonErrors.HTTPBadRequest(f'invalid json data: {e}')
 
-        await request.app['redis'].enqueue_job('update_mandrill_webhooks', events)
+        await self.redis.enqueue_job('update_mandrill_webhooks', events)
         return PreResponse(text='message status updated\n')
 
 
@@ -220,7 +220,7 @@ class MessageBirdWebhookView(View):
     async def call(self, request):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
-        await request.app['redis'].enqueue_job('update_message_status', SendMethod.sms_messagebird, m)
+        await self.redis.enqueue_job('update_message_status', SendMethod.sms_messagebird, m)
         return PreResponse(text='message status updated\n')
 
 
@@ -798,7 +798,7 @@ class RequestStatsView(AuthView):
 
     async def call(self, request):
         stats_cache_key = 'request-stats-cache'
-        with await request.app['redis'] as redis:
+        with await self.redis as redis:
             response_data = await redis.get(stats_cache_key)
             if not response_data:
                 tr = redis.multi_exec()
@@ -828,7 +828,7 @@ class MessageStatsView(AuthView):
 
     async def call(self, request):
         cache_key = 'message-stats'
-        with await request.app['redis'] as redis:
+        with await self.redis as redis:
             results = await redis.get(cache_key)
             if not results:
                 async with self.app['pg'].acquire() as conn:
