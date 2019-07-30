@@ -41,12 +41,12 @@ services:
     image: morpheus
     hostname: morpheus-web
     environment:
+      PORT: 8000
       APP_AUTH_KEY: ${APP_AUTH_KEY}
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
       APP_USER_AUTH_KEY: ${APP_USER_AUTH_KEY}
       APP_PG_DSN: ${APP_PG_DSN}
-      APP_REDIS_HOST: redis
-      APP_COMMIT: ${COMMIT}
+      APP_REDIS_SETTINGS: 'redis://redis:6379'
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
       APP_HOST_NAME: ${APP_HOST_NAME}
@@ -69,16 +69,12 @@ services:
   worker:
     image: morpheus
     hostname: morpheus-worker
-    entrypoint:
-    - ./run.py
-    - worker
     environment:
       APP_AUTH_KEY: ${APP_AUTH_KEY}
       APP_MANDRILL_KEY: ${APP_MANDRILL_KEY}
       APP_USER_AUTH_KEY: ${APP_USER_AUTH_KEY}
       APP_PG_DSN: ${APP_PG_DSN}
-      APP_REDIS_HOST: redis
-      APP_COMMIT: ${COMMIT}
+      APP_REDIS_SETTINGS: 'redis://redis:6379'
       APP_RELEASE_DATE: ${RELEASE_DATE}
       APP_RAVEN_DSN: ${RAVEN_DSN}
       APP_HOST_NAME: ${APP_HOST_NAME}

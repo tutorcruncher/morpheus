@@ -39,10 +39,6 @@ def pretty_lenient_json(data):
     return json.dumps(data, indent=2, default=pydantic_encoder) + '\n'
 
 
-class OkCancelError(asyncio.CancelledError):
-    pass
-
-
 class JsonErrors:
     class _HTTPClientErrorJson(HTTPClientError):
         def __init__(self, message, *, details=None, headers=None):
@@ -117,9 +113,6 @@ class View:
                 r = await self.call(request)
             else:
                 r = await shield(self.call(request))
-        except asyncio.CancelledError as e:
-            # either the request was shielded or request didn't need shielding
-            raise OkCancelError from e
         except HTTPClientError as e:
             if self.headers:
                 e.headers.update(self.headers)

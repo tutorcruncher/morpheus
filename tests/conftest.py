@@ -151,7 +151,7 @@ async def _fix_worker_ctx(settings, db_conn):
 
 
 @pytest.yield_fixture(name='worker')
-async def _fix_worker(cli, worker_ctx, settings):
+async def _fix_worker(cli, worker_ctx):
     worker = Worker(
         functions=worker_functions, redis_pool=cli.server.app['redis'], burst=True, poll_delay=0.01, ctx=worker_ctx
     )
