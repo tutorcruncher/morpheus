@@ -221,12 +221,13 @@ async def test_user_tags(cli, settings, send_email):
     assert data['items'][0]['external_id'] == f'{uid2}-4tcom'
 
 
-async def test_message_details(cli, settings, send_email, db_conn):
+async def test_message_details(cli, settings, send_email, db_conn, worker):
     msg_ext_id = await send_email(company_code='test-details')
 
     data = {'ts': int(1e10), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
     r = await cli.get(modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details'))
@@ -242,7 +243,7 @@ async def test_message_details(cli, settings, send_email, db_conn):
     assert text.count('<span class="datetime">') == 3
 
 
-async def test_message_details_link(cli, settings, send_email, db_conn):
+async def test_message_details_link(cli, settings, send_email, db_conn, worker):
     msg_ext_id = await send_email(
         company_code='test-details',
         recipients=[
@@ -262,6 +263,7 @@ async def test_message_details_link(cli, settings, send_email, db_conn):
     data = {'ts': int(2e12), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = await cli.post('/webhook/test/', json=data)
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
     url = modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details')

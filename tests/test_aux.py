@@ -47,13 +47,12 @@ async def test_405(cli, smart_caplog):
 
 
 async def test_request_stats(cli, loop):
-    redis = await cli.server.app['sender'].get_redis()
+    redis = await cli.server.app['redis']
     await redis.delete(cli.server.app['stats_request_count'])
     await redis.delete(cli.server.app['stats_request_list'])
     await asyncio.gather(*(cli.get('/') for _ in range(5)))
     await cli.post('/')
 
-    redis = await cli.server.app['sender'].get_redis()
     for i in range(10):
         if 6 == await redis.llen(cli.server.app['stats_request_list']):
             break
@@ -70,7 +69,6 @@ async def test_request_stats(cli, loop):
     assert good['method'] == 'GET'
     assert 'time_90' in good
 
-    redis = await cli.server.app['sender'].get_redis()
     keys = await redis.llen(cli.server.app['stats_request_list'])
     assert keys == 0
 
@@ -82,14 +80,13 @@ async def test_request_stats(cli, loop):
 
 
 async def test_request_stats_reset(cli, loop):
-    redis = await cli.server.app['sender'].get_redis()
+    redis = await cli.server.app['redis']
     await redis.delete(cli.server.app['stats_request_count'])
     await redis.delete(cli.server.app['stats_request_list'])
 
     for _ in range(30):
         await cli.get('/')
 
-    redis = await cli.server.app['sender'].get_redis()
     for i in range(10):
         if 10 > await redis.llen(cli.server.app['stats_request_list']):
             break
@@ -221,7 +218,7 @@ async def test_missing_url_with_arg_bad(cli):
 
 
 async def test_api_error(settings, loop, mock_external):
-    s = ApiSession(mock_external.app['server_name'], settings, loop)
+    s = ApiSession(mock_external.app['server_name'], settings)
     try:
         with pytest.raises(ApiError) as exc_info:
             await s.get('/foobar')

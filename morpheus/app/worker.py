@@ -461,7 +461,7 @@ class SendSMS:
                 f'?username={self.settings.messagebird_pricing_username}'
                 f'&password={self.settings.messagebird_pricing_password}'
             )
-            async with self.session.get(url) as r:
+            async with self.ctx['session'].get(url) as r:
                 assert r.status == 200, (r.status, await r.text())
                 data = await r.json()
             if not next((1 for g in data if g['mcc'] == '0'), None):

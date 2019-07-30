@@ -119,7 +119,7 @@ def send_email(cli, worker):
 
 
 @pytest.fixture
-def send_sms(cli):
+def send_sms(cli, worker):
     async def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),
@@ -134,6 +134,7 @@ def send_sms(cli):
         data.update(**extra)
         r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status == 201
+        await worker.run_check()
         return data['uid'] + '-447896541236'
 
     return _send_message

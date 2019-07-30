@@ -176,7 +176,7 @@ async def test_exceed_cost_limit(cli, tmpdir, worker):
     assert len(tmpdir.listdir()) == 12
 
 
-async def test_send_messagebird(cli, tmpdir, mock_external):
+async def test_send_messagebird(cli, tmpdir, mock_external, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -186,6 +186,7 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447801234567/hlr > 201',
         'GET /messagebird/lookup/447801234567 > 200',
@@ -198,10 +199,11 @@ async def test_send_messagebird(cli, tmpdir, mock_external):
     data = dict(data, uid=str(uuid4()))
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 2
     assert ['POST /messagebird/messages > 201'] == mock_external.app['request_log']
 
 
-async def test_messagebird_no_hlr(cli, tmpdir, mock_external):
+async def test_messagebird_no_hlr(cli, tmpdir, mock_external, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -211,6 +213,7 @@ async def test_messagebird_no_hlr(cli, tmpdir, mock_external):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447888888888/hlr > 201',
         'GET /messagebird/lookup/447888888888 > 200',
@@ -218,7 +221,7 @@ async def test_messagebird_no_hlr(cli, tmpdir, mock_external):
     mock_external.app['request_log'] = []
 
 
-async def test_messagebird_no_network(cli, tmpdir, mock_external):
+async def test_messagebird_no_network(cli, tmpdir, mock_external, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -228,6 +231,7 @@ async def test_messagebird_no_network(cli, tmpdir, mock_external):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447777777777/hlr > 201',
         'GET /messagebird/lookup/447777777777 > 200',
@@ -235,7 +239,7 @@ async def test_messagebird_no_network(cli, tmpdir, mock_external):
     mock_external.app['request_log'] = []
 
 
-async def test_messagebird_webhook(cli, db_conn, mock_external):
+async def test_messagebird_webhook(cli, db_conn, mock_external, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'webhook-test',
@@ -245,6 +249,7 @@ async def test_messagebird_webhook(cli, db_conn, mock_external):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
     msg = await db_conn.fetchrow('select * from messages join message_groups j on messages.group_id = j.id')
@@ -267,13 +272,14 @@ async def test_messagebird_webhook(cli, db_conn, mock_external):
     }
     r = await cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
     assert r.status == 200, await r.text()
+    assert await worker.run_check() == 2
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
     msg = await db_conn.fetchrow('select * from messages')
     assert msg['status'] == 'delivered'
 
 
-async def test_failed_render(cli, tmpdir, db_conn):
+async def test_failed_render(cli, tmpdir, db_conn, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'test_failed_render',
@@ -284,6 +290,7 @@ async def test_failed_render(cli, tmpdir, db_conn):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 0
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -291,7 +298,7 @@ async def test_failed_render(cli, tmpdir, db_conn):
     assert msg['status'] == 'render_failed'
 
 
-async def test_link_shortening(cli, tmpdir, db_conn):
+async def test_link_shortening(cli, tmpdir, db_conn, worker):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d75',
         'company_code': 'sms_test_link_shortening',
@@ -301,6 +308,7 @@ async def test_link_shortening(cli, tmpdir, db_conn):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d75-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
@@ -325,7 +333,7 @@ async def test_link_shortening(cli, tmpdir, db_conn):
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
 
 
-async def test_send_multi_part(cli, tmpdir):
+async def test_send_multi_part(cli, tmpdir, worker):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d76',
         'company_code': 'foobar',
@@ -335,6 +343,7 @@ async def test_send_multi_part(cli, tmpdir):
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
+    assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d76-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)

@@ -220,7 +220,7 @@ class MessageBirdWebhookView(View):
     async def call(self, request):
         # TODO looks like "ts" might be wrong here, appears to always be send time.
         m = MessageBirdWebHook(**request.query)
-        await self.sender.update_message_status(SendMethod.sms_messagebird, m)
+        await request.app['redis'].enqueue_job('update_message_status', SendMethod.sms_messagebird, m)
         return PreResponse(text='message status updated\n')
 
 
@@ -762,11 +762,11 @@ class RequestStatsView(AuthView):
 
     @classmethod
     def process_values(cls, request_count, request_list):
-        groups = {k: {'request_count': int(v.decode())} for k, v in request_count.items()}
+        groups = {k: {'request_count': int(v)} for k, v in request_count.items()}
 
         for v in request_list:
-            k, time_ = v.rsplit(b':', 1)
-            time_ = float(time_.decode()) / 1000
+            k, time_ = v.rsplit(':', 1)
+            time_ = float(time_) / 1000
             g = groups.get(k)
             if g:
                 if 'times' in g:
@@ -778,7 +778,7 @@ class RequestStatsView(AuthView):
 
         data = []
         for k, v in groups.items():
-            method, status = k.decode().split(':')
+            method, status = k.split(':')
             v.update(method=method, status=status + 'XX')
             times = v.pop('times', None)
             if times:
