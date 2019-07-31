@@ -16,6 +16,7 @@ import chevron
 from aiohttp import ClientConnectionError, ClientSession, ClientTimeout
 from arq import Retry
 from arq.utils import to_unix_ms
+from arq.worker import run_worker as arq_run_worker
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
 from phonenumbers import (
@@ -670,3 +671,7 @@ class WorkerSettings:
     functions = worker_functions
     on_startup = startup
     on_shutdown = shutdown
+
+
+def run_worker(settings: Settings):  # pragma: no cover
+    arq_run_worker(WorkerSettings, redis_settings=settings.redis_settings, ctx={'settings': settings})

@@ -4,24 +4,26 @@ import uuid
 
 import pytest
 from aiohttp.test_utils import teardown_test_loop
-from arq import Worker
+from aioredis import create_redis
+from arq import ArqRedis, Worker
+from atoolbox.db import prepare_database
 from atoolbox.db.helpers import DummyPgPool
+from atoolbox.test_utils import DummyServer, create_dummy_server
 from buildpg import Values, asyncpg
 
-from morpheus.app.db import prepare_database
 from morpheus.app.main import create_app
 from morpheus.app.models import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
 from morpheus.app.worker import startup as worker_startup, worker_functions
 
-from .dummy_server import create_external_app
+from . import dummy_server
 
 
 def pytest_addoption(parser):
     parser.addoption('--reuse-db', action='store_true', default=False, help='keep the existing database if it exists')
 
 
-pg_settings = dict(pg_dsn='postgres://postgres:waffle@localhost:5432/morpheus_test', pg_name=None)
+pg_settings = dict(APP_PG_DSN='postgres://postgres:waffle@localhost:5432/morpheus_test')
 
 
 @pytest.fixture(scope='session', name='clean_db')
@@ -48,30 +50,41 @@ async def _fix_db_conn(loop, settings, clean_db):
     await conn.close()
 
 
-@pytest.fixture
-async def mock_external(test_server):
-    app = create_external_app()
-    server = await test_server(app)
-    app['server_name'] = f'http://localhost:{server.port}'
-    return server
+@pytest.yield_fixture
+async def redis(loop, settings):
+    addr = settings.redis_settings.host, settings.redis_settings.port
+
+    redis = await create_redis(addr, db=settings.redis_settings.database, encoding='utf8', commands_factory=ArqRedis)
+    await redis.flushdb()
+
+    yield redis
+
+    redis.close()
+    await redis.wait_closed()
+
+
+@pytest.fixture(name='dummy_server')
+async def _fix_dummy_server(aiohttp_server):
+    ctx = {'mandrill_subaccounts': {}}
+    return await create_dummy_server(aiohttp_server, extra_routes=dummy_server.routes, extra_context=ctx)
 
 
 @pytest.fixture
-def settings(tmpdir, mock_external):
+def settings(tmpdir, dummy_server: DummyServer):
     return Settings(
         **pg_settings,
         auth_key='testing-key',
         test_output=str(tmpdir),
-        pdf_generation_url=mock_external.app['server_name'] + '/generate.pdf',
+        pdf_generation_url=dummy_server.server_name + '/generate.pdf',
         mandrill_key='good-mandrill-testing-key',
         log_level='ERROR',
-        mandrill_url=mock_external.app['server_name'] + '/mandrill',
+        mandrill_url=dummy_server.server_name + '/mandrill',
         mandrill_timeout=0.5,
         host_name=None,
         click_host_name='click.example.com',
         messagebird_key='good-messagebird-testing-key',
-        messagebird_url=mock_external.app['server_name'] + '/messagebird',
-        messagebird_pricing_api=mock_external.app['server_name'] + '/messagebird-pricing',
+        messagebird_url=dummy_server.server_name + '/messagebird',
+        messagebird_pricing_api=dummy_server.server_name + '/messagebird-pricing',
         messagebird_pricing_username='mb-username',
         messagebird_pricing_password='mb-password',
         stats_token='test-token',
@@ -80,13 +93,13 @@ def settings(tmpdir, mock_external):
 
 
 @pytest.fixture(name='cli')
-async def _fix_cli(loop, test_client, settings, db_conn):
-    async def modify_startup(app):
-        await app['redis'].flushdb()
+async def _fix_cli(loop, test_client, settings, db_conn, redis):
+    async def pre_startup(app):
+        app.update(redis=redis, pg=DummyPgPool(db_conn))
 
-    app = create_app(loop, settings=settings)
+    app = create_app(settings=settings)
     app.update(pg=DummyPgPool(db_conn), webhook_auth_key=b'testing')
-    app.on_startup.append(modify_startup)
+    app.on_startup.insert(0, pre_startup)
     cli = await test_client(app)
     cli.server.app['morpheus_api'].root = f'http://localhost:{cli.server.port}/'
     return cli
@@ -151,7 +164,7 @@ async def _fix_worker_ctx(settings, db_conn):
 
 
 @pytest.yield_fixture(name='worker')
-async def _fix_worker(cli, worker_ctx, settings):
+async def _fix_worker(cli, worker_ctx):
     worker = Worker(
         functions=worker_functions, redis_pool=cli.server.app['redis'], burst=True, poll_delay=0.01, ctx=worker_ctx
     )

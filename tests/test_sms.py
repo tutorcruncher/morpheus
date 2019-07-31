@@ -176,7 +176,7 @@ async def test_exceed_cost_limit(cli, tmpdir, worker):
     assert len(tmpdir.listdir()) == 12
 
 
-async def test_send_messagebird(cli, tmpdir, mock_external, worker):
+async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -192,18 +192,18 @@ async def test_send_messagebird(cli, tmpdir, mock_external, worker):
         'GET /messagebird/lookup/447801234567 > 200',
         'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
         'POST /messagebird/messages > 201',
-    ] == mock_external.app['request_log']
-    mock_external.app['request_log'] = []
+    ] == dummy_server.log
 
     # send again, this time hlr look and pricing requests shouldn't occur
     data = dict(data, uid=str(uuid4()))
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert await worker.run_check() == 2
-    assert ['POST /messagebird/messages > 201'] == mock_external.app['request_log']
+    assert len(dummy_server.log) == 5
+    assert dummy_server.log[4] == 'POST /messagebird/messages > 201'
 
 
-async def test_messagebird_no_hlr(cli, tmpdir, mock_external, worker):
+async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -217,11 +217,11 @@ async def test_messagebird_no_hlr(cli, tmpdir, mock_external, worker):
     assert [
         'POST /messagebird/lookup/447888888888/hlr > 201',
         'GET /messagebird/lookup/447888888888 > 200',
-    ] == mock_external.app['request_log']
-    mock_external.app['request_log'] = []
+    ] == dummy_server.log
+    dummy_server.log = []
 
 
-async def test_messagebird_no_network(cli, tmpdir, mock_external, worker):
+async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -235,11 +235,11 @@ async def test_messagebird_no_network(cli, tmpdir, mock_external, worker):
     assert [
         'POST /messagebird/lookup/447777777777/hlr > 201',
         'GET /messagebird/lookup/447777777777 > 200',
-    ] == mock_external.app['request_log']
-    mock_external.app['request_log'] = []
+    ] == dummy_server.log
+    dummy_server.log = []
 
 
-async def test_messagebird_webhook(cli, db_conn, mock_external, worker):
+async def test_messagebird_webhook(cli, db_conn, dummy_server, worker):
     data = {
         'uid': str(uuid4()),
         'company_code': 'webhook-test',

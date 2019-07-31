@@ -23,14 +23,21 @@ RUN find /usr -name '*.dist-info'  | xargs rm -r
 # final image
 FROM python:3.7-slim
 
-#COPY --from=build /lib/* /lib/
+COPY --from=build /usr/local/bin/atoolbox /usr/local/bin/
 COPY --from=build /usr/lib/* /usr/lib/
 COPY --from=build /usr/local/lib/python3.7/site-packages /usr/local/lib/python3.7/site-packages
 
 ADD ./app /home/root/app
-ADD ./run.py /home/root/run.py
 
 WORKDIR /home/root
-#HEALTHCHECK --interval=60s --timeout=10s --retries=2 CMD /home/root/run.py check || exit 1
-ENTRYPOINT ["./run.py"]
-CMD ["web"]
+
+ARG COMMIT
+ARG BUILD_TIME
+ENV PYTHONUNBUFFERED=1 \
+    ON_DOCKER=1 \
+    ATOOLBOX_LOG_NAME=morpheus \
+    ATOOLBOX_SETTINGS=app.settings.Settings \
+    APP_COMMIT=$COMMIT \
+    APP_BUILD_TIME=$BUILD_TIME
+
+CMD ["atoolbox", "auto"]

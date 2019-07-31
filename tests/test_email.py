@@ -138,7 +138,7 @@ async def test_webhook_missing(cli, send_email, db_conn):
     assert len(events) == 0
 
 
-async def test_mandrill_send(send_email, db_conn, mock_external):
+async def test_mandrill_send(send_email, db_conn, dummy_server):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is None
     await send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@testing.com'}])
@@ -146,7 +146,7 @@ async def test_mandrill_send(send_email, db_conn, mock_external):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is not None
     assert m['to_address'] == 'foobar_a@testing.com'
-    assert mock_external.app['request_log'] == ['POST /mandrill/messages/send.json > 200']
+    assert dummy_server.app['log'] == ['POST /mandrill/messages/send.json > 200']
 
 
 async def test_send_mandrill_with_other_attachment(send_email, db_conn):
@@ -778,8 +778,8 @@ async def test_link_shortening_not_image(send_email, tmpdir, cli):
     assert re.search(r'<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
 
 
-async def test_mandrill_key_not_setup(settings, loop):
-    app = create_app(loop, settings)
+async def test_mandrill_key_not_setup(settings):
+    app = create_app(settings)
     try:
         assert app['webhook_auth_key'] is None
         await get_mandrill_webhook_key(app)
@@ -789,9 +789,9 @@ async def test_mandrill_key_not_setup(settings, loop):
         await app['morpheus_api'].close()
 
 
-async def test_mandrill_key_existing(settings, loop):
+async def test_mandrill_key_existing(settings):
     settings.host_name = 'example.com'
-    app = create_app(loop, settings)
+    app = create_app(settings)
     try:
         assert app['webhook_auth_key'] is None
         await get_mandrill_webhook_key(app)
@@ -801,9 +801,9 @@ async def test_mandrill_key_existing(settings, loop):
         await app['morpheus_api'].close()
 
 
-async def test_mandrill_key_new(settings, loop):
+async def test_mandrill_key_new(settings):
     settings.host_name = 'different.com'
-    app = create_app(loop, settings)
+    app = create_app(settings)
     app['server_up_wait'] = 0
     try:
         assert app['webhook_auth_key'] is None
@@ -814,9 +814,9 @@ async def test_mandrill_key_new(settings, loop):
         await app['morpheus_api'].close()
 
 
-async def test_mandrill_key_fail(settings, loop):
+async def test_mandrill_key_fail(settings):
     settings.host_name = 'fail.com'
-    app = create_app(loop, settings)
+    app = create_app(settings)
     app['server_up_wait'] = 0
     try:
         assert app['webhook_auth_key'] is None

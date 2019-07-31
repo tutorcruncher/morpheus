@@ -2,17 +2,13 @@ import asyncio
 import logging
 
 import aiohttp_jinja2
-import async_timeout
 import jinja2
 from aiohttp.web import Application
-from arq import create_pool
-from arq.connections import log_redis_info
-from buildpg import asyncpg
+from atoolbox.create_app import cleanup, startup
+from atoolbox.middleware import error_middleware
 
-from .db import prepare_database
 from .ext import Mandrill, MorpheusUserApi
-from .logs import setup_logging
-from .middleware import ErrorLoggingMiddleware, stats_middleware
+from .middleware import stats_middleware
 from .models import SendMethod
 from .settings import Settings
 from .utils import THIS_DIR
@@ -88,32 +84,17 @@ async def get_mandrill_webhook_key(app):
         raise e
 
 
-async def app_startup(app):
-    settings: Settings = app['settings']
-    app['redis'] = await create_pool(settings.redis_settings)
-    with async_timeout.timeout(5):
-        await log_redis_info(app['redis'], logger.info)
-
-    await prepare_database(settings, False)
-    if 'pg' not in app:
-        app['pg'] = await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=10, max_size=50)
-
+async def extra_startup(app):
     asyncio.get_event_loop().create_task(get_mandrill_webhook_key(app))
 
 
-async def app_cleanup(app):
-    app['redis'].close()
-    await asyncio.gather(
-        app['pg'].close(), app['redis'].wait_closed(), app['morpheus_api'].close(), app['mandrill'].close()
-    )
+async def extra_cleanup(app):
+    await asyncio.gather(app['morpheus_api'].close(), app['mandrill'].close())
 
 
-def create_app(loop, settings: Settings = None):
+def create_app(settings: Settings = None):
     settings = settings or Settings()
-    setup_logging(settings)
-    app = Application(
-        client_max_size=1024 ** 2 * 100, middlewares=(stats_middleware, ErrorLoggingMiddleware().middleware)
-    )
+    app = Application(client_max_size=settings.max_request_size, middlewares=(stats_middleware, error_middleware))
     aiohttp_jinja2.setup(
         app,
         loader=jinja2.FileSystemLoader(str(THIS_DIR / 'templates')),
@@ -131,8 +112,11 @@ def create_app(loop, settings: Settings = None):
         server_up_wait=5,
     )
 
-    app.on_startup.append(app_startup)
-    app.on_cleanup.append(app_cleanup)
+    app.on_startup.append(startup)
+    app.on_startup.append(extra_startup)
+
+    app.on_cleanup.append(cleanup)
+    app.on_cleanup.append(extra_cleanup)
 
     app.router.add_get('/', index, name='index')
     app.router.add_get(r'/l{token}{_:/?}', ClickRedirectView.view(), name='click-redirect')

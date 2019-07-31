@@ -27,7 +27,21 @@ all:
 - +lint
 
 build:
-- docker build morpheus -t morpheus
+- _find morpheus -name '*.py[co]' -delete
+- _find morpheus -name '__pycache__' -delete
+- export C=$(git rev-parse HEAD)
+- export BT=$(date)
+- 'docker build morpheus -t morpheus --build-arg COMMIT=$C --build-arg BUILD_TIME="$BT"'
+
+docker-dev:
+- +build
+- _echo ================================================================================
+- _echo running locally for development and testing
+- _echo You'll want to run docker-logs in another window see what's going on
+- _echo ================================================================================
+- _echo
+- _echo running docker compose...
+- docker-compose up -d
 
 clean:
 - rm -rf `find . -name __pycache__`

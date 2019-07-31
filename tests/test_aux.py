@@ -32,18 +32,14 @@ async def test_favicon(cli):
     assert 'image' in r.headers['Content-Type']  # value can vary
 
 
-async def test_stats_unauthorised(cli, smart_caplog):
-    smart_caplog.set_loggers(log_names=['morpheus.request'])
+async def test_stats_unauthorised(cli):
     r = await cli.get('/stats/requests/')
     assert r.status == 403, await r.text()
-    assert '403 /stats/requests/' in smart_caplog
 
 
-async def test_405(cli, smart_caplog):
-    smart_caplog.set_loggers(log_names=['morpheus.request'])
+async def test_405(cli):
     r = await cli.post('/')
     assert r.status == 405, await r.text()
-    assert '405 /' in smart_caplog
 
 
 async def test_request_stats(cli, loop):
@@ -141,24 +137,24 @@ async def test_message_stats_old(cli, send_email, db_conn):
     ]
 
 
-async def test_create_sub_account_new_few_sent(cli, mock_external):
+async def test_create_sub_account_new_few_sent(cli, dummy_server):
     data = {'company_code': 'foobar'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert 'subaccount created\n' == await r.text()
-    assert mock_external.app['request_log'] == ['POST /mandrill/subaccounts/add.json > 200']
+    assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
 
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
     assert 'subaccount already exists with only 42 emails sent, reuse of subaccount id permitted\n' == await r.text()
-    assert mock_external.app['request_log'] == [
+    assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/add.json > 500',
         'GET /mandrill/subaccounts/info.json > 200',
     ]
 
 
-async def test_create_sub_account_lots(cli, mock_external):
+async def test_create_sub_account_lots(cli, dummy_server):
     data = {'company_code': 'lots-sent'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
@@ -166,30 +162,30 @@ async def test_create_sub_account_lots(cli, mock_external):
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 409, await r.text()
     assert 'subaccount already exists with 200 emails sent, reuse of subaccount id not permitted\n' == await r.text()
-    assert mock_external.app['request_log'] == [
+    assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/add.json > 500',
         'GET /mandrill/subaccounts/info.json > 200',
     ]
 
 
-async def test_create_sub_account_wrong_response(cli, mock_external):
+async def test_create_sub_account_wrong_response(cli, dummy_server):
     data = {'company_code': 'broken'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 400, await r.text()
 
-    assert mock_external.app['request_log'] == ['POST /mandrill/subaccounts/add.json > 500']
+    assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 500']
 
 
-async def test_create_sub_account_other_method(cli, mock_external):
+async def test_create_sub_account_other_method(cli, dummy_server):
     r = await cli.post('/create-subaccount/email-test/', headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
     assert 'no subaccount creation required for "email-test"\n' == await r.text()
 
-    assert mock_external.app['request_log'] == []
+    assert dummy_server.log == []
 
 
-async def test_create_sub_account_invalid_key(cli, mock_external):
+async def test_create_sub_account_invalid_key(cli, dummy_server):
     data = {'company_code': 'foobar'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
     assert r.status == 403, await r.text()
@@ -217,12 +213,12 @@ async def test_missing_url_with_arg_bad(cli):
     assert r.status == 404, await r.text()
 
 
-async def test_api_error(settings, loop, mock_external):
-    s = ApiSession(mock_external.app['server_name'], settings)
+async def test_api_error(settings, loop, dummy_server):
+    s = ApiSession(dummy_server.server_name, settings)
     try:
         with pytest.raises(ApiError) as exc_info:
             await s.get('/foobar')
-        assert str(exc_info.value) == 'GET {server_name}/foobar, unexpected response 404'.format(**mock_external.app)
+        assert str(exc_info.value) == f'GET {dummy_server.server_name}/foobar, unexpected response 404'
     finally:
         await s.close()
 
