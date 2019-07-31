@@ -138,7 +138,7 @@ async def test_webhook_missing(cli, send_email, db_conn):
     assert len(events) == 0
 
 
-async def test_mandrill_send(send_email, db_conn, mock_external):
+async def test_mandrill_send(send_email, db_conn, dummy_server):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is None
     await send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@testing.com'}])
@@ -146,7 +146,7 @@ async def test_mandrill_send(send_email, db_conn, mock_external):
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobaratestingcom')
     assert m is not None
     assert m['to_address'] == 'foobar_a@testing.com'
-    assert mock_external.app['request_log'] == ['POST /mandrill/messages/send.json > 200']
+    assert dummy_server.app['log'] == ['POST /mandrill/messages/send.json > 200']
 
 
 async def test_send_mandrill_with_other_attachment(send_email, db_conn):

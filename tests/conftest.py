@@ -8,6 +8,7 @@ from aioredis import create_redis
 from arq import ArqRedis, Worker
 from atoolbox.db import prepare_database
 from atoolbox.db.helpers import DummyPgPool
+from atoolbox.test_utils import DummyServer, create_dummy_server
 from buildpg import Values, asyncpg
 
 from morpheus.app.main import create_app
@@ -15,7 +16,7 @@ from morpheus.app.models import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
 from morpheus.app.worker import startup as worker_startup, worker_functions
 
-from .dummy_server import create_external_app
+from . import dummy_server
 
 
 def pytest_addoption(parser):
@@ -62,30 +63,28 @@ async def redis(loop, settings):
     await redis.wait_closed()
 
 
-@pytest.fixture
-async def mock_external(test_server):
-    app = create_external_app()
-    server = await test_server(app)
-    app['server_name'] = f'http://localhost:{server.port}'
-    return server
+@pytest.fixture(name='dummy_server')
+async def _fix_dummy_server(aiohttp_server):
+    ctx = {'mandrill_subaccounts': {}}
+    return await create_dummy_server(aiohttp_server, extra_routes=dummy_server.routes, extra_context=ctx)
 
 
 @pytest.fixture
-def settings(tmpdir, mock_external):
+def settings(tmpdir, dummy_server: DummyServer):
     return Settings(
         **pg_settings,
         auth_key='testing-key',
         test_output=str(tmpdir),
-        pdf_generation_url=mock_external.app['server_name'] + '/generate.pdf',
+        pdf_generation_url=dummy_server.server_name + '/generate.pdf',
         mandrill_key='good-mandrill-testing-key',
         log_level='ERROR',
-        mandrill_url=mock_external.app['server_name'] + '/mandrill',
+        mandrill_url=dummy_server.server_name + '/mandrill',
         mandrill_timeout=0.5,
         host_name=None,
         click_host_name='click.example.com',
         messagebird_key='good-messagebird-testing-key',
-        messagebird_url=mock_external.app['server_name'] + '/messagebird',
-        messagebird_pricing_api=mock_external.app['server_name'] + '/messagebird-pricing',
+        messagebird_url=dummy_server.server_name + '/messagebird',
+        messagebird_pricing_api=dummy_server.server_name + '/messagebird-pricing',
         messagebird_pricing_username='mb-username',
         messagebird_pricing_password='mb-password',
         stats_token='test-token',

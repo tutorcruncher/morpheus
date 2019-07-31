@@ -1,7 +1,8 @@
 import asyncio
 import re
 
-from aiohttp.web import Application, HTTPForbidden, Response, json_response
+from aiohttp import web
+from aiohttp.web import HTTPForbidden, Response, json_response
 
 
 async def mandrill_send_view(request):
@@ -114,30 +115,15 @@ async def generate_pdf(request):
         return Response(body=data, content_type='application/pdf')
 
 
-async def logging_middleware(app, handler):
-    async def _handler(request):
-        r = await handler(request)
-        request.app['request_log'].append(f'{request.method} {request.path_qs} > {r.status}')
-        return r
-
-    return _handler
-
-
-def create_external_app():
-    app = Application(middlewares=[logging_middleware])
-
-    app.router.add_post('/mandrill/messages/send.json', mandrill_send_view)
-    app.router.add_post('/mandrill/subaccounts/add.json', mandrill_sub_account_add)
-    app.router.add_get('/mandrill/subaccounts/info.json', mandrill_sub_account_info)
-    app.router.add_get('/mandrill/webhooks/list.json', mandrill_webhook_list)
-    app.router.add_post('/mandrill/webhooks/add.json', mandrill_webhook_add)
-
-    app.router.add_post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post)
-    app.router.add_get('/messagebird/lookup/{number}', messagebird_lookup)
-    app.router.add_post('/messagebird/messages', messagebird_send)
-
-    app.router.add_get('/messagebird-pricing', messagebird_pricing)
-
-    app.router.add_route('*', '/generate.pdf', generate_pdf)
-    app.update(request_log=[], mandrill_subaccounts={})
-    return app
+routes = [
+    web.post('/mandrill/messages/send.json', mandrill_send_view),
+    web.post('/mandrill/subaccounts/add.json', mandrill_sub_account_add),
+    web.get('/mandrill/subaccounts/info.json', mandrill_sub_account_info),
+    web.get('/mandrill/webhooks/list.json', mandrill_webhook_list),
+    web.post('/mandrill/webhooks/add.json', mandrill_webhook_add),
+    web.post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post),
+    web.get('/messagebird/lookup/{number}', messagebird_lookup),
+    web.post('/messagebird/messages', messagebird_send),
+    web.get('/messagebird-pricing', messagebird_pricing),
+    web.route('*', '/generate.pdf', generate_pdf),
+]
