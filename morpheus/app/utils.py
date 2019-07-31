@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import hmac
-import json
 import re
 import secrets
 from asyncio import shield
@@ -13,12 +12,13 @@ from typing import Dict, Optional, Type, TypeVar
 
 import ujson
 from aiohttp.hdrs import METH_GET, METH_HEAD, METH_OPTIONS
-from aiohttp.web import Application, HTTPClientError, Request, Response
+from aiohttp.web import Application, Request, Response
+from aiohttp.web_exceptions import HTTPException
 from aiohttp_jinja2 import render_template
 from arq import ArqRedis
+from atoolbox import JsonErrors
 from markupsafe import Markup
 from pydantic import BaseModel, ValidationError
-from pydantic.json import pydantic_encoder
 
 from .ext import ApiError
 from .models import SendMethod
@@ -32,40 +32,6 @@ AModel = TypeVar('AModel', bound=BaseModel)
 class Session(BaseModel):
     company: str
     expires: datetime
-
-
-def pretty_lenient_json(data):
-    return json.dumps(data, indent=2, default=pydantic_encoder) + '\n'
-
-
-class JsonErrors:
-    class _HTTPClientErrorJson(HTTPClientError):
-        def __init__(self, message, *, details=None, headers=None):
-            data = {'message': message}
-            if details:
-                data['details'] = details
-            super().__init__(text=pretty_lenient_json(data), content_type=CONTENT_TYPE_JSON, headers=headers)
-
-    class HTTPBadRequest(_HTTPClientErrorJson):
-        status_code = 400
-
-    class HTTPUnauthorized(_HTTPClientErrorJson):
-        status_code = 401
-
-    class HTTPPaymentRequired(_HTTPClientErrorJson):
-        status_code = 402
-
-    class HTTPForbidden(_HTTPClientErrorJson):
-        status_code = 403
-
-    class HTTPNotFound(_HTTPClientErrorJson):
-        status_code = 404
-
-    class HTTPConflict(_HTTPClientErrorJson):
-        status_code = 409
-
-    class HTTP470(_HTTPClientErrorJson):
-        status_code = 470
 
 
 @dataclass
@@ -112,7 +78,7 @@ class View:
                 r = await self.call(request)
             else:
                 r = await shield(self.call(request))
-        except HTTPClientError as e:
+        except HTTPException as e:
             if self.headers:
                 e.headers.update(self.headers)
             raise e
