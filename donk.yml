@@ -35,6 +35,7 @@ build:
 
 docker-dev:
 - +build
+- docker build mandrill-mock -t mandrill-mock
 - _echo ================================================================================
 - _echo running locally for development and testing
 - _echo You'll want to run docker-logs in another window see what's going on

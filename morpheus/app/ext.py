@@ -23,10 +23,10 @@ def lenient_json(v):
 
 
 class ApiError(RuntimeError):
-    def __init__(self, method, url, response, response_text):
+    def __init__(self, method, url, status, response_text):
         self.method = method
         self.url = url
-        self.status = response.status
+        self.status = status
         self.body = response_text
 
     def __str__(self):
@@ -83,9 +83,9 @@ class ApiSession:
                 method,
                 uri,
                 r.status,
-                extra={'data': data},
+                extra={'data': data} if self.settings.verbose_http_errors else {},
             )
-            raise ApiError(method, url, r, response_text)
+            raise ApiError(method, url, r.status, response_text)
         else:
             logger.debug('%s /%s -> %s', method, uri, r.status)
             return r

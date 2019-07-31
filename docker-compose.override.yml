@@ -34,10 +34,24 @@ services:
     depends_on:
     - logs
 
+  redis:
+    ports:
+      # to connect: `redis-cli -p 63790`
+      - 63790:6379
+
   web:
     environment:
       APP_PG_DSN: 'postgres://postgres:docker@postgres:5432/morpheus'
+      APP_MANDRILL_URL: 'http://mandrill:8002'
+      APP_VERBOSE_HTTP_ERRORS: 'false'
 
   worker:
     environment:
       APP_PG_DSN: 'postgres://postgres:docker@postgres:5432/morpheus'
+      APP_MANDRILL_URL: 'http://mandrill:8002'
+      APP_VERBOSE_HTTP_ERRORS: 'false'
+
+  mandrill:
+    image: mandrill-mock
+    depends_on:
+      - logs
