@@ -37,7 +37,7 @@ ENV PYTHONUNBUFFERED=1 \
     ON_DOCKER=1 \
     ATOOLBOX_LOG_NAME=morpheus \
     ATOOLBOX_SETTINGS=app.settings.Settings \
-    APP_COMMIT=$COMMIT \
-    APP_BUILD_TIME=$BUILD_TIME
+    COMMIT=$COMMIT \
+    BUILD_TIME=$BUILD_TIME
 
 CMD ["atoolbox", "auto"]
