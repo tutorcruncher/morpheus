@@ -37,7 +37,12 @@ services:
   web:
     environment:
       APP_PG_DSN: 'postgres://postgres:docker@postgres:5432/morpheus'
+      APP_MANDRILL_URL: 'http://mandrill:8002'
 
   worker:
     environment:
       APP_PG_DSN: 'postgres://postgres:docker@postgres:5432/morpheus'
+      APP_MANDRILL_URL: 'http://mandrill:8002'
+
+  mandrill:
+    image: mandrill-mock

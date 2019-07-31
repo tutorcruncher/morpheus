@@ -20,7 +20,7 @@ async def mandrill_send_view(request):
 
     if data['key'] != 'good-mandrill-testing-key':
         return json_response({'auth': 'failed'}, status=403)
-    to_email = data['message']['to'][0]['email']
+    to_email = message['to'][0]['email']
     return json_response(
         [{'email': to_email, '_id': re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{to_email}'), 'status': 'queued'}]
     )
