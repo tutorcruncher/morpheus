@@ -309,7 +309,7 @@ async def test_no_event_data(cli, settings, send_email, db_conn):
     )
     message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
     r = await cli.get(modify_url(f'/user/email-test/message/{message_id}.html', settings, 'test-details'))
-    assert '<div class="panel-group events" id="morpheus-accordion">\n' in await r.text()
+    assert '<div class="events" id="morpheus-accordion">\n' in await r.text()
 
 
 async def test_single_item_events(cli, settings, send_email, db_conn):
