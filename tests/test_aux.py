@@ -32,18 +32,14 @@ async def test_favicon(cli):
     assert 'image' in r.headers['Content-Type']  # value can vary
 
 
-async def test_stats_unauthorised(cli, smart_caplog):
-    smart_caplog.set_loggers(log_names=['morpheus.request'])
+async def test_stats_unauthorised(cli):
     r = await cli.get('/stats/requests/')
     assert r.status == 403, await r.text()
-    assert '403 /stats/requests/' in smart_caplog
 
 
-async def test_405(cli, smart_caplog):
-    smart_caplog.set_loggers(log_names=['morpheus.request'])
+async def test_405(cli):
     r = await cli.post('/')
     assert r.status == 405, await r.text()
-    assert '405 /' in smart_caplog
 
 
 async def test_request_stats(cli, loop):

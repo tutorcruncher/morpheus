@@ -4,11 +4,12 @@ import uuid
 
 import pytest
 from aiohttp.test_utils import teardown_test_loop
-from arq import Worker
+from aioredis import create_redis
+from arq import ArqRedis, Worker
+from atoolbox.db import prepare_database
 from atoolbox.db.helpers import DummyPgPool
 from buildpg import Values, asyncpg
 
-from morpheus.app.db import prepare_database
 from morpheus.app.main import create_app
 from morpheus.app.models import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
@@ -21,7 +22,7 @@ def pytest_addoption(parser):
     parser.addoption('--reuse-db', action='store_true', default=False, help='keep the existing database if it exists')
 
 
-pg_settings = dict(pg_dsn='postgres://postgres:waffle@localhost:5432/morpheus_test', pg_name=None)
+pg_settings = dict(APP_PG_DSN='postgres://postgres:waffle@localhost:5432/morpheus_test')
 
 
 @pytest.fixture(scope='session', name='clean_db')
@@ -46,6 +47,19 @@ async def _fix_db_conn(loop, settings, clean_db):
 
     await tr.rollback()
     await conn.close()
+
+
+@pytest.yield_fixture
+async def redis(loop, settings):
+    addr = settings.redis_settings.host, settings.redis_settings.port
+
+    redis = await create_redis(addr, db=settings.redis_settings.database, encoding='utf8', commands_factory=ArqRedis)
+    await redis.flushdb()
+
+    yield redis
+
+    redis.close()
+    await redis.wait_closed()
 
 
 @pytest.fixture
@@ -80,13 +94,13 @@ def settings(tmpdir, mock_external):
 
 
 @pytest.fixture(name='cli')
-async def _fix_cli(loop, test_client, settings, db_conn):
-    async def modify_startup(app):
-        await app['redis'].flushdb()
+async def _fix_cli(loop, test_client, settings, db_conn, redis):
+    async def pre_startup(app):
+        app.update(redis=redis, pg=DummyPgPool(db_conn))
 
-    app = create_app(loop, settings=settings)
+    app = create_app(settings=settings)
     app.update(pg=DummyPgPool(db_conn), webhook_auth_key=b'testing')
-    app.on_startup.append(modify_startup)
+    app.on_startup.insert(0, pre_startup)
     cli = await test_client(app)
     cli.server.app['morpheus_api'].root = f'http://localhost:{cli.server.port}/'
     return cli

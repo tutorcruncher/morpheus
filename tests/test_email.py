@@ -778,8 +778,8 @@ async def test_link_shortening_not_image(send_email, tmpdir, cli):
     assert re.search(r'<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
 
 
-async def test_mandrill_key_not_setup(settings, loop):
-    app = create_app(loop, settings)
+async def test_mandrill_key_not_setup(settings):
+    app = create_app(settings)
     try:
         assert app['webhook_auth_key'] is None
         await get_mandrill_webhook_key(app)
@@ -789,9 +789,9 @@ async def test_mandrill_key_not_setup(settings, loop):
         await app['morpheus_api'].close()
 
 
-async def test_mandrill_key_existing(settings, loop):
+async def test_mandrill_key_existing(settings):
     settings.host_name = 'example.com'
-    app = create_app(loop, settings)
+    app = create_app(settings)
     try:
         assert app['webhook_auth_key'] is None
         await get_mandrill_webhook_key(app)
@@ -801,9 +801,9 @@ async def test_mandrill_key_existing(settings, loop):
         await app['morpheus_api'].close()
 
 
-async def test_mandrill_key_new(settings, loop):
+async def test_mandrill_key_new(settings):
     settings.host_name = 'different.com'
-    app = create_app(loop, settings)
+    app = create_app(settings)
     app['server_up_wait'] = 0
     try:
         assert app['webhook_auth_key'] is None
@@ -814,9 +814,9 @@ async def test_mandrill_key_new(settings, loop):
         await app['morpheus_api'].close()
 
 
-async def test_mandrill_key_fail(settings, loop):
+async def test_mandrill_key_fail(settings):
     settings.host_name = 'fail.com'
-    app = create_app(loop, settings)
+    app = create_app(settings)
     app['server_up_wait'] = 0
     try:
         assert app['webhook_auth_key'] is None
