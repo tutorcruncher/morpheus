@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+if [ -z ${AWS_ACCESS_KEY+x} ]; then
+  echo 'Error: $AWS_ACCESS_KEY not set'
+  exit 2
+fi
+
+if [ -z ${AWS_SECRET_KEY+x} ]; then
+  echo 'Error: $AWS_SECRET_KEY not set'
+  exit 2
+fi
+
+
+docker-machine create \
+    --driver amazonec2 \
+    --amazonec2-access-key $AWS_ACCESS_KEY \
+    --amazonec2-secret-key $AWS_SECRET_KEY \
+    --amazonec2-instance-type t2.micro \
+    --amazonec2-root-size 10 \
+    --amazonec2-region eu-west-1 \
+    --amazonec2-zone a \
+    morpheus-beta
+
+echo "you now need to attach an elastic IP to the machine and run 'docker-machine regenerate-certs morpheus-beta'"

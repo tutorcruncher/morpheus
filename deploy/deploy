@@ -3,7 +3,9 @@ set -e
 THIS_DIR=$(dirname "$0")
 
 echo "building morpheus image..."
-docker build ${THIS_DIR}/../morpheus -t morpheus
+export C=$(git rev-parse HEAD)
+export BT=$(date)
+docker build ${THIS_DIR}/../morpheus -t morpheus --build-arg COMMIT=$C --build-arg BUILD_TIME="$BT"
 
 sed "s/{{HOST_NAME}}/${APP_HOST_NAME}/g; s/{{CLICK_HOST_NAME}}/${APP_CLICK_HOST_NAME}/g"\
  ${THIS_DIR}/../nginx/nginx.conf > ${THIS_DIR}/../nginx/_build.nginx.conf

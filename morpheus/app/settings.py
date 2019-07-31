@@ -55,4 +55,10 @@ class Settings(BaseSettings):
     us_send_number = '15744445663'
 
     class Config:
-        fields = {'port': 'PORT', 'pg_dsn': 'APP_PG_DSN', 'redis_settings': 'APP_REDIS_SETTINGS'}
+        fields = {
+            'port': 'PORT',
+            'pg_dsn': 'APP_PG_DSN',
+            'redis_settings': 'APP_REDIS_SETTINGS',
+            'commit': 'COMMIT',
+            'build_time': 'BUILD_TIME',
+        }
