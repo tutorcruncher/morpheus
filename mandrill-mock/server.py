@@ -20,7 +20,7 @@ nginx_500 = """\
 
 async def mandrill_send_view(request):
     data = await request.json()
-    choice = random.choices([200, 'slow', '502', '500'], weights=[100, 1, 1, 1])[0]
+    choice = random.choices(['ok', 'slow', '502', '500'], weights=[5, 1, 1, 1])[0]
 
     if choice == 'slow':
         await asyncio.sleep(30)
