@@ -1,6 +1,6 @@
 aiohttp==3.5.4
 aiohttp-jinja2==1.1.1
-aiohttp-toolbox==0.4.3
+aiohttp-toolbox==0.4.4
 aioredis==1.2.0
 arq==0.16
 asyncpg==0.18.3
@@ -14,7 +14,7 @@ jinja2==2.10.1
 libsass==0.19.2
 misaka==2.1.1
 phonenumbers==8.10.14
-pydantic[email]==0.31
+pydantic[email]==0.31.1
 pytz==2019.1
 ua-parser==0.8.0
 ujson==1.35
