@@ -666,7 +666,8 @@ def utcnow():
 
 
 class WorkerSettings:
-    max_jobs = 4
+    max_jobs = 20
+    keep_result = 5
     max_tries = len(email_retrying) + 1  # so we try all values in email_retrying
     functions = worker_functions
     on_startup = startup

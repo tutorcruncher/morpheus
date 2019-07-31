@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import pickle
 import re
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -820,9 +821,10 @@ async def test_mandrill_key_fail(settings):
     app['server_up_wait'] = 0
     try:
         assert app['webhook_auth_key'] is None
-        with pytest.raises(ApiError):
+        with pytest.raises(ApiError) as exc_info:
             await get_mandrill_webhook_key(app)
         assert app['webhook_auth_key'] is None
+        pickle.dumps(exc_info.value)
     finally:
         await app['mandrill'].close()
         await app['morpheus_api'].close()

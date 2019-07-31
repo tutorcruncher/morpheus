@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     mandrill_timeout = 30.0
     raven_dsn: str = None
     log_level = 'INFO'
+    verbose_http_errors = True
     commit = 'unknown'
     build_time = 'unknown'
     release_date = 'unknown'
