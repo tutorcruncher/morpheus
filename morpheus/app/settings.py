@@ -4,28 +4,25 @@ from arq.connections import RedisSettings
 from atoolbox import BaseSettings
 from pydantic import NoneStr
 
-THIS_DIR = Path(__file__).parent
+THIS_DIR = Path(__file__).parent.resolve()
 
 
 class Settings(BaseSettings):
     create_app = 'app.main.create_app'
     worker_func = 'app.worker.run_worker'
+    redis_settings: RedisSettings = 'redis://localhost:6379'
     pg_dsn = 'postgres://postgres:waffle@localhost:5432/morpheus'
     sql_path: Path = THIS_DIR / 'models.sql'
     patch_paths = ['app.patches']
 
-    redis_settings: RedisSettings = 'redis://localhost:6379'
-
     cookie_name = 'morpheus'
-
     auth_key = 'testing'
-
     locale = ''
 
     deploy_name = 'testing'
     host_name: NoneStr = 'localhost'
     click_host_name = 'click.example.com'
-    mandrill_key: str = ''
+    mandrill_key = ''
     mandrill_url = 'https://mandrillapp.com/api/1.0'
     mandrill_timeout = 30.0
     raven_dsn: str = None
@@ -41,12 +38,12 @@ class Settings(BaseSettings):
     public_local_api_url = 'http://localhost:5000'
 
     # WARNING without setting a token here the stats page will be publicly viewable
-    stats_token: str = ''
+    stats_token = ''
     max_request_stats = int(1e5)
 
     # message bird
-    messagebird_key: str = ''
-    messagebird_url: str = 'https://rest.messagebird.com'
+    messagebird_key = ''
+    messagebird_url = 'https://rest.messagebird.com'
 
     messagebird_pricing_api = 'https://api.mobiletulip.com/api/coverage/json/'
     messagebird_pricing_username: str = None

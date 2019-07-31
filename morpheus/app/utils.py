@@ -17,6 +17,7 @@ from aiohttp.web_exceptions import HTTPException
 from aiohttp_jinja2 import render_template
 from arq import ArqRedis
 from atoolbox import JsonErrors
+from atoolbox.json_tools import JSON_CONTENT_TYPE
 from markupsafe import Markup
 from pydantic import BaseModel, ValidationError
 
@@ -25,7 +26,6 @@ from .models import SendMethod
 from .settings import Settings
 
 THIS_DIR = Path(__file__).parent.resolve()
-CONTENT_TYPE_JSON = 'application/json'
 AModel = TypeVar('AModel', bound=BaseModel)
 
 
@@ -136,7 +136,7 @@ class View:
     def json_response(cls, *, status_=200, json_str_=None, headers_=None, **data):
         if not json_str_:
             json_str_ = ujson.dumps(data)
-        return Response(text=json_str_, status=status_, content_type=CONTENT_TYPE_JSON, headers=headers_)
+        return Response(text=json_str_, status=status_, content_type=JSON_CONTENT_TYPE, headers=headers_)
 
 
 class AuthView(View):
