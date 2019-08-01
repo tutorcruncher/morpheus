@@ -15,7 +15,7 @@ libsass==0.19.2
 misaka==2.1.1
 phonenumbers==8.10.15
 pydantic[email]==0.31.1
-pytz==2019.1
+pytz==2019.2
 ua-parser==0.8.0
 ujson==1.35
 uvloop==0.12.2
