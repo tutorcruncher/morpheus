@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import pickle
 import re
 from datetime import datetime, timezone
@@ -601,7 +602,8 @@ async def test_mandrill_send_many_errors(db_conn, worker_ctx, call_send_emails):
     assert m['body'] == 'upstream error'
 
 
-async def test_mandrill_send_502(db_conn, call_send_emails, worker_ctx):
+async def test_mandrill_send_502(db_conn, call_send_emails, worker_ctx, caplog):
+    caplog.set_level(logging.INFO, logger='morpheus')
     group_id, m = await call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = 1
@@ -611,6 +613,8 @@ async def test_mandrill_send_502(db_conn, call_send_emails, worker_ctx):
     assert exc_info.value.defer_score == 5_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
+    assert 'Mandrill unexpected response POST /messages/send.json -> 502' in caplog.text
+    assert 'temporary mandrill error' in caplog.text
 
 
 async def test_mandrill_send_502_last(db_conn, call_send_emails, worker_ctx):

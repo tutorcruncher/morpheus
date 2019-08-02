@@ -222,14 +222,23 @@ class SendEmail:
             ),
         }
         send_ts = utcnow()
+        job_try = self.ctx['job_try']
+        defer = email_retrying[job_try - 1]
         try:
             response = await self.ctx['mandrill'].post('messages/send.json', **data)
         except (ClientConnectionError, TimeoutError) as e:
-            main_logger.info('%s: client connection error, retrying %d...', self.group_id, self.ctx['job_try'])
-            raise Retry(defer=email_retrying[self.ctx['job_try'] - 1]) from e
+            main_logger.info('client connection error group_id=%s job_try=%s defer=%ss', self.group_id, job_try, defer)
+            raise Retry(defer=defer) from e
         except ApiError as e:
             if e.status in {502, 504} or (e.status == 500 and '<center>nginx/' in e.body):
-                raise Retry(defer=email_retrying[self.ctx['job_try'] - 1]) from e
+                main_logger.info(
+                    'temporary mandrill error group_id=%s status=%s job_try=%s defer=%ss',
+                    self.group_id,
+                    e.status,
+                    job_try,
+                    defer,
+                )
+                raise Retry(defer=defer) from e
             else:
                 # if the status is not 502 or 504, or 500 from nginx then raise
                 raise
