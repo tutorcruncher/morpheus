@@ -47,6 +47,20 @@ async def mandrill_sub_account_add(request):
         return json_response({'message': "subaccount created (this isn't the same response as mandrill)"})
 
 
+async def mandrill_sub_account_delete(request):
+    data = await request.json()
+    if data['key'] != 'good-mandrill-testing-key':
+        return json_response({'auth': 'failed'}, status=403)
+    sa_id = data['id']
+    if sa_id == 'broken1' or sa_id not in request.app['mandrill_subaccounts']:
+        return json_response({'error': 'snap something unknown went wrong'}, status=500)
+    elif 'name' not in request.app['mandrill_subaccounts'][sa_id]:
+        return json_response({'message': f'A subaccount with id {sa_id} does not exist'}, status=500)
+    else:
+        request.app['mandrill_subaccounts'][sa_id] = data
+        return json_response({'message': "subaccount deleted (this isn't the same response as mandrill)"})
+
+
 async def mandrill_sub_account_info(request):
     data = await request.json()
     if data['key'] != 'good-mandrill-testing-key':
@@ -82,6 +96,7 @@ def create_app():
         [
             web.post('/messages/send.json', mandrill_send_view),
             web.post('/subaccounts/add.json', mandrill_sub_account_add),
+            web.post('/subaccounts/delete.json', mandrill_sub_account_delete),
             web.get('/subaccounts/info.json', mandrill_sub_account_info),
             web.get('/webhooks/list.json', mandrill_webhook_list),
             web.post('/webhooks/add.json', mandrill_webhook_add),

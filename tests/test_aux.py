@@ -191,6 +191,59 @@ async def test_create_sub_account_invalid_key(cli, dummy_server):
     assert r.status == 403, await r.text()
 
 
+async def _create_test_sub_account(cli, data):
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+
+
+async def test_delete_sub_account(cli, dummy_server):
+    data = {'company_code': 'foobar'}
+    await _create_test_sub_account(cli, data)
+
+    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert 'subaccount deleted\n' == await r.text()
+    assert dummy_server.log == [
+        'POST /mandrill/subaccounts/add.json > 200', 'POST /mandrill/subaccounts/delete.json > 200'
+    ]
+
+    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 400, await r.text()
+    assert f'A subaccount with id foobar does not exist\n' == await r.text()
+    assert dummy_server.log == [
+        'POST /mandrill/subaccounts/add.json > 200',
+        'POST /mandrill/subaccounts/delete.json > 200',
+        'POST /mandrill/subaccounts/delete.json > 500',
+    ]
+
+
+async def test_delete_sub_account_wrong_response(cli, dummy_server):
+    data = {'company_code': 'broken1'}
+    await _create_test_sub_account(cli, data)
+
+    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 400, await r.text()
+    assert dummy_server.log == [
+        'POST /mandrill/subaccounts/add.json > 200', 'POST /mandrill/subaccounts/delete.json > 500'
+    ]
+
+
+async def test_delete_sub_account_other_method(cli, dummy_server):
+    r = await cli.post('/delete-subaccount/email-test/', headers={'Authorization': 'testing-key'})
+    assert r.status == 200, await r.text()
+    assert 'no subaccount deletion required for "email-test"\n' == await r.text()
+
+    assert dummy_server.log == []
+
+
+async def test_delete_sub_account_invalid_key(cli, dummy_server):
+    data = {'company_code': 'foobar'}
+    await _create_test_sub_account(cli, data)
+
+    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
+    assert r.status == 403, await r.text()
+
+
 async def test_missing_link(cli):
     r = await cli.get('/lxxx')
     assert r.status == 404, await r.text()
