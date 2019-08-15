@@ -48,7 +48,9 @@ async def mandrill_sub_account_delete(request):
     if sa_id == 'broken1' or sa_id not in request.app['mandrill_subaccounts']:
         return json_response({'error': 'snap something unknown went wrong'}, status=500)
     elif 'name' not in request.app['mandrill_subaccounts'][sa_id]:
-        return json_response({'message': f'A subaccount with id {sa_id} does not exist'}, status=500)
+        return json_response(
+            {'message': f"No subaccount exists with the id '{sa_id}'", 'name': 'Unknown_Subaccount'}, status=500
+        )
     else:
         request.app['mandrill_subaccounts'][sa_id] = data
         return json_response({'message': "subaccount deleted (this isn't the same response as mandrill)"})

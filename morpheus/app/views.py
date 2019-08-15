@@ -283,8 +283,8 @@ class DeleteSubaccountView(ServiceView):
         if r.status == 200:
             return PreResponse(text='subaccount deleted\n', status=201)
 
-        if f'A subaccount with id {m.company_code} does not exist' in data.get('message', ''):
-            return PreResponse(text=data['message'] + '\n', status=400)
+        if data.get('name') == 'Unknown_Subaccount':
+            return PreResponse(text=data.get('message', 'sub-account not found') + '\n', status=404)
 
         assert r.status == 500, r.status
         return PreResponse(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
