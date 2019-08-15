@@ -18,6 +18,7 @@ from .views import (
     AdminListView,
     ClickRedirectView,
     CreateSubaccountView,
+    DeleteSubaccountView,
     EmailSendView,
     MandrillWebhookView,
     MessageBirdWebhookView,
@@ -32,7 +33,7 @@ from .views import (
     UserMessagePreviewView,
     UserMessagesJsonView,
     index,
-    DeleteSubaccountView)
+)
 
 logger = logging.getLogger('morpheus.main')
 
