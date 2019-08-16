@@ -281,7 +281,7 @@ class DeleteSubaccountView(ServiceView):
         r = await mandrill.post('subaccounts/delete.json', allowed_statuses=(200, 500), id=m.company_code, timeout_=12)
         data = await r.json()
         if r.status == 200:
-            return PreResponse(text='subaccount deleted\n', status=201)
+            return PreResponse(text='subaccount deleted\n', status=200)
 
         if data.get('name') == 'Unknown_Subaccount':
             return PreResponse(text=data.get('message', 'sub-account not found') + '\n', status=404)
