@@ -18,6 +18,7 @@ from .views import (
     AdminListView,
     ClickRedirectView,
     CreateSubaccountView,
+    DeleteSubaccountView,
     EmailSendView,
     MandrillWebhookView,
     MessageBirdWebhookView,
@@ -127,6 +128,7 @@ def create_app(settings: Settings = None):
 
     methods = r'/{method:%s}/' % '|'.join(m.value for m in SendMethod)
     app.router.add_post('/create-subaccount' + methods, CreateSubaccountView.view(), name='create-subaccount')
+    app.router.add_post('/delete-subaccount' + methods, DeleteSubaccountView.view(), name='delete-subaccount')
 
     app.router.add_post('/webhook/test/', TestWebhookView.view(), name='webhook-test')
     app.router.add_head('/webhook/mandrill/', index, name='webhook-mandrill-head')

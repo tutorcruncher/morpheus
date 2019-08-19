@@ -265,6 +265,31 @@ class CreateSubaccountView(ServiceView):
             )
 
 
+class DeleteSubaccountView(ServiceView):
+    """
+    Delete an existing subaccount with mandrill
+    """
+
+    async def call(self, request) -> PreResponse:
+        method = request.match_info['method']
+        if method != SendMethod.email_mandrill:
+            return PreResponse(text=f'no subaccount deletion required for "{method}"\n')
+
+        m = await self.request_data(SubaccountModel)
+        mandrill: Mandrill = self.app['mandrill']
+
+        r = await mandrill.post('subaccounts/delete.json', allowed_statuses=(200, 500), id=m.company_code, timeout_=12)
+        data = await r.json()
+        if r.status == 200:
+            return PreResponse(text='subaccount deleted\n', status=200)
+
+        if data.get('name') == 'Unknown_Subaccount':
+            return PreResponse(text=data.get('message', 'sub-account not found') + '\n', status=404)
+
+        assert r.status == 500, r.status
+        return PreResponse(text=f'error from mandrill: {json.dumps(data, indent=2)}\n', status=400)
+
+
 class _UserMessagesView(UserView):
     offset = True
 
