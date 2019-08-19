@@ -59,7 +59,7 @@ Create `activate.prod.sh`:
 #!/usr/bin/env bash
 . env/bin/activate
 export LOGSPOUT_ENDPOINT='...'
-export RAVEN_DSN='...'
+export SENTRY_DSN='...'
 export APP_AUTH_KEY='...'
 export APP_MANDRILL_KEY='...'
 export APP_USER_AUTH_KEY='...'
