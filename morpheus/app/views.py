@@ -129,32 +129,28 @@ async def check_sms_limit(conn, company_code):
     return v or 0
 
 
-async def get_company_sms_spend(conn, company_code, start, end):
-    v = await conn.fetchval(
-        """
-        select sum(m.cost)
-        from messages as m
-        join message_groups j on m.group_id = j.id
-        where j.company=$1 and $2 < send_ts and send_ts < $3
-        """,
-        company_code,
-        start,
-        end,
-    )
-    return v or 0
-
-
 class SmsBillingView(ServiceView):
-    async def call(self, request):
+    async def call(self, request) -> PreResponse:
         m = await self.request_data(SmsBillingModel)
-        total_spend = await get_company_sms_spend(self.app['pg'], m.company_code, m.start, m.end)
+        company_code = self.request.match_info['company_code']
+        total_spend = await self.app['pg'].fetchval(
+            """
+            select sum(m.cost)
+            from messages as m
+            join message_groups j on m.group_id = j.id
+            where j.company=$1 and send_ts between $2 and $3
+            """,
+            company_code,
+            m.start,
+            m.end,
+        )
         data = {
-            'company': m.company_code,
+            'company': company_code,
             'start': m.start.strftime('%Y-%m-%d'),
             'end': m.end.strftime('%Y-%m-%d'),
             'spend': total_spend,
         }
-        return PreResponse(body=json.dumps(data).encode(), content_type='application/json')
+        return self.json_response(**data)
 
 
 class SmsSendView(ServiceView):

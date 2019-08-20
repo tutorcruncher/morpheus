@@ -174,7 +174,6 @@ class SmsNumbersModel(BaseModel):
 
 
 class SmsBillingModel(BaseModel):
-    company_code: str
     start: date
     end: date
 
