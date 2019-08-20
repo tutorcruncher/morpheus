@@ -1,6 +1,6 @@
 aiohttp==3.5.4
 aiohttp-jinja2==1.1.2
-aiohttp-toolbox==0.4.4
+aiohttp-toolbox==0.5.1
 aioredis==1.2.0
 arq==0.16
 asyncpg==0.18.3
