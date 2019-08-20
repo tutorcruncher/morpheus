@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -365,3 +366,15 @@ async def test_send_too_long(cli, tmpdir):
     assert r.status == 201, await r.text()
     # no messages sent:
     assert len(tmpdir.listdir()) == 0
+
+
+async def test_sms_billing(cli, send_sms):
+    for i in range(4):
+        await send_sms(uid=str(uuid4()), company_code='billing-test')
+
+    start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
+    end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
+    data = dict(start=start, end=end, company_code='billing-test')
+    r = await cli.get('/billing/sms/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'})
+    assert r.status == 200, await r.text()
+    assert {'company': 'billing-test', 'start': start, 'end': end, 'spend': 0.048} == await r.json()

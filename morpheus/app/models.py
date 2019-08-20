@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List
@@ -171,6 +171,12 @@ class SmsSendModel(BaseModel):
 class SmsNumbersModel(BaseModel):
     numbers: Dict[int, str]
     country_code: constr(min_length=2, max_length=2) = 'GB'
+
+
+class SmsBillingModel(BaseModel):
+    company_code: str
+    start: date
+    end: date
 
 
 class BaseWebhook(BaseModel):
