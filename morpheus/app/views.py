@@ -30,6 +30,7 @@ from .models import (
     MandrillSingleWebhook,
     MessageBirdWebHook,
     SendMethod,
+    SmsBillingModel,
     SmsNumbersModel,
     SmsSendModel,
     SubaccountModel,
@@ -126,6 +127,30 @@ async def check_sms_limit(conn, company_code):
         company_code,
     )
     return v or 0
+
+
+class SmsBillingView(ServiceView):
+    async def call(self, request) -> PreResponse:
+        m = await self.request_data(SmsBillingModel)
+        company_code = self.request.match_info['company_code']
+        total_spend = await self.app['pg'].fetchval(
+            """
+            select sum(m.cost)
+            from messages as m
+            join message_groups j on m.group_id = j.id
+            where j.company=$1 and send_ts between $2 and $3
+            """,
+            company_code,
+            m.start,
+            m.end,
+        )
+        data = {
+            'company': company_code,
+            'start': m.start.strftime('%Y-%m-%d'),
+            'end': m.end.strftime('%Y-%m-%d'),
+            'spend': total_spend,
+        }
+        return self.json_response(**data)
 
 
 class SmsSendView(ServiceView):
