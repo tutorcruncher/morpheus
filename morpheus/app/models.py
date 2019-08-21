@@ -6,10 +6,19 @@ from pathlib import Path
 from typing import Dict, List
 from uuid import UUID
 
-from pydantic import BaseModel, NameEmail, constr, validator
+from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
 
 THIS_DIR = Path(__file__).parent.resolve()
+
+
+class BaseModel(_BaseModel):
+    def __setstate__(self, state):
+        if '__values__' in state:
+            object.__setattr__(self, '__dict__', state['__values__'])
+        else:
+            object.__setattr__(self, '__dict__', state['__dict__'])
+        object.__setattr__(self, '__fields_set__', state['__fields_set__'])
 
 
 class SendMethod(str, Enum):
