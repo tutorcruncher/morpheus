@@ -116,28 +116,15 @@ class EmailSendView(ServiceView):
         return PreResponse(text='201 job enqueued\n', status=201)
 
 
-async def check_sms_limit(conn, company_code):
-    v = await conn.fetchval(
-        """
-        select sum(m.cost)
-        from messages as m
-        join message_groups j on m.group_id = j.id
-        where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
-        """,
-        company_code,
-    )
-    return v or 0
-
-
 class SmsBillingView(ServiceView):
     async def call(self, request) -> PreResponse:
         m = await self.request_data(SmsBillingModel)
-        company_code = self.request.match_info['company_code']
+        company_code = f"{self.request.match_info['company_code']}:{self.request.match_info['branch_id']}"
         total_spend = await self.app['pg'].fetchval(
             """
-            select sum(m.cost)
-            from messages as m
-            join message_groups j on m.group_id = j.id
+            select sum(cost)
+            from messages
+            join message_groups j on group_id = j.id
             where j.company=$1 and send_ts between $2 and $3
             """,
             company_code,
@@ -151,6 +138,19 @@ class SmsBillingView(ServiceView):
             'spend': total_spend,
         }
         return self.json_response(**data)
+
+
+async def check_sms_limit(conn, company_code):
+    v = await conn.fetchval(
+        """
+        select sum(m.cost)
+        from messages as m
+        join message_groups j on m.group_id = j.id
+        where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
+        """,
+        company_code,
+    )
+    return v or 0
 
 
 class SmsSendView(ServiceView):

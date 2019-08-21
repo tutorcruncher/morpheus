@@ -370,13 +370,13 @@ async def test_send_too_long(cli, tmpdir):
 
 async def test_sms_billing(cli, send_sms):
     for i in range(4):
-        await send_sms(uid=str(uuid4()), company_code='billing-test')
+        await send_sms(uid=str(uuid4()), company_code='billing-test:123')
 
     start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
     end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
-    data = dict(start=start, end=end, company_code='billing-test')
+    data = dict(start=start, end=end)
     r = await cli.get(
-        '/billing/sms/billing-test/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
+        '/billing/sms/billing-test/123/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
     )
     assert r.status == 200, await r.text()
-    assert {'company': 'billing-test', 'start': start, 'end': end, 'spend': 0.048} == await r.json()
+    assert {'company': 'billing-test:123', 'start': start, 'end': end, 'spend': 0.048} == await r.json()
