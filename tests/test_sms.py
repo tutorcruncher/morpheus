@@ -376,7 +376,7 @@ async def test_sms_billing(cli, send_sms):
     end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
     data = dict(start=start, end=end)
     r = await cli.get(
-        '/billing/sms/billing-test/123/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
+        '/billing/sms/billing-test:123/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
     )
     assert r.status == 200, await r.text()
     assert {'company': 'billing-test:123', 'start': start, 'end': end, 'spend': 0.048} == await r.json()

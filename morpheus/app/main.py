@@ -127,7 +127,7 @@ def create_app(settings: Settings = None):
     app.router.add_post('/send/sms/', SmsSendView.view(), name='send-smss')
     app.router.add_get('/validate/sms/', SmsValidateView.view(), name='validate-smss')
 
-    app.router.add_get('/billing/sms/{company_code}/{branch_id}/', SmsBillingView.view(), name='billing-sms')
+    app.router.add_get('/billing/sms/{company_code}/', SmsBillingView.view(), name='billing-sms')
 
     methods = r'/{method:%s}/' % '|'.join(m.value for m in SendMethod)
     app.router.add_post('/create-subaccount' + methods, CreateSubaccountView.view(), name='create-subaccount')

@@ -119,7 +119,7 @@ class EmailSendView(ServiceView):
 class SmsBillingView(ServiceView):
     async def call(self, request) -> PreResponse:
         m = await self.request_data(SmsBillingModel)
-        company_code = f"{self.request.match_info['company_code']}:{self.request.match_info['branch_id']}"
+        company_code = self.request.match_info['company_code']
         total_spend = await self.app['pg'].fetchval(
             """
             select sum(cost)
