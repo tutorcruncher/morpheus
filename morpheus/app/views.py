@@ -143,9 +143,9 @@ class SmsBillingView(ServiceView):
 async def check_sms_limit(conn, company_code):
     v = await conn.fetchval(
         """
-        select sum(m.cost)
-        from messages as m
-        join message_groups j on m.group_id = j.id
+        select sum(cost)
+        from messages
+        join message_groups j on group_id = j.id
         where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
         """,
         company_code,
