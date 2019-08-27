@@ -5,11 +5,12 @@ import json
 import logging
 import re
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from itertools import groupby
 from operator import itemgetter
 from time import time
+from typing import Tuple
 
 import pytz
 import ujson
@@ -116,17 +117,18 @@ class EmailSendView(ServiceView):
         return PreResponse(text='201 job enqueued\n', status=201)
 
 
-async def get_sms_spend(conn, company_code, start, end):
+async def get_sms_spend(conn, company_code, start, end, method):
     v = await conn.fetchval(
         """
         select sum(cost)
         from messages
         join message_groups j on group_id = j.id
-        where j.company=$1 and send_ts between $2 and $3
+        where j.company=$1 and method = $4 and send_ts between $2 and $3
         """,
         company_code,
         start,
         end,
+        method,
     )
     return v or 0
 
@@ -135,7 +137,8 @@ class SmsBillingView(ServiceView):
     async def call(self, request) -> PreResponse:
         m = await self.request_data(SmsBillingModel)
         company_code = self.request.match_info['company_code']
-        total_spend = await get_sms_spend(self.app['pg'], company_code, m.start, m.end)
+        method = self.request.match_info['method']
+        total_spend = await get_sms_spend(self.app['pg'], company_code, m.start, m.end, method)
         data = {
             'company': company_code,
             'start': m.start.strftime('%Y-%m-%d'),
@@ -143,6 +146,11 @@ class SmsBillingView(ServiceView):
             'spend': total_spend,
         }
         return self.json_response(**data)
+
+
+def month_interval() -> Tuple[datetime, datetime]:
+    n = datetime.utcnow().replace(tzinfo=timezone.utc)
+    return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0), n
 
 
 class SmsSendView(ServiceView):
@@ -157,9 +165,8 @@ class SmsSendView(ServiceView):
 
         month_spend = None
         if m.cost_limit is not None:
-            now = datetime.now()
-            start = now.replace(day=1, hour=0, minute=0, second=0)
-            month_spend = await get_sms_spend(self.app['pg'], m.company_code, start, now)
+            start, end = month_interval()
+            month_spend = await get_sms_spend(self.app['pg'], m.company_code, start, end, m.method)
             if month_spend >= m.cost_limit:
                 return self.json_response(
                     status='send limit exceeded', cost_limit=m.cost_limit, spend=month_spend, status_=402
@@ -449,9 +456,8 @@ class UserMessagesJsonView(_UserMessagesView):
         )
         company_code = self.session.company
         if self.sms_method and company_code != '__all__':
-            now = datetime.now()
-            start = now.replace(day=1, hour=0, minute=0, second=0)
-            data['spend'] = await get_sms_spend(self.app['pg'], company_code, start, now)
+            start, end = month_interval()
+            data['spend'] = await get_sms_spend(self.app['pg'], company_code, start, end, request.match_info['method'])
 
         if len(data['items']) == 1:
             data['events'] = await self.events(data)
@@ -553,10 +559,10 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         data = await self.query(tags=request.query.getall('tags', None), query=request.query.get('q', None))
         monthly_spend = None
         company_code = self.session.company
-        if 'sms' in request.match_info['method'] and company_code != '__all__':
-            now = datetime.now()
-            start = now.replace(day=1, hour=0, minute=0, second=0)
-            monthly_spend = '{:,.3f}'.format(await get_sms_spend(self.app['pg'], company_code, start, now))
+        method = request.match_info['method']
+        if 'sms' in method and company_code != '__all__':
+            start, end = month_interval()
+            monthly_spend = '{:,.3f}'.format(await get_sms_spend(self.app['pg'], company_code, start, end, method))
         hits = data['items']
         headings = ['To', 'Send Time', 'Status', 'Subject']
         total = data['count']
