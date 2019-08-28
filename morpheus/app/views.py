@@ -8,7 +8,6 @@ from dataclasses import asdict
 from html import escape
 from itertools import groupby
 from operator import itemgetter
-from statistics import mean, stdev
 from time import time
 
 import pytz
@@ -806,61 +805,6 @@ class AdminGetView(AdminView):
             json_display=highlight(data, JsonLexer(), HtmlFormatter()),
             form_action=self.app.router['admin-list'].url_for(),
         )
-
-
-class RequestStatsView(AuthView):
-    auth_token_field = 'stats_token'
-
-    @classmethod
-    def process_values(cls, request_count, request_list):
-        groups = {k: {'request_count': int(v)} for k, v in request_count.items()}
-
-        for v in request_list:
-            k, time_ = v.rsplit(':', 1)
-            time_ = float(time_) / 1000
-            g = groups.get(k)
-            if g:
-                if 'times' in g:
-                    g['times'].append(time_)
-                else:
-                    g['times'] = [time_]
-            else:
-                groups[k] = {'times': [time_]}
-
-        data = []
-        for k, v in groups.items():
-            method, status = k.split(':')
-            v.update(method=method, status=status + 'XX')
-            times = v.pop('times', None)
-            if times:
-                times = sorted(times)
-                times_count = len(times)
-                v.update(
-                    time_min=times[0], time_max=times[-1], time_mean=mean(times), request_count_interval=times_count
-                )
-                if times_count > 2:
-                    v.update(
-                        time_stdev=stdev(times),
-                        time_90=times[int(times_count * 0.9)],
-                        time_95=times[int(times_count * 0.95)],
-                    )
-            data.append(v)
-        return ujson.dumps(data).encode()
-
-    async def call(self, request):
-        stats_cache_key = 'request-stats-cache'
-        with await self.redis as redis:
-            response_data = await redis.get(stats_cache_key)
-            if not response_data:
-                tr = redis.multi_exec()
-                tr.hgetall(request.app['stats_request_count'])
-                tr.lrange(request.app['stats_request_list'], 0, -1)
-
-                tr.delete(request.app['stats_request_list'])
-                request_count, request_list, _ = await tr.execute()
-                response_data = self.process_values(request_count, request_list)
-                await redis.setex(stats_cache_key, 8, response_data)
-        return PreResponse(body=response_data, content_type='application/json')
 
 
 msg_stats_sql = """
