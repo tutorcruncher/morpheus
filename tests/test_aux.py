@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -32,67 +31,9 @@ async def test_favicon(cli):
     assert 'image' in r.headers['Content-Type']  # value can vary
 
 
-async def test_stats_unauthorised(cli):
-    r = await cli.get('/stats/requests/')
-    assert r.status == 403, await r.text()
-
-
 async def test_405(cli):
     r = await cli.post('/')
     assert r.status == 405, await r.text()
-
-
-async def test_request_stats(cli, loop):
-    redis = await cli.server.app['redis']
-    await redis.delete(cli.server.app['stats_request_count'])
-    await redis.delete(cli.server.app['stats_request_list'])
-    await asyncio.gather(*(cli.get('/') for _ in range(5)))
-    await cli.post('/')
-
-    for i in range(10):
-        if 6 == await redis.llen(cli.server.app['stats_request_list']):
-            break
-        await asyncio.sleep(0.1, loop=loop)
-    assert 6 == await redis.llen(cli.server.app['stats_request_list'])
-
-    r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert len(data) == 2
-    good = next(d for d in data if d['status'] == '2XX')
-    assert good['request_count'] == 5
-    assert good['request_count_interval'] == 5
-    assert good['method'] == 'GET'
-    assert 'time_90' in good
-
-    keys = await redis.llen(cli.server.app['stats_request_list'])
-    assert keys == 0
-
-    # used cached value
-    r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert len(data) == 2
-
-
-async def test_request_stats_reset(cli, loop):
-    redis = await cli.server.app['redis']
-    await redis.delete(cli.server.app['stats_request_count'])
-    await redis.delete(cli.server.app['stats_request_list'])
-
-    for _ in range(30):
-        await cli.get('/')
-
-    for i in range(10):
-        if 10 > await redis.llen(cli.server.app['stats_request_list']):
-            break
-        await asyncio.sleep(0.1, loop=loop)
-
-    r = await cli.get('/stats/requests/', headers={'Authorization': 'test-token'})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert len(data) == 1
-    assert data[0]['request_count'] == 30
 
 
 async def test_message_stats(cli, send_email):

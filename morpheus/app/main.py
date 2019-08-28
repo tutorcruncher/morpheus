@@ -8,7 +8,6 @@ from atoolbox.create_app import cleanup, startup
 from atoolbox.middleware import error_middleware
 
 from .ext import Mandrill, MorpheusUserApi
-from .middleware import stats_middleware
 from .models import SendMethod
 from .settings import Settings
 from .utils import THIS_DIR
@@ -23,7 +22,6 @@ from .views import (
     MandrillWebhookView,
     MessageBirdWebhookView,
     MessageStatsView,
-    RequestStatsView,
     SmsBillingView,
     SmsSendView,
     SmsValidateView,
@@ -96,7 +94,7 @@ async def extra_cleanup(app):
 
 def create_app(settings: Settings = None):
     settings = settings or Settings()
-    app = Application(client_max_size=settings.max_request_size, middlewares=(stats_middleware, error_middleware))
+    app = Application(client_max_size=settings.max_request_size, middlewares=(error_middleware,))
     aiohttp_jinja2.setup(
         app,
         loader=jinja2.FileSystemLoader(str(THIS_DIR / 'templates')),
@@ -150,7 +148,6 @@ def create_app(settings: Settings = None):
     app.router.add_get('/admin/list/', AdminListView.view(), name='admin-list')
     app.router.add_get(r'/admin/get/{method}/{id:\d+}/', AdminGetView.view(), name='admin-get')
 
-    app.router.add_get('/stats/requests/', RequestStatsView.view(), name='request-stats')
     app.router.add_get('/stats/messages/', MessageStatsView.view(), name='message-stats')
     app.router.add_static('/', str(THIS_DIR / 'static'))
     return app
