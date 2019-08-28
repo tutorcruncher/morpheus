@@ -8,7 +8,7 @@ from atoolbox.create_app import cleanup, startup
 from atoolbox.middleware import error_middleware
 
 from .ext import Mandrill, MorpheusUserApi
-from .models import SendMethod
+from .models import SendMethod, SmsSendMethod
 from .settings import Settings
 from .utils import THIS_DIR
 from .views import (
@@ -123,9 +123,11 @@ def create_app(settings: Settings = None):
 
     app.router.add_post('/send/email/', EmailSendView.view(), name='send-emails')
     app.router.add_post('/send/sms/', SmsSendView.view(), name='send-smss')
+
     app.router.add_get('/validate/sms/', SmsValidateView.view(), name='validate-smss')
 
-    app.router.add_get('/billing/{method}/{company_code}/', SmsBillingView.view(), name='billing-sms')
+    sms_methods = r'{method:%s}' % '|'.join(m.value for m in SmsSendMethod)
+    app.router.add_get('/billing/' + sms_methods + '/{company_code}/', SmsBillingView.view(), name='billing-sms')
 
     methods = r'/{method:%s}/' % '|'.join(m.value for m in SendMethod)
     app.router.add_post('/create-subaccount' + methods, CreateSubaccountView.view(), name='create-subaccount')
