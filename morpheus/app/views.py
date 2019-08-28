@@ -5,16 +5,19 @@ import json
 import logging
 import re
 from dataclasses import asdict
+from datetime import datetime, timezone
 from html import escape
 from itertools import groupby
 from operator import itemgetter
 from time import time
+from typing import Tuple
 
 import pytz
 import ujson
 from aiohttp.web import HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
 from arq.utils import truncate
+from asyncpg import Connection
 from atoolbox import JsonErrors
 from buildpg import Func, Values, Var
 from buildpg.clauses import Select, Where
@@ -115,15 +118,18 @@ class EmailSendView(ServiceView):
         return PreResponse(text='201 job enqueued\n', status=201)
 
 
-async def check_sms_limit(conn, company_code):
+async def get_sms_spend(conn: Connection, company_code: str, start: datetime, end: datetime, method: str):
     v = await conn.fetchval(
         """
-        select sum(m.cost)
-        from messages as m
-        join message_groups j on m.group_id = j.id
-        where j.company=$1 and send_ts > (current_timestamp - '28days'::interval)
+        select sum(cost)
+        from messages
+        join message_groups j on group_id = j.id
+        where j.company=$1 and send_ts between $2 and $3 and method = $4
         """,
         company_code,
+        start,
+        end,
+        method,
     )
     return v or 0
 
@@ -132,17 +138,8 @@ class SmsBillingView(ServiceView):
     async def call(self, request) -> PreResponse:
         m = await self.request_data(SmsBillingModel)
         company_code = self.request.match_info['company_code']
-        total_spend = await self.app['pg'].fetchval(
-            """
-            select sum(m.cost)
-            from messages as m
-            join message_groups j on m.group_id = j.id
-            where j.company=$1 and send_ts between $2 and $3
-            """,
-            company_code,
-            m.start,
-            m.end,
-        )
+        method = self.request.match_info['method']
+        total_spend = await get_sms_spend(self.app['pg'], company_code, m.start, m.end, method)
         data = {
             'company': company_code,
             'start': m.start.strftime('%Y-%m-%d'),
@@ -150,6 +147,11 @@ class SmsBillingView(ServiceView):
             'spend': total_spend,
         }
         return self.json_response(**data)
+
+
+def month_interval() -> Tuple[datetime, datetime]:
+    n = datetime.utcnow().replace(tzinfo=timezone.utc)
+    return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0), n
 
 
 class SmsSendView(ServiceView):
@@ -162,12 +164,13 @@ class SmsSendView(ServiceView):
                 raise JsonErrors.HTTPConflict(f'Send group with id "{m.uid}" already exists\n')
             await redis.expire(group_key, 86400)
 
-        spend = None
+        month_spend = None
         if m.cost_limit is not None:
-            spend = await check_sms_limit(self.app['pg'], m.company_code)
-            if spend >= m.cost_limit:
+            start, end = month_interval()
+            month_spend = await get_sms_spend(self.app['pg'], m.company_code, start, end, m.method)
+            if month_spend >= m.cost_limit:
                 return self.json_response(
-                    status='send limit exceeded', cost_limit=m.cost_limit, spend=spend, status_=402
+                    status='send limit exceeded', cost_limit=m.cost_limit, spend=month_spend, status_=402
                 )
 
         group_id = await self.app['pg'].fetchval_b(
@@ -182,7 +185,7 @@ class SmsSendView(ServiceView):
         for recipient in recipients:
             await self.redis.enqueue_job('send_sms', group_id, recipient, m_base)
 
-        return self.json_response(status='enqueued', spend=spend, status_=201)
+        return self.json_response(status='enqueued', spend=month_spend, status_=201)
 
 
 class SmsValidateView(ServiceView):
@@ -452,8 +455,10 @@ class UserMessagesJsonView(_UserMessagesView):
             tags=request.query.getall('tags', None),
             query=request.query.get('q'),
         )
-        if self.sms_method and self.session.company != '__all__':
-            data['spend'] = await check_sms_limit(self.app['pg'], self.session.company)
+        company_code = self.session.company
+        if self.sms_method and company_code != '__all__':
+            start, end = month_interval()
+            data['spend'] = await get_sms_spend(self.app['pg'], company_code, start, end, request.match_info['method'])
 
         if len(data['items']) == 1:
             data['events'] = await self.events(data)
@@ -553,9 +558,12 @@ class UserMessageListView(TemplateView, _UserMessagesView):
 
     async def call(self, request):
         data = await self.query(tags=request.query.getall('tags', None), query=request.query.get('q', None))
-        total_sms_spend = None
-        if 'sms' in request.match_info['method'] and self.session.company != '__all__':
-            total_sms_spend = '{:,.3f}'.format(await check_sms_limit(self.app['pg'], self.session.company))
+        monthly_spend = None
+        company_code = self.session.company
+        method = request.match_info['method']
+        if 'sms' in method and company_code != '__all__':
+            start, end = month_interval()
+            monthly_spend = '{:,.3f}'.format(await get_sms_spend(self.app['pg'], company_code, start, end, method))
         hits = data['items']
         headings = ['To', 'Send Time', 'Status', 'Subject']
         total = data['count']
@@ -579,7 +587,7 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
             title=f'{self.request.match_info["method"]} - {total}',
             total=total,
-            total_sms_spend=total_sms_spend,
+            total_sms_spend=monthly_spend,
             table_headings=headings,
             table_body=self._table_body(hits),
             pagination=pagination,
