@@ -17,6 +17,7 @@ import ujson
 from aiohttp.web import HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
 from arq.utils import truncate
+from asyncpg import Connection
 from atoolbox import JsonErrors
 from buildpg import Func, Values, Var
 from buildpg.clauses import Select, Where
@@ -117,13 +118,13 @@ class EmailSendView(ServiceView):
         return PreResponse(text='201 job enqueued\n', status=201)
 
 
-async def get_sms_spend(conn, company_code, start, end, method):
+async def get_sms_spend(conn: Connection, company_code: str, start: datetime, end: datetime, method: str):
     v = await conn.fetchval(
         """
         select sum(cost)
         from messages
         join message_groups j on group_id = j.id
-        where j.company=$1 and method = $4 and send_ts between $2 and $3
+        where j.company=$1 and send_ts between $2 and $3 and method = $4
         """,
         company_code,
         start,
