@@ -38,5 +38,3 @@ services:
   worker:
     environment:
       APP_PG_DSN: 'postgres://postgres:docker@postgres:5432/morpheus'
-
-# no telegraf
