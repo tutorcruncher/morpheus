@@ -504,7 +504,7 @@ class SendSMS:
                         )
                         break
                     await asyncio.sleep(1)
-                if not hlr or network:
+                if not hlr or not network:
                     main_logger.error(
                         'No HLR result found for %s after 30 attempts',  number.number, json.dumps(data, indent=2)
                     )

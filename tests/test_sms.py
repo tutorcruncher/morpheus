@@ -188,6 +188,7 @@ async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert await worker.run_check() == 1
+    debug(dummy_server.log)
     assert [
         'POST /messagebird/lookup/447801234567/hlr > 201',
         'GET /messagebird/lookup/447801234567 > 200',
