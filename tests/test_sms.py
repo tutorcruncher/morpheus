@@ -217,7 +217,7 @@ async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker):
     assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447888888888/hlr > 201',
-        'GET /messagebird/lookup/447888888888 > 200',
+        *['GET /messagebird/lookup/447888888888 > 200' for _ in range(30)],
     ] == dummy_server.log
     dummy_server.log = []
 
@@ -235,7 +235,7 @@ async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker):
     assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447777777777/hlr > 201',
-        'GET /messagebird/lookup/447777777777 > 200',
+        *['GET /messagebird/lookup/447777777777 > 200' for _ in range(30)],
     ] == dummy_server.log
     dummy_server.log = []
 

@@ -488,22 +488,27 @@ class SendSMS:
                 main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
                 api_number = number.number.replace('+', '')
                 await self.messagebird.post(f'lookup/{api_number}/hlr')
-                data = None
+                network, hlr = None, None
                 for i in range(30):
                     r = await self.messagebird.get(f'lookup/{api_number}')
                     data = await r.json()
                     hlr = data.get('hlr')
                     if not hlr:
-                        return
+                        continue
                     network = hlr.get('network')
                     if not network:
-                        return
+                        continue
                     elif hlr['status'] == 'active':
                         main_logger.info(
                             'found result for %s after %d attempts %s', number.number, i, json.dumps(data, indent=2)
                         )
                         break
                     await asyncio.sleep(1)
+                if not hlr or network:
+                    main_logger.error(
+                        'No HLR result found for %s after 30 attempts',  number.number, json.dumps(data, indent=2)
+                    )
+                    return
                 mcc = str(network)[:3]
                 await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
             return await self._messagebird_get_mcc_cost(redis, mcc)
