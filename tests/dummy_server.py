@@ -95,7 +95,10 @@ async def messagebird_lookup(request):
     if '447888888888' in request.path:
         return json_response({})
     elif '447777777777' in request.path:
-        return json_response({'hlr': {'status': 'active'}})
+        request_number = len(request.app['log'])
+        if request_number == 2:
+            return json_response({'hlr': {'status': 'active', 'network': 'o2'}})
+        return json_response({})
     return json_response({'hlr': {'status': 'active', 'network': 23430}})
 
 
