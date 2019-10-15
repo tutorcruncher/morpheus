@@ -3,7 +3,7 @@
 FROM python:3.7-slim as build
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc linux-libc-dev libc6-dev
+ && apt-get install -y --no-install-recommends gcc linux-libc-dev libc6-dev libffi-dev
 
 RUN pip install -U pip setuptools
 ADD ./requirements.txt /home/root/requirements.txt
