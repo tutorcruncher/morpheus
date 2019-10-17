@@ -189,16 +189,16 @@ async def test_delete_sub_account_invalid_key(cli, dummy_server):
 
 async def test_delete_sub_account_and_saved_emails(cli, dummy_server, db_conn, send_email):
     await send_email()
-    assert 1 == await db_conn.fetchval('select * from message_groups')
-    assert 1 == await db_conn.fetchval('select * from messages')
+    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
 
     data = {'company_code': 'foobar'}
     await _create_test_sub_account(cli, data)
     r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
 
-    assert not await db_conn.fetchval('select * from message_groups')
-    assert not await db_conn.fetchval('select * from messages')
+    assert not await db_conn.fetchval('select count(*) from message_groups')
+    assert not await db_conn.fetchval('select count(*) from messages')
 
 
 async def test_missing_link(cli):
