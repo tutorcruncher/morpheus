@@ -309,8 +309,16 @@ class DeleteSubaccountView(ServiceView):
         data = await r.json()
         if r.status == 200:
             async with self.app['pg'].acquire() as conn:
-                await conn.execute('delete from message_groups where company=$1', m.company_code)
-            return PreResponse(text='subaccount deleted\n', status=200)
+                del_messages_count = await conn.execute(
+                    'delete from messages m using message_groups mg where m.group_id=mg.id and mg.company=$1',
+                    m.company_code
+                )
+                del_groups_count = await conn.execute('delete from message_groups where company=$1', m.company_code)
+            data = {
+                'deleted_message_count': del_messages_count.replace('DELETE ', ''),
+                'deleted_groups_count': del_groups_count.replace('DELETE ', '')
+            }
+            return PreResponse(text=f'subaccount deleted: {json.dumps(data)}\n', status=200)
 
         if data.get('name') == 'Unknown_Subaccount':
             return PreResponse(text=data.get('message', 'sub-account not found') + '\n', status=404)
