@@ -143,7 +143,7 @@ async def test_delete_sub_account(cli, dummy_server):
 
     r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
-    assert 'subaccount deleted: {"deleted_message_count": "0", "deleted_groups_count": "0"}\n' == await r.text()
+    assert 'deleted_messages=0 deleted_message_groups=0\n' == await r.text()
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 200',
@@ -201,17 +201,32 @@ async def test_delete_sub_account_and_saved_messages(cli, db_conn, send_email, s
 
     r = await cli.post('/delete-subaccount/email-mandrill/', json=fb1_data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
-    assert 'subaccount deleted: {"deleted_message_count": "2", "deleted_groups_count": "2"}\n' == await r.text()
+    assert 'deleted_messages=2 deleted_message_groups=2\n' == await r.text()
 
     assert 1 == await db_conn.fetchval('select count(*) from message_groups')
     assert 5 == await db_conn.fetchval('select count(*) from messages')
 
     r = await cli.post('/delete-subaccount/email-mandrill/', json=fb2_data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
-    assert 'subaccount deleted: {"deleted_message_count": "5", "deleted_groups_count": "1"}\n' == await r.text()
+    assert 'deleted_messages=5 deleted_message_groups=1\n' == await r.text()
 
     assert 0 == await db_conn.fetchval('select count(*) from message_groups')
     assert 0 == await db_conn.fetchval('select count(*) from messages')
+
+    await send_email(company_code='foobar3')
+    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+
+    await _create_test_sub_account(cli, {'company_code': 'foobar3'})
+    with pytest.raises(TypeError):
+        await cli.post(
+            '/delete-subaccount/email-mandrill/',
+            json={'company_code': object()},
+            headers={'Authorization': 'testing-key'},
+        )
+    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+
 
 
 async def test_missing_link(cli):
