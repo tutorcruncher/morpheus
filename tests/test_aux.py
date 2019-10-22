@@ -228,7 +228,6 @@ async def test_delete_sub_account_and_saved_messages(cli, db_conn, send_email, s
     assert 1 == await db_conn.fetchval('select count(*) from messages')
 
 
-
 async def test_missing_link(cli):
     r = await cli.get('/lxxx')
     assert r.status == 404, await r.text()
