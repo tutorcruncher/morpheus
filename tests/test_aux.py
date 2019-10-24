@@ -143,7 +143,7 @@ async def test_delete_sub_account(cli, dummy_server):
 
     r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 200, await r.text()
-    assert 'subaccount deleted\n' == await r.text()
+    assert 'deleted_messages=0 deleted_message_groups=0\n' == await r.text()
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 200',
@@ -179,12 +179,53 @@ async def test_delete_sub_account_other_method(cli, dummy_server):
     assert dummy_server.log == []
 
 
-async def test_delete_sub_account_invalid_key(cli, dummy_server):
+async def test_delete_sub_account_invalid_key(cli):
     data = {'company_code': 'foobar'}
     await _create_test_sub_account(cli, data)
 
     r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
     assert r.status == 403, await r.text()
+
+
+async def test_delete_sub_account_and_saved_messages(cli, db_conn, send_email, send_sms):
+    await send_email(company_code='foobar1')
+    await send_sms(company_code='foobar1')
+    await send_email(company_code='foobar2', recipients=[{'address': f'{i}@test.com'} for i in range(5)])
+    assert 3 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 7 == await db_conn.fetchval('select count(*) from messages')
+
+    fb1_data = {'company_code': 'foobar1'}
+    await _create_test_sub_account(cli, fb1_data)
+    fb2_data = {'company_code': 'foobar2'}
+    await _create_test_sub_account(cli, fb2_data)
+
+    r = await cli.post('/delete-subaccount/email-mandrill/', json=fb1_data, headers={'Authorization': 'testing-key'})
+    assert r.status == 200, await r.text()
+    assert 'deleted_messages=2 deleted_message_groups=2\n' == await r.text()
+
+    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 5 == await db_conn.fetchval('select count(*) from messages')
+
+    r = await cli.post('/delete-subaccount/email-mandrill/', json=fb2_data, headers={'Authorization': 'testing-key'})
+    assert r.status == 200, await r.text()
+    assert 'deleted_messages=5 deleted_message_groups=1\n' == await r.text()
+
+    assert 0 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 0 == await db_conn.fetchval('select count(*) from messages')
+
+    await send_email(company_code='foobar3')
+    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
+
+    await _create_test_sub_account(cli, {'company_code': 'foobar3'})
+    with pytest.raises(TypeError):
+        await cli.post(
+            '/delete-subaccount/email-mandrill/',
+            json={'company_code': object()},
+            headers={'Authorization': 'testing-key'},
+        )
+    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
+    assert 1 == await db_conn.fetchval('select count(*) from messages')
 
 
 async def test_missing_link(cli):
