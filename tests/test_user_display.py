@@ -274,14 +274,14 @@ async def test_message_details_link(cli, settings, send_email, db_conn, worker):
     assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
     assert '<a href="#">different.pdf</a>' in text
     d = re.search('Open &bull; .+', text).group()
-    assert 'Open &bull; <span class="datetime">Wed 2033-05-18 03:33 UTC</span>' == d, text
+    assert 'Open &bull; <span class="datetime">2033-05-18T03:33:20+00</span>' == d, text
     assert 'extra values not shown' not in text
 
     r = await cli.get(url + '&' + urlencode({'dttz': 'Europe/London'}))
     assert r.status == 200, await r.text()
     text = await r.text()
     d = re.search('Open &bull; .+', text).group()
-    assert 'Open &bull; <span class="datetime">Wed 2033-05-18 04:33 BST</span>' == d, text
+    assert 'Open &bull; <span class="datetime">2033-05-18T04:33:20+01</span>' == d, text
 
     r = await cli.get(url + '&' + urlencode({'dttz': 'snap'}))
     assert r.status == 400, await r.text()
@@ -375,7 +375,7 @@ async def test_many_events(cli, settings, send_email, db_conn):
     assert r.status == 200, await r.text()
     text = await r.text()
     assert text.count('#morpheus-accordion') == 51
-    assert 'Send &bull; <span class="datetime">Wed 2032-06-16 00:00 UTC</span>\n' in text, text
+    assert 'Send &bull; <span class="datetime">2032-06-16T00:00:00+00</span>\n' in text, text
     assert '5 more &bull; ...' in text
 
 

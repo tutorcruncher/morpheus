@@ -541,7 +541,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
     async def _events(self, message_id):
         events = await self.app['pg'].fetch(
             """
-            select status, message_id, pretty_ts(ts, $2) as ts, extra
+            select status, message_id, iso_ts(ts, $2) as ts, extra
             from events where message_id = $1
             order by ts asc
             limit 51
