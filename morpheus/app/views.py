@@ -308,7 +308,18 @@ class DeleteSubaccountView(ServiceView):
         r = await mandrill.post('subaccounts/delete.json', allowed_statuses=(200, 500), id=m.company_code, timeout_=12)
         data = await r.json()
         if r.status == 200:
-            return PreResponse(text='subaccount deleted\n', status=200)
+            async with self.app['pg'].acquire() as conn:
+                async with conn.transaction() as tr:
+                    del_messages_resp = await tr.execute(
+                        'delete from messages m using message_groups mg where m.group_id=mg.id and mg.company=$1',
+                        m.company_code,
+                    )
+                    del_groups_resp = await tr.execute('delete from message_groups where company=$1', m.company_code)
+            del_messages_count = int(del_messages_resp.replace('DELETE ', ''))
+            del_groups_count = int(del_groups_resp.replace('DELETE ', ''))
+            msg = f'deleted_messages={del_messages_count} deleted_message_groups={del_groups_count}'
+            logger.info('deleting company=%s %s', m.company_name, msg)
+            return PreResponse(text=msg + '\n', status=200)
 
         if data.get('name') == 'Unknown_Subaccount':
             return PreResponse(text=data.get('message', 'sub-account not found') + '\n', status=404)
@@ -530,7 +541,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
     async def _events(self, message_id):
         events = await self.app['pg'].fetch(
             """
-            select status, message_id, pretty_ts(ts, $2) as ts, extra
+            select status, message_id, iso_ts(ts, $2) as ts, extra
             from events where message_id = $1
             order by ts asc
             limit 51

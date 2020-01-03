@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -204,7 +205,7 @@ async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
     assert dummy_server.log[4] == 'POST /messagebird/messages > 201'
 
 
-async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker):
+async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -217,12 +218,13 @@ async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker):
     assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447888888888/hlr > 201',
-        'GET /messagebird/lookup/447888888888 > 200',
+        *['GET /messagebird/lookup/447888888888 > 200' for _ in range(30)],
     ] == dummy_server.log
     dummy_server.log = []
+    assert caplog.messages == ['No HLR result found for +447888888888 after 30 attempts']
 
 
-async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker):
+async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog):
     data = {
         'uid': str(uuid4()),
         'company_code': 'foobar',
@@ -230,14 +232,27 @@ async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker):
         'main_template': 'this is a message',
         'recipients': [{'number': '07777777777'}],
     }
+    caplog.set_level(logging.INFO)
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447777777777/hlr > 201',
         'GET /messagebird/lookup/447777777777 > 200',
+        'GET /messagebird/lookup/447777777777 > 200',
+        'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
+        'POST /messagebird/messages > 201',
     ] == dummy_server.log
     dummy_server.log = []
+    assert (
+        """found result for +447777777777 after 1 attempts {
+  "hlr": {
+    "status": "active",
+    "network": "o2"
+  }
+}"""
+        in caplog.messages
+    )
 
 
 async def test_messagebird_webhook(cli, db_conn, dummy_server, worker):
