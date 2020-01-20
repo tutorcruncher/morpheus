@@ -153,18 +153,19 @@ email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
 
 
 @worker_function
-async def send_email(ctx, group_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
-    s = SendEmail(ctx, group_id, recipient, m)
+async def send_email(ctx, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
+    s = SendEmail(ctx, group_id, company_id, recipient, m)
     return await s.run()
 
 
 class SendEmail:
-    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'm', 'tags'
+    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags'
 
-    def __init__(self, ctx: dict, group_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
+    def __init__(self, ctx: dict, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
         self.ctx = ctx
         self.settings: Settings = ctx['settings']
         self.group_id = group_id
+        self.company_id = company_id
         self.recipient: EmailRecipientModel = recipient
         self.m: EmailSendModel = m
         self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
@@ -319,6 +320,8 @@ class SendEmail:
         data = dict(
             external_id=external_id,
             group_id=self.group_id,
+            company_id=self.company_id,
+            method=self.m.method,
             send_ts=send_ts,
             status=MessageStatus.send,
             to_first_name=self.recipient.first_name,

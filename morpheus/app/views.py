@@ -125,7 +125,7 @@ class EmailSendView(ServiceView):
         m_base = m.copy(exclude={'recipients'})
         del m
         for recipient in recipients:
-            await self.redis.enqueue_job('send_email', group_id, recipient, m_base)
+            await self.redis.enqueue_job('send_email', group_id, company_id, recipient, m_base)
         return PreResponse(text='201 job enqueued\n', status=201)
 
 
@@ -367,7 +367,7 @@ class _UserMessagesView(UserView):
             'to_last_name',
             'to_user_link',
             'to_address',
-            'company',
+            Var('c.name').as_('company'),
             'method',
             'subject',
             'body',
@@ -380,19 +380,19 @@ class _UserMessagesView(UserView):
         ]
 
     async def query(self, *, message_id=None, tags=None, query=None):
-        where = Var('j.method') == self.request.match_info['method']
-        if self.session.company != '__all__':
-            where &= Var('j.company') == self.session.company
-
-        if message_id:
-            where &= Var('m.id') == message_id
-        elif tags:
-            where &= Var('tags').contains(tags)
-        elif query:
-            return await self.query_general(where, query)
-
-        where = Where(where)
+        where = Var('m.method') == self.request.match_info['method']
         async with self.app['pg'].acquire() as conn:
+            if self.session.company != '__all__':
+                where &= Var('c.name') == self.session.company
+
+            if message_id:
+                where &= Var('m.id') == message_id
+            elif tags:
+                where &= Var('tags').contains(tags)
+            elif query:
+                return await self.query_general(where, query)
+
+            where = Where(where)
             # count is limited to 10,000 as it speeds up the query massively
             count = await conn.fetchval_b(
                 """
@@ -401,6 +401,7 @@ class _UserMessagesView(UserView):
                   select 1
                   from messages m
                   join message_groups j on m.group_id = j.id
+                  join companies c on m.company_id = c.id
                   :where
                   limit 10000
                 ) as t
@@ -412,6 +413,7 @@ class _UserMessagesView(UserView):
                 :select
                 from messages m
                 join message_groups j on m.group_id = j.id
+                join companies c on m.company_id = c.id
                 :where
                 order by m.send_ts desc
                 limit 100
@@ -459,7 +461,7 @@ class UserMessagesJsonView(_UserMessagesView):
             'to_last_name',
             'to_user_link',
             'to_address',
-            'company',
+            Var('c.name').as_('company'),
             'tags',
             'from_name',
             'from_name',
