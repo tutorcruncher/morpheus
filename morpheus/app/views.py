@@ -100,16 +100,27 @@ class EmailSendView(ServiceView):
             await redis.expire(group_key, 86400)
 
         logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
-        group_id = await self.app['pg'].fetchval_b(
-            'insert into message_groups (:values__names) values :values returning id',
-            values=Values(
-                uuid=m.uid,
-                company=m.company_code,
-                method=m.method,
-                from_email=m.from_address.email,
-                from_name=m.from_address.name,
-            ),
-        )
+        async with self.app['pg'].acquire() as conn:
+            company_id = await conn.fetchval('select id from companies where name=$1', m.company_code)
+            if not company_id:
+                company_id = await conn.fetchval(
+                    """
+                    insert into companies (name) values ($1)
+                    on conflict (name) do update set name=excluded.name
+                    returning id
+                    """,
+                    m.company_code,
+                )
+            group_id = await conn.fetchval_b(
+                'insert into message_groups (:values__names) values :values returning id',
+                values=Values(
+                    uuid=m.uid,
+                    company_id=company_id,
+                    message_method=m.method,
+                    from_email=m.from_address.email,
+                    from_name=m.from_address.name,
+                ),
+            )
         recipients = m.recipients
         m_base = m.copy(exclude={'recipients'})
         del m
@@ -676,10 +687,9 @@ from (
   select coalesce(json_agg(t), '[]') AS histogram from (
     select count(*), to_char(day, 'YYYY-MM-DD') as day, status
     from (
-      select date_trunc('day', m.send_ts) as day, status
-      from messages m
-      join message_groups j on m.group_id = j.id
-      where :where and m.send_ts > current_timestamp::date - '28 days'::interval
+      select date_trunc('day', send_ts) as day, status
+      from messages
+      where :where and send_ts > current_timestamp::date - '28 days'::interval
     ) as t
     group by day, status
   ) as t
@@ -687,14 +697,13 @@ from (
 (
   select
     count(*) as all_90,
-    count(*) filter (where m.status = 'open') as open_90,
-    count(*) filter (where m.send_ts > current_timestamp::date - '28 days'::interval) as all_28,
-    count(*) filter (where m.send_ts > current_timestamp::date - '28 days'::interval and m.status = 'open') as open_28,
-    count(*) filter (where m.send_ts > current_timestamp::date - '7 days'::interval) as all_7,
-    count(*) filter (where m.send_ts > current_timestamp::date - '7 days'::interval and m.status = 'open') as open_7
-  from messages m
-  join message_groups j on m.group_id = j.id
-  where :where and m.send_ts > current_timestamp::date - '90 days'::interval
+    count(*) filter (where status = 'open') as open_90,
+    count(*) filter (where send_ts > current_timestamp::date - '28 days'::interval) as all_28,
+    count(*) filter (where send_ts > current_timestamp::date - '28 days'::interval and status = 'open') as open_28,
+    count(*) filter (where send_ts > current_timestamp::date - '7 days'::interval) as all_7,
+    count(*) filter (where send_ts > current_timestamp::date - '7 days'::interval and status = 'open') as open_7
+  from messages
+  where :where and send_ts > current_timestamp::date - '90 days'::interval
 ) as agg
 """
 
@@ -706,11 +715,13 @@ class UserAggregationView(UserView):
 
     async def call(self, request):
         # TODO allow more filtering here, filter to last X days.
-        where = Var('j.method') == self.request.match_info['method']
-        if self.session.company != '__all__':
-            where &= Var('j.company') == self.session.company
+        where = Var('method') == self.request.match_info['method']
 
         async with self.app['pg'].acquire() as conn:
+            if self.session.company != '__all__':
+                company_id = await conn.fetchval('select id from companies where name=$1', self.session.company)
+                assert company_id
+                where &= Var('company_id') == company_id
             data = await conn.fetchval_b(agg_sql, where=where)
         return PreResponse(text=data, content_type='application/json')
 
