@@ -1,3 +1,5 @@
+create extension btree_gin;
+
 -- should match SendMethod
 CREATE TYPE SEND_METHODS AS ENUM ('email-mandrill', 'email-ses', 'email-test', 'sms-messagebird', 'sms-test');
 
@@ -21,6 +23,7 @@ CREATE UNIQUE INDEX message_group_uuid ON message_groups USING btree (uuid);
 CREATE INDEX message_group_company_method ON message_groups USING btree (company_id, message_method);
 CREATE INDEX message_group_method ON message_groups USING btree (message_method);
 CREATE INDEX message_group_created_ts ON message_groups USING btree (created_ts);
+CREATE INDEX message_group_company_id ON message_groups USING btree (company_id);
 
 
 -- should match MessageStatus
@@ -50,14 +53,14 @@ CREATE TABLE messages (
   extra JSONB,
   vector tsvector NOT NULL
 );
-CREATE INDEX message_group_id ON messages USING btree (group_id);
-CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts);
+CREATE INDEX message_company_id ON messages USING btree (company_id);
+CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts desc);
 CREATE INDEX message_external_id ON messages USING btree (external_id);
-CREATE INDEX message_send_ts ON messages USING btree (send_ts);
-CREATE INDEX message_update_ts ON messages USING btree (update_ts);
-CREATE INDEX message_tags ON messages USING gin (tags);
-CREATE INDEX message_vector ON messages USING gin (vector);
-CREATE INDEX message_company_method_send_ts ON messages USING btree (company_id, method, send_ts desc);
+CREATE INDEX message_send_ts ON messages USING btree (send_ts desc);
+CREATE INDEX message_update_ts ON messages USING btree (update_ts desc);
+CREATE INDEX message_tags ON messages USING gin (tags, method, company_id);
+CREATE INDEX message_vector ON messages USING gin (vector, method, company_id);
+CREATE INDEX message_company_method ON messages USING btree (method, company_id, id);
 
 
 CREATE TABLE events (
