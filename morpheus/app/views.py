@@ -89,6 +89,26 @@ class ClickRedirectView(TemplateView):
             return dict(url=request.url, http_status_=404)
 
 
+async def get_create_company_id(conn, company_code: str) -> int:
+    company_id = await conn.fetchval('select id from companies where name=$1', company_code)
+    if not company_id:
+        company_id = await conn.fetchval(
+            """
+            insert into companies (name) values ($1)
+            on conflict (name) do update set name=excluded.name
+            returning id
+            """,
+            company_code,
+        )
+    return company_id
+
+
+async def get_company_id(conn, company_code: str) -> int:
+    company_id = await conn.fetchval('select id from companies where name=$1', company_code)
+    assert company_id, f'company with code {company_code!r} does not exist'
+    return company_id
+
+
 class EmailSendView(ServiceView):
     async def call(self, request):
         m: EmailSendModel = await self.request_data(EmailSendModel)
@@ -101,16 +121,7 @@ class EmailSendView(ServiceView):
 
         logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
         async with self.app['pg'].acquire() as conn:
-            company_id = await conn.fetchval('select id from companies where name=$1', m.company_code)
-            if not company_id:
-                company_id = await conn.fetchval(
-                    """
-                    insert into companies (name) values ($1)
-                    on conflict (name) do update set name=excluded.name
-                    returning id
-                    """,
-                    m.company_code,
-                )
+            company_id = await get_create_company_id(conn, m.company_code)
             group_id = await conn.fetchval_b(
                 'insert into message_groups (:values__names) values :values returning id',
                 values=Values(
@@ -134,8 +145,8 @@ async def get_sms_spend(conn: Connection, company_code: str, start: datetime, en
         """
         select sum(cost)
         from messages
-        join message_groups j on group_id = j.id
-        where j.company=$1 and send_ts between $2 and $3 and method = $4
+        join companies c on messages.company_id = c.id
+        where c.name=$1 and method = $4 and send_ts between $2 and $3
         """,
         company_code,
         start,
@@ -184,17 +195,19 @@ class SmsSendView(ServiceView):
                     status='send limit exceeded', cost_limit=m.cost_limit, spend=month_spend, status_=402
                 )
 
-        group_id = await self.app['pg'].fetchval_b(
-            'insert into message_groups (:values__names) values :values returning id',
-            values=Values(uuid=m.uid, company=m.company_code, method=m.method, from_name=m.from_name),
-        )
+        async with self.app['pg'].acquire() as conn:
+            company_id = await get_create_company_id(conn, m.company_code)
+            group_id = await conn.fetchval_b(
+                'insert into message_groups (:values__names) values :values returning id',
+                values=Values(uuid=m.uid, company_id=company_id, message_method=m.method, from_name=m.from_name),
+            )
         logger.info('%s sending %d SMSs', m.company_code, len(m.recipients))
 
         recipients = m.recipients
         m_base = m.copy(exclude={'recipients'})
         del m
         for recipient in recipients:
-            await self.redis.enqueue_job('send_sms', group_id, recipient, m_base)
+            await self.redis.enqueue_job('send_sms', group_id, company_id, recipient, m_base)
 
         return self.json_response(status='enqueued', spend=month_spend, status_=201)
 
@@ -320,14 +333,16 @@ class DeleteSubaccountView(ServiceView):
         data = await r.json()
         if r.status == 200:
             async with self.app['pg'].acquire() as conn:
-                async with conn.transaction() as tr:
-                    del_messages_resp = await tr.execute(
-                        'delete from messages m using message_groups mg where m.group_id=mg.id and mg.company=$1',
-                        m.company_code,
-                    )
-                    del_groups_resp = await tr.execute('delete from message_groups where company=$1', m.company_code)
-            del_messages_count = int(del_messages_resp.replace('DELETE ', ''))
-            del_groups_count = int(del_groups_resp.replace('DELETE ', ''))
+                company_id = await conn.fetchval('select id from companies where name=$1', m.company_code)
+                if company_id:
+                    async with conn.transaction() as tr:
+                        del_messages_resp = await tr.execute('delete from messages where company_id=$1', company_id)
+                        del_groups_resp = await tr.execute('delete from message_groups where company_id=$1', company_id)
+                        await tr.execute('delete from companies where id=$1', company_id)
+                    del_messages_count = int(del_messages_resp.replace('DELETE ', ''))
+                    del_groups_count = int(del_groups_resp.replace('DELETE ', ''))
+                else:
+                    del_messages_count = del_groups_count = 0
             msg = f'deleted_messages={del_messages_count} deleted_message_groups={del_groups_count}'
             logger.info('deleting company=%s %s', m.company_name, msg)
             return PreResponse(text=msg + '\n', status=200)
@@ -430,8 +445,10 @@ class _UserMessagesView(UserView):
             items = await conn.fetch_b(
                 """
                 :select
-                from messages m join message_groups j on m.group_id = j.id, plainto_tsquery(:query) tsquery
-                where :where and m.vector @@ tsquery
+                from messages m
+                join message_groups j on m.group_id = j.id
+                join companies c on m.company_id = c.id
+                where :where and m.vector @@ plainto_tsquery(:query)
                 order by m.send_ts desc
                 limit 100
                 offset :offset
@@ -637,10 +654,10 @@ class UserMessagePreviewView(TemplateView, UserView):
 
     async def call(self, request):
         method = self.request.match_info['method']
-        where = (Var('j.method') == method) & (Var('m.id') == int(request.match_info['id']))
+        where = (Var('m.method') == method) & (Var('m.id') == int(request.match_info['id']))
 
         if self.session.company != '__all__':
-            where &= Var('j.company') == self.session.company
+            where &= Var('c.name') == self.session.company
 
         async with self.app['pg'].acquire() as conn:
             data = await conn.fetchrow_b(
@@ -648,6 +665,7 @@ class UserMessagePreviewView(TemplateView, UserView):
                 select from_name, to_last_name, to_address, status, body, extra
                 from messages m
                 join message_groups j on m.group_id = j.id
+                join companies c on m.company_id = c.id
                 where :where
                 """,
                 where=where,
@@ -721,9 +739,7 @@ class UserAggregationView(UserView):
 
         async with self.app['pg'].acquire() as conn:
             if self.session.company != '__all__':
-                company_id = await conn.fetchval('select id from companies where name=$1', self.session.company)
-                assert company_id
-                where &= Var('company_id') == company_id
+                where &= Var('company_id') == await get_company_id(conn, self.session.company)
             data = await conn.fetchval_b(agg_sql, where=where)
         return PreResponse(text=data, content_type='application/json')
 

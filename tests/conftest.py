@@ -14,6 +14,7 @@ from buildpg import Values, asyncpg
 from morpheus.app.main import create_app
 from morpheus.app.models import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
+from morpheus.app.views import get_create_company_id
 from morpheus.app.worker import startup as worker_startup, worker_functions
 
 from . import dummy_server
@@ -187,16 +188,17 @@ def _fix_call_send_emails(db_conn):
             recipients=[],
         )
         m = EmailSendModel(**dict(base_kwargs, **kwargs))
+        company_id = await get_create_company_id(db_conn, m.company_code)
         group_id = await db_conn.fetchval_b(
             'insert into message_groups (:values__names) values :values returning id',
             values=Values(
                 uuid=m.uid,
-                company=m.company_code,
-                method=m.method.value,
+                company_id=company_id,
+                message_method=m.method.value,
                 from_email=m.from_address.email,
                 from_name=m.from_address.name,
             ),
         )
-        return group_id, m
+        return group_id, company_id, m
 
     return run

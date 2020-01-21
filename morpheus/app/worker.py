@@ -354,6 +354,8 @@ class SendEmail:
             'insert into messages (:values__names) values :values',
             values=Values(
                 group_id=self.group_id,
+                company_id=self.company_id,
+                method=self.m.method,
                 status=status,
                 to_first_name=self.recipient.first_name,
                 to_last_name=self.recipient.last_name,
@@ -366,18 +368,19 @@ class SendEmail:
 
 
 @worker_function
-async def send_sms(ctx, group_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
-    s = SendSMS(ctx, group_id, recipient, m)
+async def send_sms(ctx, group_id: int, company_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
+    s = SendSMS(ctx, group_id, company_id, recipient, m)
     return await s.run()
 
 
 class SendSMS:
-    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'm', 'tags', 'messagebird', 'from_name'
+    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags', 'messagebird', 'from_name'
 
-    def __init__(self, ctx: dict, group_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
+    def __init__(self, ctx: dict, group_id: int, company_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
         self.ctx = ctx
         self.settings: Settings = ctx['settings']
         self.group_id = group_id
+        self.company_id = company_id
         self.recipient: SmsRecipientModel = recipient
         self.m: SmsSendModel = m
         self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
@@ -422,6 +425,8 @@ class SendSMS:
                 'insert into messages (:values__names) values :values',
                 values=Values(
                     group_id=self.group_id,
+                    company_id=self.company_id,
+                    method=self.m.method,
                     status=MessageStatus.render_failed,
                     to_first_name=self.recipient.first_name,
                     to_last_name=self.recipient.last_name,
@@ -545,6 +550,8 @@ class SendSMS:
                 values=Values(
                     external_id=external_id,
                     group_id=self.group_id,
+                    company_id=self.company_id,
+                    method=self.m.method,
                     send_ts=send_ts,
                     status=MessageStatus.send,
                     to_first_name=self.recipient.first_name,
@@ -653,13 +660,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
 
     async with ctx['pg'].acquire() as conn:
         message_id = await conn.fetchval(
-            """
-            select m.id from messages m
-            join message_groups j on m.group_id = j.id
-            where j.method = $1 and m.external_id = $2
-            """,
-            send_method,
-            m.message_id,
+            'select id from messages where method = $1 and external_id = $2', send_method, m.message_id
         )
         if not message_id:
             return UpdateStatus.missing

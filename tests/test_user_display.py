@@ -157,7 +157,8 @@ async def test_user_aggregate(cli, settings, send_email):
     assert sum(v['count'] for v in data['histogram']) == 6
 
 
-async def test_user_aggregate_no_data(cli, settings):
+async def test_user_aggregate_no_data(cli, settings, db_conn):
+    await db_conn.execute('insert into companies (name) values ($1)', 'testing')
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'testing'))
     assert r.status == 200, await r.text()
     data = await r.json()

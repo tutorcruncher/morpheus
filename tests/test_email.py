@@ -485,10 +485,7 @@ async def test_invalid_mustache_subject(send_email, tmpdir, db_conn):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert '\nsubject: {{ foo } test message\n' in msg_file
 
-    messages = await db_conn.fetch(
-        'select * from messages m join message_groups j on m.group_id=j.id where j.company=$1',
-        'test_invalid_mustache_subject',
-    )
+    messages = await db_conn.fetch('select * from messages m join message_groups j on m.group_id=j.id')
     assert len(messages) == 1
     m = messages[0]
     # debug(dict(m))
@@ -502,10 +499,7 @@ async def test_invalid_mustache_body(send_email, db_conn):
         main_template='{{ foo } test message', context={'foo': 'FOO'}, company_code='test_invalid_mustache_body'
     )
 
-    messages = await db_conn.fetch(
-        'select * from messages m join message_groups j on m.group_id=j.id where j.company=$1',
-        'test_invalid_mustache_body',
-    )
+    messages = await db_conn.fetch('select * from messages m join message_groups j on m.group_id=j.id')
     assert len(messages) == 1
     m = messages[0]
     # debug(dict(m))
@@ -575,25 +569,25 @@ async def test_pdf_empty(send_email, tmpdir):
 
 
 async def test_mandrill_send_client_error(db_conn, worker_ctx, call_send_emails):
-    group_id, m = await call_send_emails(subject_template='__slow__')
+    group_id, c_id, m = await call_send_emails(subject_template='__slow__')
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
     worker_ctx['job_try'] = 1
 
     with pytest.raises(Retry) as exc_info:
-        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        await worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
     assert exc_info.value.defer_score == 5_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
 
 async def test_mandrill_send_many_errors(db_conn, worker_ctx, call_send_emails):
-    group_id, m = await call_send_emails()
+    group_id, c_id, m = await call_send_emails()
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
     worker_ctx['job_try'] = 10
 
-    await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    await worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
 
@@ -604,12 +598,12 @@ async def test_mandrill_send_many_errors(db_conn, worker_ctx, call_send_emails):
 
 async def test_mandrill_send_502(db_conn, call_send_emails, worker_ctx, caplog):
     caplog.set_level(logging.INFO, logger='morpheus')
-    group_id, m = await call_send_emails(subject_template='__502__')
+    group_id, c_id, m = await call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = 1
 
     with pytest.raises(Retry) as exc_info:
-        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        await worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
     assert exc_info.value.defer_score == 5_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
@@ -618,36 +612,36 @@ async def test_mandrill_send_502(db_conn, call_send_emails, worker_ctx, caplog):
 
 
 async def test_mandrill_send_502_last(db_conn, call_send_emails, worker_ctx):
-    group_id, m = await call_send_emails(subject_template='__502__')
+    group_id, c_id, m = await call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = len(email_retrying)
 
     with pytest.raises(Retry) as exc_info:
-        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        await worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
     assert exc_info.value.defer_score == 43_200_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
 
 async def test_mandrill_send_500_nginx(db_conn, call_send_emails, worker_ctx):
-    group_id, m = await call_send_emails(subject_template='__500_nginx__')
+    group_id, c_id, m = await call_send_emails(subject_template='__500_nginx__')
 
     worker_ctx['job_try'] = 2
 
     with pytest.raises(Retry) as exc_info:
-        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        await worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
     assert exc_info.value.defer_score == 10_000
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
 
 
 async def test_mandrill_send_500_not_nginx(db_conn, call_send_emails, worker_ctx):
-    group_id, m = await call_send_emails(subject_template='__500__')
+    group_id, c_id, m = await call_send_emails(subject_template='__500__')
 
     worker_ctx['job_try'] = 1
 
     with pytest.raises(ApiError) as exc_info:
-        await worker_send_email(worker_ctx, group_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        await worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
     assert exc_info.value.status == 500
 
     assert 0 == await db_conn.fetchval('select count(*) from messages')
