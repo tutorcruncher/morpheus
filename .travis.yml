@@ -4,7 +4,7 @@ sudo: required
 language: python
 
 addons:
-  postgresql: '9.6'
+  postgresql: '10'
 
 services:
 - postgresql
@@ -17,16 +17,6 @@ python:
 - '3.7'
 
 before_install:
-# lots of faff to get pg 10 working
-- sudo apt-get update
-- sudo apt-get --yes remove postgresql\* > /dev/null
-- sudo apt-get install -y postgresql-10 postgresql-client-10
-- sudo cp /etc/postgresql/{9.6,10}/main/pg_hba.conf
-- sudo service postgresql restart 10
-- psql --version
-- sleep 5
-- psql -c 'create role travis superuser login createdb' -U postgres
-
 - mkdir -p $HOME/bin
 - curl -Lf https://github.com/samuelcolvin/donkey-make/releases/download/v0.3/donk > $HOME/bin/donk
 - chmod +x $HOME/bin/donk
