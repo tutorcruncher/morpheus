@@ -92,12 +92,12 @@ class ClickRedirectView(TemplateView):
 
 
 async def get_create_company_id(conn, company_code: str) -> int:
-    company_id = await conn.fetchval('select id from companies where name=$1', company_code)
+    company_id = await conn.fetchval('select id from companies where code=$1', company_code)
     if not company_id:
         company_id = await conn.fetchval(
             """
-            insert into companies (name) values ($1)
-            on conflict (name) do update set name=excluded.name
+            insert into companies (code) values ($1)
+            on conflict (code) do update set code=excluded.code
             returning id
             """,
             company_code,
@@ -106,7 +106,7 @@ async def get_create_company_id(conn, company_code: str) -> int:
 
 
 async def get_company_id(conn, company_code: str) -> int:
-    company_id = await conn.fetchval('select id from companies where name=$1', company_code)
+    company_id = await conn.fetchval('select id from companies where code=$1', company_code)
     if not company_id:
         raise JsonErrors.HTTPNotFound('company not found')
     return company_id
@@ -149,7 +149,7 @@ async def get_sms_spend(conn: Connection, company_code: str, start: datetime, en
         select sum(cost)
         from messages
         join companies c on messages.company_id = c.id
-        where c.name=$1 and method = $4 and send_ts between $2 and $3
+        where c.code=$1 and method = $4 and send_ts between $2 and $3
         """,
         company_code,
         start,
@@ -336,7 +336,7 @@ class DeleteSubaccountView(ServiceView):
         data = await r.json()
         if r.status == 200:
             async with self.app['pg'].acquire() as conn:
-                company_id = await conn.fetchval('select id from companies where name=$1', m.company_code)
+                company_id = await conn.fetchval('select id from companies where code=$1', m.company_code)
                 if company_id:
                     async with conn.transaction() as tr:
                         del_messages_resp = await tr.execute('delete from messages where company_id=$1', company_id)
@@ -666,7 +666,7 @@ class UserMessagePreviewView(TemplateView, UserView):
         where = (Var('m.method') == method) & (Var('m.id') == int(request.match_info['id']))
 
         if self.session.company != '__all__':
-            where &= Var('c.name') == self.session.company
+            where &= Var('c.code') == self.session.company
 
         async with self.app['pg'].acquire() as conn:
             data = await conn.fetchrow_b(
@@ -801,7 +801,7 @@ class AdminListView(AdminView):
 
         company_ids = {m['company_id'] for m in data['items']}
         company_lookup = dict(
-            await self.app['pg'].fetch('select id, name from companies where id = any($1)', company_ids)
+            await self.app['pg'].fetch('select id, code from companies where id = any($1)', company_ids)
         )
 
         headings = ['score', 'to', 'company', 'status', 'sent at', 'updated at', 'subject']

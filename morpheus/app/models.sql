@@ -6,7 +6,7 @@ CREATE TYPE SEND_METHODS AS ENUM ('email-mandrill', 'email-ses', 'email-test', '
 -- { companies
 CREATE TABLE companies (
   id SERIAL PRIMARY KEY,
-  name VARCHAR(63) NOT NULL UNIQUE  -- TODO rename to code
+  code VARCHAR(63) NOT NULL UNIQUE
 );
 -- } companies
 

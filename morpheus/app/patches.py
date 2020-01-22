@@ -30,21 +30,21 @@ async def performance_step1(conn, settings, **kwargs):
         """
         CREATE TABLE companies (
           id SERIAL PRIMARY KEY,
-          name VARCHAR(63) NOT NULL UNIQUE  -- TODO rename to code
+          code VARCHAR(63) NOT NULL UNIQUE
         );
         """,
     )
     await print_run_sql(
         conn,
         """
-        INSERT INTO companies (name)
+        INSERT INTO companies (code)
         SELECT DISTINCT company
         FROM message_groups;
         """,
     )
 
     await print_run_sql(conn, 'ALTER TABLE message_groups ADD company_id INT REFERENCES companies ON DELETE RESTRICT')
-    await print_run_sql(conn, 'UPDATE message_groups g SET company_id=c.id FROM companies c WHERE g.company=c.name')
+    await print_run_sql(conn, 'UPDATE message_groups g SET company_id=c.id FROM companies c WHERE g.company=c.code')
 
     await print_run_sql(
         conn,
@@ -117,9 +117,9 @@ async def performance_step2(conn, settings, **kwargs):
     await print_run_sql(
         conn,
         """
-        INSERT INTO companies (name)
+        INSERT INTO companies (code)
         SELECT DISTINCT company FROM message_groups
-        ON CONFLICT (name) DO NOTHING;
+        ON CONFLICT (code) DO NOTHING;
         """,
     )
 
@@ -128,7 +128,7 @@ async def performance_step2(conn, settings, **kwargs):
         conn,
         """
         UPDATE message_groups g SET company_id=c.id
-        FROM companies c WHERE g.company=c.name AND g.company_id IS NULL
+        FROM companies c WHERE g.company=c.code AND g.company_id IS NULL
         """,
     )
     await print_run_sql(conn, 'ALTER TABLE message_groups ALTER company_id SET NOT NULL')
