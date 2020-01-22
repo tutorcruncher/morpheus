@@ -437,7 +437,7 @@ class _UserMessagesView(UserView):
                   limit 100
                   offset :offset
                 )
-                order by id desc
+                order by m.id desc
                 """,
                 select=Select(self._select_fields()),
                 where=where,
@@ -460,7 +460,7 @@ class _UserMessagesView(UserView):
                   limit 100
                   offset :offset
                 )
-                order by id desc
+                order by m.id desc
                 """,
                 select=Select(self._select_fields()),
                 tz=self.get_dt_tz(),

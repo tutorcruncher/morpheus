@@ -19,7 +19,6 @@ async def improve_indexes(conn, settings, **kwargs):
     await conn.execute('DROP INDEX IF EXISTS event_ts')
     await conn.execute('DROP INDEX IF EXISTS link_message_id')
     await conn.execute('DROP INDEX IF EXISTS message_group_id')
-    await conn.execute('DROP INDEX IF EXISTS message_send_ts')
 
 
 @patch
