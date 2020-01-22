@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -20,6 +21,7 @@ from arq.utils import truncate
 from asyncpg import Connection
 from atoolbox import JsonErrors
 from buildpg import Func, Values, Var
+from buildpg.asyncpg import BuildPgPool
 from buildpg.clauses import Select, Where
 from markupsafe import Markup
 from pygments import highlight
@@ -105,7 +107,8 @@ async def get_create_company_id(conn, company_code: str) -> int:
 
 async def get_company_id(conn, company_code: str) -> int:
     company_id = await conn.fetchval('select id from companies where name=$1', company_code)
-    assert company_id, f'company with code {company_code!r} does not exist'
+    if not company_id:
+        raise JsonErrors.HTTPNotFound('company not found')
     return company_id
 
 
@@ -382,7 +385,7 @@ class _UserMessagesView(UserView):
             'to_last_name',
             'to_user_link',
             'to_address',
-            Var('c.name').as_('company'),
+            'm.company_id',
             'method',
             'subject',
             'body',
@@ -396,39 +399,38 @@ class _UserMessagesView(UserView):
 
     async def query(self, *, message_id=None, tags=None, query=None):
         where = Var('m.method') == self.request.match_info['method']
-        async with self.app['pg'].acquire() as conn:
-            if self.session.company != '__all__':
-                where &= Var('c.name') == self.session.company
+        pg_pool: BuildPgPool = self.app['pg']
+        if self.session.company != '__all__':
+            company_id = await get_company_id(pg_pool, self.session.company)
+            where &= Var('m.company_id') == company_id
 
-            if message_id:
-                where &= Var('m.id') == message_id
-            elif tags:
-                where &= Var('tags').contains(tags)
-            elif query:
-                return await self.query_general(where, query)
+        if message_id:
+            where &= Var('m.id') == message_id
+        elif tags:
+            where &= Var('tags').contains(tags)
+        elif query:
+            return await self.query_general(where, query)
 
-            where = Where(where)
-            # count is limited to 10,000 as it speeds up the query massively
-            count = await conn.fetchval_b(
+        where = Where(where)
+        # count is limited to 10,000 as it speeds up the query massively
+        count, items = await asyncio.gather(
+            pg_pool.fetchval_b(
                 """
                 select count(*)
                 from (
                   select 1
                   from messages m
-                  join message_groups j on m.group_id = j.id
-                  join companies c on m.company_id = c.id
                   :where
                   limit 10000
                 ) as t
                 """,
                 where=where,
-            )
-            items = await conn.fetch_b(
+            ),
+            pg_pool.fetch_b(
                 """
                 :select
                 from messages m
                 join message_groups j on m.group_id = j.id
-                join companies c on m.company_id = c.id
                 :where
                 order by m.send_ts desc
                 limit 100
@@ -437,7 +439,8 @@ class _UserMessagesView(UserView):
                 select=Select(self._select_fields()),
                 where=where,
                 offset=self.get_arg_int('from', 0) if self.offset else 0,
-            )
+            ),
+        )
         return {'count': count, 'items': [dict(r) for r in items]}
 
     async def query_general(self, where, query):
@@ -447,7 +450,6 @@ class _UserMessagesView(UserView):
                 :select
                 from messages m
                 join message_groups j on m.group_id = j.id
-                join companies c on m.company_id = c.id
                 where :where and m.vector @@ plainto_tsquery(:query)
                 order by m.send_ts desc
                 limit 100
@@ -478,7 +480,7 @@ class UserMessagesJsonView(_UserMessagesView):
             'to_last_name',
             'to_user_link',
             'to_address',
-            Var('c.name').as_('company'),
+            'm.company_id',
             'tags',
             'from_name',
             'from_name',
@@ -790,6 +792,11 @@ class AdminListView(AdminView):
         r = await morpheus_api.get(url)
         data = await r.json()
 
+        company_ids = {m['company_id'] for m in data['items']}
+        company_lookup = dict(
+            await self.app['pg'].fetch('select id, name from companies where id = any($1)', company_ids)
+        )
+
         headings = ['score', 'to', 'company', 'status', 'sent at', 'updated at', 'subject']
         table_body = []
         for i, message in enumerate(data['items']):
@@ -802,7 +809,7 @@ class AdminListView(AdminView):
                         'href': self.app.router['admin-get'].url_for(method=method, id=str(message['id'])),
                         'text': message['to_address'],
                     },
-                    message['company'],
+                    company_lookup[message['company_id']],
                     message['status'],
                     message['send_ts'],
                     message['update_ts'],
