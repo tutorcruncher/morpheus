@@ -79,7 +79,7 @@ CREATE TABLE links (
   token VARCHAR(31),
   url TEXT
 );
--- CREATE INDEX link_message_id ON links USING btree (message_id);  removed 2020-01-16 - unused
+-- no index here to messages, wasn't used but be careful if we do a join
 CREATE INDEX link_token ON links USING btree (token);
 
 -- { logic

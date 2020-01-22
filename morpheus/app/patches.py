@@ -1,3 +1,5 @@
+from time import time
+
 from atoolbox import patch
 from atoolbox.db.helpers import run_sql_section
 
@@ -10,83 +12,138 @@ async def run_logic_sql(conn, settings, **kwargs):
     await run_sql_section('logic', settings.sql_path.read_text(), conn)
 
 
-@patch
-async def improve_indexes(conn, settings, **kwargs):
-    """
-    Improve indexes, dropping unused ones and adding more
-    """
-    await conn.execute('DROP INDEX IF EXISTS message_status')
-    await conn.execute('DROP INDEX IF EXISTS event_ts')
-    await conn.execute('DROP INDEX IF EXISTS link_message_id')
-    await conn.execute('DROP INDEX IF EXISTS message_group_id')
+async def print_run_sql(conn, sql):
+    print(f'running {sql}...')
+    start = time()
+    await conn.execute(sql)
+    print(f'completed in {time() - start:0.1f}s')
 
 
 @patch
-async def add_companies(conn, settings, **kwargs):
+async def performance_step1(conn, settings, **kwargs):
     """
-    add companies table, and modify the database to use it companies
+    First step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
-    print('create the table companies...')
-    await conn.execute("SET lock_timeout TO '2s'")
-    await run_sql_section('companies', settings.sql_path.read_text(), conn)
-    print('populate the table companies...')
-    await conn.execute(
+    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(
+        conn,
+        """
+        CREATE TABLE companies (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(63) NOT NULL UNIQUE  -- TODO rename to code
+        );
+        """,
+    )
+    await print_run_sql(
+        conn,
         """
         INSERT INTO companies (name)
         SELECT DISTINCT company
         FROM message_groups;
-        """
+        """,
     )
-    print('add column message_groups.company_id...')
-    await conn.execute(
-        """
-        ALTER TABLE message_groups ADD company_id INT REFERENCES companies ON DELETE RESTRICT;
-        """
-    )
-    print('populate column message_groups.company_id...')
-    await conn.execute(
-        """
-        UPDATE message_groups g SET company_id=c.id FROM companies c WHERE g.company=c.name;
-        """
-    )
-    print('modify column message_groups.company_id to not be nullable...')
-    await conn.execute(
-        """
-        ALTER TABLE message_groups ALTER company_id SET NOT NULL;
-        """
-    )
-    print('drop the now redundant column message_groups.company...')
-    await conn.execute(
-        """
-        ALTER TABLE message_groups DROP company;
-        """
-    )
-    print('rename teh column message_groups.method to message_groups.message_method...')
-    await conn.execute(
-        """
-        ALTER TABLE message_groups RENAME method TO message_method;
-        """
-    )
-    print('add columns messages.companies and messages.method...')
-    await conn.execute(
+
+    await print_run_sql(conn, 'ALTER TABLE message_groups ADD company_id INT REFERENCES companies ON DELETE RESTRICT')
+    await print_run_sql(conn, 'UPDATE message_groups g SET company_id=c.id FROM companies c WHERE g.company=c.name')
+
+    await print_run_sql(
+        conn,
         """
         ALTER TABLE messages ADD COLUMN company_id INT REFERENCES companies ON DELETE RESTRICT;
         ALTER TABLE messages ADD COLUMN method SEND_METHODS;
-        """
+        """,
     )
-    print('populate columns messages.company_id and messages.method...')
-    await conn.execute(
+    await print_run_sql(
+        conn,
+        """
+        UPDATE messages m
+        SET company_id=g.company_id, method=g.method
+        FROM message_groups g
+        WHERE m.group_id=g.id;
+        """,
+    )
+
+    await print_run_sql(
+        conn,
+        """
+        DROP INDEX CONCURRENTLY IF EXISTS message_status;
+        DROP INDEX CONCURRENTLY IF EXISTS message_group_id;
+        DROP INDEX CONCURRENTLY IF EXISTS event_ts;
+        DROP INDEX CONCURRENTLY IF EXISTS link_message_id;
+        """,
+    )
+    await print_run_sql(
+        conn, 'CREATE INDEX CONCURRENTLY message_group_company_id ON message_groups USING btree (company_id)'
+    )
+    await print_run_sql(
+        conn,
+        """
+        DROP INDEX CONCURRENTLY IF EXISTS message_update_ts;
+        CREATE INDEX CONCURRENTLY message_update_ts ON messages USING btree (update_ts desc);
+        """,
+    )
+    await print_run_sql(
+        conn,
+        """
+        DROP INDEX CONCURRENTLY IF EXISTS message_tags;
+        CREATE INDEX CONCURRENTLY message_tags ON messages USING gin (tags, method, company_id);
+        """,
+    )
+    await print_run_sql(
+        conn,
+        """
+        DROP INDEX CONCURRENTLY IF EXISTS message_vector;
+        CREATE INDEX CONCURRENTLY message_vector ON messages USING gin (vector, method, company_id);
+        """,
+    )
+    await print_run_sql(
+        conn,
+        """
+        DROP INDEX CONCURRENTLY IF EXISTS message_company_method;
+        CREATE INDEX CONCURRENTLY message_company_method ON messages USING btree (method, company_id, id);
+        """,
+    )
+
+
+@patch
+async def performance_step2(conn, settings, **kwargs):
+    """
+    Second step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
+    """
+    print('create the table companies...')
+    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, 'LOCK TABLE companies IN SHARE MODE;')
+
+    await print_run_sql(
+        conn,
+        """
+        INSERT INTO companies (name)
+        SELECT DISTINCT company FROM message_groups
+        ON CONFLICT (name) DO NOTHING;
+        """,
+    )
+
+    await print_run_sql(conn, 'LOCK TABLE message_groups IN SHARE MODE;')
+    await print_run_sql(
+        conn,
+        """
+        UPDATE message_groups g SET company_id=c.id
+        FROM companies c WHERE g.company=c.name AND g.company_id IS NULL
+        """,
+    )
+    await print_run_sql(conn, 'ALTER TABLE message_groups ALTER company_id SET NOT NULL')
+    await print_run_sql(conn, 'ALTER TABLE message_groups DROP company')
+    await print_run_sql(conn, 'ALTER TABLE message_groups RENAME method TO message_method')
+
+    await print_run_sql(conn, 'LOCK TABLE messages IN SHARE MODE;')
+    await print_run_sql(
+        conn,
         """
         UPDATE messages m
         SET company_id=g.company_id, method=g.message_method
         FROM message_groups g
-        WHERE m.group_id=g.id;
-        """
+        WHERE m.group_id=g.id AND m.company_id IS NULL
+        """,
     )
-    print('modify columns messages.company_id and messages.method to not be nullable...')
-    await conn.execute(
-        """
-        ALTER TABLE messages ALTER COLUMN company_id SET NOT NULL;
-        ALTER TABLE messages ALTER COLUMN method SET NOT NULL;
-        """
-    )
+    await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN company_id SET NOT NULL')
+    await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN method SET NOT NULL')
