@@ -22,7 +22,7 @@ from asyncpg import Connection
 from atoolbox import JsonErrors
 from buildpg import Func, Values, Var
 from buildpg.asyncpg import BuildPgPool
-from buildpg.clauses import Select, Where
+from buildpg.clauses import Select
 from markupsafe import Markup
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
@@ -398,20 +398,19 @@ class _UserMessagesView(UserView):
         ]
 
     async def query(self, *, message_id=None, tags=None, query=None):
-        where = Var('m.method') == self.request.match_info['method']
+        where = Var('method') == self.request.match_info['method']
         pg_pool: BuildPgPool = self.app['pg']
         if self.session.company != '__all__':
             company_id = await get_company_id(pg_pool, self.session.company)
-            where &= Var('m.company_id') == company_id
+            where &= Var('company_id') == company_id
 
         if message_id:
-            where &= Var('m.id') == message_id
+            where &= Var('id') == message_id
         elif tags:
             where &= Var('tags').contains(tags)
         elif query:
             return await self.query_general(where, query)
 
-        where = Where(where)
         # count is limited to 10,000 as it speeds up the query massively
         count, items = await asyncio.gather(
             pg_pool.fetchval_b(
@@ -419,8 +418,8 @@ class _UserMessagesView(UserView):
                 select count(*)
                 from (
                   select 1
-                  from messages m
-                  :where
+                  from messages
+                  where :where
                   limit 10000
                 ) as t
                 """,
@@ -431,10 +430,14 @@ class _UserMessagesView(UserView):
                 :select
                 from messages m
                 join message_groups j on m.group_id = j.id
-                :where
-                order by m.send_ts desc
-                limit 100
-                offset :offset
+                where m.id in (
+                  select id from messages
+                  where :where
+                  order by id desc
+                  limit 100
+                  offset :offset
+                )
+                order by id desc
                 """,
                 select=Select(self._select_fields()),
                 where=where,
@@ -450,10 +453,14 @@ class _UserMessagesView(UserView):
                 :select
                 from messages m
                 join message_groups j on m.group_id = j.id
-                where :where and m.vector @@ plainto_tsquery(:query)
-                order by m.send_ts desc
-                limit 100
-                offset :offset
+                where m.id in (
+                  select id from messages
+                  where :where and vector @@ plainto_tsquery(:query)
+                  order by id desc
+                  limit 100
+                  offset :offset
+                )
+                order by id desc
                 """,
                 select=Select(self._select_fields()),
                 tz=self.get_dt_tz(),
@@ -575,7 +582,7 @@ class UserMessageDetailView(TemplateView, _UserMessagesView):
             """
             select status, message_id, iso_ts(ts, $2) as ts, extra
             from events where message_id = $1
-            order by ts asc
+            order by id
             limit 51
             """,
             message_id,

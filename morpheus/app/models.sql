@@ -54,7 +54,7 @@ CREATE TABLE messages (
   vector tsvector NOT NULL
 );
 CREATE INDEX message_company_id ON messages USING btree (company_id);
-CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts desc);
+CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts);
 CREATE INDEX message_external_id ON messages USING btree (external_id);
 CREATE INDEX message_send_ts ON messages USING btree (send_ts desc);
 CREATE INDEX message_update_ts ON messages USING btree (update_ts desc);
@@ -71,7 +71,6 @@ CREATE TABLE events (
   extra JSONB
 );
 CREATE INDEX event_message_id ON events USING btree (message_id);
--- CREATE INDEX event_ts ON events USING btree (ts);  removed 2020-01-16 - unused
 
 
 CREATE TABLE links (
