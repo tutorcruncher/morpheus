@@ -25,6 +25,7 @@ async def performance_step1(conn, settings, **kwargs):
     First step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
     await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, 'create extension if not exists btree_gin;')
     await print_run_sql(
         conn,
         """
@@ -63,6 +64,12 @@ async def performance_step1(conn, settings, **kwargs):
         """,
     )
 
+
+@patch(direct=True)
+async def performance_step2(conn, settings, **kwargs):
+    """
+    Second step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
+    """
     await print_run_sql(
         conn,
         """
@@ -106,9 +113,9 @@ async def performance_step1(conn, settings, **kwargs):
 
 
 @patch
-async def performance_step2(conn, settings, **kwargs):
+async def performance_step3(conn, settings, **kwargs):
     """
-    Second step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
+    Third step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
     """
     print('create the table companies...')
     await print_run_sql(conn, "SET lock_timeout TO '2s'")
