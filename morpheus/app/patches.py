@@ -14,7 +14,8 @@ async def run_logic_sql(conn, settings, **kwargs):
 
 
 async def print_run_sql(conn, sql):
-    print(f'running\n\033[36m{indent(dedent(sql), "    ")}\033[0m ...')
+    indented_sql = indent(dedent(sql.strip('\n')), '    ').strip('\n')
+    print(f'running\n\033[36m{indented_sql}\033[0m ...')
     start = time()
     await conn.execute(sql)
     print(f'completed in {time() - start:0.1f}s')
@@ -106,7 +107,7 @@ async def performance_step3(conn, settings, **kwargs):
     """
     print('create the table companies...')
     await print_run_sql(conn, "SET lock_timeout TO '2s'")
-    await print_run_sql(conn, 'LOCK TABLE companies IN SHARE MODE;')
+    await print_run_sql(conn, 'LOCK TABLE companies IN SHARE MODE')
 
     await print_run_sql(
         conn,
@@ -117,7 +118,7 @@ async def performance_step3(conn, settings, **kwargs):
         """,
     )
 
-    await print_run_sql(conn, 'LOCK TABLE message_groups IN SHARE MODE;')
+    await print_run_sql(conn, 'LOCK TABLE message_groups IN SHARE MODE')
     await print_run_sql(
         conn,
         """
@@ -129,7 +130,7 @@ async def performance_step3(conn, settings, **kwargs):
     await print_run_sql(conn, 'ALTER TABLE message_groups DROP company')
     await print_run_sql(conn, 'ALTER TABLE message_groups RENAME method TO message_method')
 
-    await print_run_sql(conn, 'LOCK TABLE messages IN SHARE MODE;')
+    await print_run_sql(conn, 'LOCK TABLE messages IN SHARE MODE')
     await print_run_sql(
         conn,
         """
