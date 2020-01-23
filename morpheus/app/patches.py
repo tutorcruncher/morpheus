@@ -1,3 +1,4 @@
+from textwrap import dedent, indent
 from time import time
 
 from atoolbox import patch
@@ -13,7 +14,7 @@ async def run_logic_sql(conn, settings, **kwargs):
 
 
 async def print_run_sql(conn, sql):
-    print(f'running {sql}...')
+    print(f'running\n\033[36m{indent(dedent(sql), "    ")}\033[0m ...')
     start = time()
     await conn.execute(sql)
     print(f'completed in {time() - start:0.1f}s')
@@ -70,45 +71,31 @@ async def performance_step2(conn, settings, **kwargs):
     """
     Second step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
-    await print_run_sql(
-        conn,
-        """
-        DROP INDEX CONCURRENTLY IF EXISTS message_status;
-        DROP INDEX CONCURRENTLY IF EXISTS message_group_id;
-        DROP INDEX CONCURRENTLY IF EXISTS event_ts;
-        DROP INDEX CONCURRENTLY IF EXISTS link_message_id;
-        """,
-    )
+    print(await conn.fetchval('select version()'))
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_status')
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_group_id')
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS event_ts')
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS link_message_id')
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_group_company_id')
+
     await print_run_sql(
         conn, 'CREATE INDEX CONCURRENTLY message_group_company_id ON message_groups USING btree (company_id)'
     )
+
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_update_ts')
+    await print_run_sql(conn, 'CREATE INDEX CONCURRENTLY message_update_ts ON messages USING btree (update_ts desc)')
+
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_tags')
+    await print_run_sql(conn, 'CREATE INDEX CONCURRENTLY message_tags ON messages USING gin (tags, method, company_id)')
+
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_vector')
     await print_run_sql(
-        conn,
-        """
-        DROP INDEX CONCURRENTLY IF EXISTS message_update_ts;
-        CREATE INDEX CONCURRENTLY message_update_ts ON messages USING btree (update_ts desc);
-        """,
+        conn, 'CREATE INDEX CONCURRENTLY message_vector ON messages USING gin (vector, method, company_id)'
     )
+
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_company_method')
     await print_run_sql(
-        conn,
-        """
-        DROP INDEX CONCURRENTLY IF EXISTS message_tags;
-        CREATE INDEX CONCURRENTLY message_tags ON messages USING gin (tags, method, company_id);
-        """,
-    )
-    await print_run_sql(
-        conn,
-        """
-        DROP INDEX CONCURRENTLY IF EXISTS message_vector;
-        CREATE INDEX CONCURRENTLY message_vector ON messages USING gin (vector, method, company_id);
-        """,
-    )
-    await print_run_sql(
-        conn,
-        """
-        DROP INDEX CONCURRENTLY IF EXISTS message_company_method;
-        CREATE INDEX CONCURRENTLY message_company_method ON messages USING btree (method, company_id, id);
-        """,
+        conn, 'CREATE INDEX CONCURRENTLY message_company_method ON messages USING btree (method, company_id, id)'
     )
 
 
