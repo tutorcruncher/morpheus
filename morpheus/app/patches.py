@@ -135,6 +135,7 @@ async def performance_step3(conn, settings, **kwargs):
             FROM messages m2
             JOIN message_groups g ON m2.group_id = g.id
             WHERE m2.company_id IS NULL
+            ORDER BY id
             LIMIT 1000
         ) sq
         where sq.id = m.id
