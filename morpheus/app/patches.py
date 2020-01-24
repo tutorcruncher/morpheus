@@ -90,10 +90,10 @@ async def performance_step2(conn, settings, **kwargs):
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_group_id')
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS event_ts')
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS link_message_id')
-    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_group_company_id')
+    await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_group_company_id2')
 
     await print_run_sql(
-        conn, 'CREATE INDEX CONCURRENTLY message_group_company_id ON message_groups USING btree (company_id)'
+        conn, 'CREATE INDEX CONCURRENTLY message_group_company_id2 ON message_groups USING btree (company_id)'
     )
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_update_ts')
