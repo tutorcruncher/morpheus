@@ -123,7 +123,7 @@ async def performance_step3(conn, settings, **kwargs):
     """
     Third step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
-    await print_run_sql(conn, "SET lock_timeout TO '10s'")
+    await print_run_sql(conn, "SET lock_timeout TO '40s'")
     await chunked_update(
         conn,
         'messages',
@@ -134,9 +134,9 @@ async def performance_step3(conn, settings, **kwargs):
             SELECT m2.id, g.company_id, g.method
             FROM messages m2
             JOIN message_groups g ON m2.group_id = g.id
-            WHERE m2.company_id IS NULL
+            WHERE m2.company_id IS NULL OR m2.new_method IS NULL
             ORDER BY id
-            LIMIT 1000
+            LIMIT 100
         ) sq
         where sq.id = m.id
         """,
@@ -180,7 +180,7 @@ async def performance_step4(conn, settings, **kwargs):
         UPDATE messages m
         SET company_id=g.company_id, new_method=g.message_method
         FROM message_groups g
-        WHERE m.group_id=g.id AND m.company_id IS NULL
+        WHERE m.group_id=g.id AND (m.company_id IS NULL OR m.new_method IS NULL)
         """,
     )
     await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN company_id SET NOT NULL')
