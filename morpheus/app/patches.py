@@ -39,7 +39,7 @@ async def performance_step1(conn, settings, **kwargs):
     """
     First step to changing schema to improve performance. THIS WILL BE SLOW, but can be run in the background.
     """
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '10s'")
     await print_run_sql(conn, 'create extension if not exists btree_gin;')
     await print_run_sql(
         conn,
@@ -85,7 +85,7 @@ async def performance_step2(conn, settings, **kwargs):
     """
     Second step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '10s'")
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_status')
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_group_id')
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS event_ts')
@@ -123,7 +123,7 @@ async def performance_step3(conn, settings, **kwargs):
     """
     Third step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '10s'")
     await chunked_update(
         conn,
         'messages',
@@ -148,7 +148,7 @@ async def performance_step4(conn, settings, **kwargs):
     Fourth step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
     """
     print('create the table companies...')
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '10s'")
     await print_run_sql(conn, 'LOCK TABLE companies IN SHARE MODE')
 
     await print_run_sql(
