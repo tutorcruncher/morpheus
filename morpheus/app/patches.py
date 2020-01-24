@@ -139,7 +139,6 @@ async def performance_step3(conn, settings, **kwargs):
             WHERE m2.company_id IS NULL OR m2.new_method IS NULL
             ORDER BY id
             LIMIT 100
-            FOR UPDATE SKIP LOCKED
         ) sq
         where sq.id = m.id
         """,
@@ -185,6 +184,13 @@ async def performance_step4(conn, settings, **kwargs):
         SET company_id=g.company_id, new_method=g.message_method
         FROM message_groups g
         WHERE m.group_id=g.id AND (m.company_id IS NULL OR m.new_method IS NULL)
+        """,
+    )
+    await print_run_sql(
+        conn,
+        """
+        ALTER TABLE messages ADD CONSTRAINT
+        messages_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE RESTRICT
         """,
     )
     await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN company_id SET NOT NULL')
