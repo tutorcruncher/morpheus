@@ -1,3 +1,4 @@
+import asyncio
 from textwrap import dedent, indent
 from time import time
 
@@ -22,7 +23,7 @@ async def print_run_sql(conn, sql):
     print(f'completed in {time() - start:0.1f}s: {v}')
 
 
-async def chunked_update(conn, table, sql):
+async def chunked_update(conn, table, sql, sleep_time: float = 0):
     count = await conn.fetchval(f'select count(*) from {table} WHERE company_id IS NULL')
     print(f'{count} {table} to update...')
     with tqdm(total=count, smoothing=0.1) as t:
@@ -32,6 +33,7 @@ async def chunked_update(conn, table, sql):
             if updated == 0:
                 return
             t.update(updated)
+            await asyncio.sleep(sleep_time)
 
 
 @patch
@@ -137,9 +139,11 @@ async def performance_step3(conn, settings, **kwargs):
             WHERE m2.company_id IS NULL OR m2.new_method IS NULL
             ORDER BY id
             LIMIT 100
+            FOR UPDATE SKIP LOCKED
         ) sq
         where sq.id = m.id
         """,
+        sleep_time=0.2,
     )
 
 
