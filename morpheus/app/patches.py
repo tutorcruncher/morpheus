@@ -76,8 +76,8 @@ async def performance_step1(conn, settings, **kwargs):
         """,
     )
 
-    # await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN company_id INT REFERENCES companies ON DELETE RESTRICT;')
-    # await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN method SEND_METHODS;')
+    await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN company_id INT REFERENCES companies ON DELETE RESTRICT;')
+    await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN new_method SEND_METHODS;')
 
 
 @patch(direct=True)
@@ -100,16 +100,18 @@ async def performance_step2(conn, settings, **kwargs):
     await print_run_sql(conn, 'CREATE INDEX CONCURRENTLY message_update_ts ON messages USING btree (update_ts desc)')
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_tags')
-    await print_run_sql(conn, 'CREATE INDEX CONCURRENTLY message_tags ON messages USING gin (tags, method, company_id)')
+    await print_run_sql(
+        conn, 'CREATE INDEX CONCURRENTLY message_tags ON messages USING gin (tags, new_method, company_id)'
+    )
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_vector')
     await print_run_sql(
-        conn, 'CREATE INDEX CONCURRENTLY message_vector ON messages USING gin (vector, method, company_id)'
+        conn, 'CREATE INDEX CONCURRENTLY message_vector ON messages USING gin (vector, new_method, company_id)'
     )
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_company_method')
     await print_run_sql(
-        conn, 'CREATE INDEX CONCURRENTLY message_company_method ON messages USING btree (method, company_id, id)'
+        conn, 'CREATE INDEX CONCURRENTLY message_company_method ON messages USING btree (new_method, company_id, id)'
     )
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_company_id')
@@ -127,7 +129,7 @@ async def performance_step3(conn, settings, **kwargs):
         'messages',
         """
         UPDATE messages m
-        SET company_id=sq.company_id, method=sq.method
+        SET company_id=sq.company_id, new_method=sq.method
         FROM  (
             SELECT m2.id, g.company_id, g.method
             FROM messages m2
@@ -175,10 +177,11 @@ async def performance_step4(conn, settings, **kwargs):
         conn,
         """
         UPDATE messages m
-        SET company_id=g.company_id, method=g.message_method
+        SET company_id=g.company_id, new_method=g.message_method
         FROM message_groups g
         WHERE m.group_id=g.id AND m.company_id IS NULL
         """,
     )
     await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN company_id SET NOT NULL')
-    await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN method SET NOT NULL')
+    await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN new_method SET NOT NULL')
+    await print_run_sql(conn, 'ALTER TABLE messages RENAME new_method TO method')
