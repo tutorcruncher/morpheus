@@ -76,13 +76,8 @@ async def performance_step1(conn, settings, **kwargs):
         """,
     )
 
-    await print_run_sql(
-        conn,
-        """
-        ALTER TABLE messages ADD COLUMN company_id INT REFERENCES companies ON DELETE RESTRICT;
-        ALTER TABLE messages ADD COLUMN method SEND_METHODS;
-        """,
-    )
+    await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN company_id INT REFERENCES companies ON DELETE RESTRICT;')
+    await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN method SEND_METHODS;')
 
 
 @patch(direct=True)
