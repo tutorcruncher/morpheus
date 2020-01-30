@@ -1,3 +1,4 @@
+import asyncio
 from textwrap import dedent, indent
 from time import time
 
@@ -22,7 +23,7 @@ async def print_run_sql(conn, sql):
     print(f'completed in {time() - start:0.1f}s: {v}')
 
 
-async def chunked_update(conn, table, sql):
+async def chunked_update(conn, table, sql, sleep_time: float = 0):
     count = await conn.fetchval(f'select count(*) from {table} WHERE company_id IS NULL')
     print(f'{count} {table} to update...')
     with tqdm(total=count, smoothing=0.1) as t:
@@ -32,6 +33,7 @@ async def chunked_update(conn, table, sql):
             if updated == 0:
                 return
             t.update(updated)
+            await asyncio.sleep(sleep_time)
 
 
 @patch
@@ -39,7 +41,7 @@ async def performance_step1(conn, settings, **kwargs):
     """
     First step to changing schema to improve performance. THIS WILL BE SLOW, but can be run in the background.
     """
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '10s'")
     await print_run_sql(conn, 'create extension if not exists btree_gin;')
     await print_run_sql(
         conn,
@@ -76,13 +78,8 @@ async def performance_step1(conn, settings, **kwargs):
         """,
     )
 
-    await print_run_sql(
-        conn,
-        """
-        ALTER TABLE messages ADD COLUMN company_id INT REFERENCES companies ON DELETE RESTRICT;
-        ALTER TABLE messages ADD COLUMN method SEND_METHODS;
-        """,
-    )
+    await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN company_id INT REFERENCES companies ON DELETE RESTRICT;')
+    await print_run_sql(conn, 'ALTER TABLE messages ADD COLUMN new_method SEND_METHODS;')
 
 
 @patch(direct=True)
@@ -90,7 +87,7 @@ async def performance_step2(conn, settings, **kwargs):
     """
     Second step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '40s'")
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_status')
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_group_id')
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS event_ts')
@@ -105,16 +102,18 @@ async def performance_step2(conn, settings, **kwargs):
     await print_run_sql(conn, 'CREATE INDEX CONCURRENTLY message_update_ts ON messages USING btree (update_ts desc)')
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_tags')
-    await print_run_sql(conn, 'CREATE INDEX CONCURRENTLY message_tags ON messages USING gin (tags, method, company_id)')
+    await print_run_sql(
+        conn, 'CREATE INDEX CONCURRENTLY message_tags ON messages USING gin (tags, new_method, company_id)'
+    )
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_vector')
     await print_run_sql(
-        conn, 'CREATE INDEX CONCURRENTLY message_vector ON messages USING gin (vector, method, company_id)'
+        conn, 'CREATE INDEX CONCURRENTLY message_vector ON messages USING gin (vector, new_method, company_id)'
     )
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_company_method')
     await print_run_sql(
-        conn, 'CREATE INDEX CONCURRENTLY message_company_method ON messages USING btree (method, company_id, id)'
+        conn, 'CREATE INDEX CONCURRENTLY message_company_method ON messages USING btree (new_method, company_id, id)'
     )
 
     await print_run_sql(conn, 'DROP INDEX CONCURRENTLY IF EXISTS message_company_id')
@@ -126,22 +125,24 @@ async def performance_step3(conn, settings, **kwargs):
     """
     Third step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '40s'")
     await chunked_update(
         conn,
         'messages',
         """
         UPDATE messages m
-        SET company_id=sq.company_id, method=sq.method
+        SET company_id=sq.company_id, new_method=sq.method
         FROM  (
             SELECT m2.id, g.company_id, g.method
             FROM messages m2
             JOIN message_groups g ON m2.group_id = g.id
-            WHERE m2.company_id IS NULL
-            LIMIT 1000
+            WHERE m2.company_id IS NULL OR m2.new_method IS NULL
+            ORDER BY id
+            LIMIT 100
         ) sq
         where sq.id = m.id
         """,
+        sleep_time=0.2,
     )
 
 
@@ -151,7 +152,7 @@ async def performance_step4(conn, settings, **kwargs):
     Fourth step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
     """
     print('create the table companies...')
-    await print_run_sql(conn, "SET lock_timeout TO '2s'")
+    await print_run_sql(conn, "SET lock_timeout TO '40s'")
     await print_run_sql(conn, 'LOCK TABLE companies IN SHARE MODE')
 
     await print_run_sql(
@@ -180,10 +181,18 @@ async def performance_step4(conn, settings, **kwargs):
         conn,
         """
         UPDATE messages m
-        SET company_id=g.company_id, method=g.message_method
+        SET company_id=g.company_id, new_method=g.message_method
         FROM message_groups g
-        WHERE m.group_id=g.id AND m.company_id IS NULL
+        WHERE m.group_id=g.id AND (m.company_id IS NULL OR m.new_method IS NULL)
+        """,
+    )
+    await print_run_sql(
+        conn,
+        """
+        ALTER TABLE messages ADD CONSTRAINT
+        messages_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE RESTRICT
         """,
     )
     await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN company_id SET NOT NULL')
-    await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN method SET NOT NULL')
+    await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN new_method SET NOT NULL')
+    await print_run_sql(conn, 'ALTER TABLE messages RENAME new_method TO method')

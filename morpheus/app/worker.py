@@ -171,6 +171,7 @@ class SendEmail:
         self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
 
     async def run(self):
+        main_logger.info('Sending email to %s via %s', self.recipient.address, self.m.method)
         if self.ctx['job_try'] > len(email_retrying):
             main_logger.error('%s: tried to send email %d times, all failed', self.group_id, self.ctx['job_try'])
             await self._store_email_failed(MessageStatus.send_request_failed, 'upstream error')
