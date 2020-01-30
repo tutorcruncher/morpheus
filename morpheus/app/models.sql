@@ -1,19 +1,29 @@
+create extension btree_gin;
+
 -- should match SendMethod
 CREATE TYPE SEND_METHODS AS ENUM ('email-mandrill', 'email-ses', 'email-test', 'sms-messagebird', 'sms-test');
+
+-- { companies
+CREATE TABLE companies (
+  id SERIAL PRIMARY KEY,
+  code VARCHAR(63) NOT NULL UNIQUE
+);
+-- } companies
 
 CREATE TABLE message_groups (
   id SERIAL PRIMARY KEY,
   uuid UUID NOT NULL,
-  company VARCHAR(63) NOT NULL,
-  method SEND_METHODS NOT NULL,
+  company_id INT NOT NULL REFERENCES companies ON DELETE CASCADE,
+  message_method SEND_METHODS NOT NULL,
   created_ts TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   from_email VARCHAR(255),
   from_name VARCHAR(255)
 );
 CREATE UNIQUE INDEX message_group_uuid ON message_groups USING btree (uuid);
-CREATE INDEX message_group_company_method ON message_groups USING btree (company, method);
-CREATE INDEX message_group_method ON message_groups USING btree (method);
+CREATE INDEX message_group_company_method ON message_groups USING btree (company_id, message_method);
+CREATE INDEX message_group_method ON message_groups USING btree (message_method);
 CREATE INDEX message_group_created_ts ON message_groups USING btree (created_ts);
+CREATE INDEX message_group_company_id ON message_groups USING btree (company_id);
 
 
 -- should match MessageStatus
@@ -26,6 +36,8 @@ CREATE TABLE messages (
   id SERIAL PRIMARY KEY,
   external_id VARCHAR(255),
   group_id INT NOT NULL REFERENCES message_groups ON DELETE CASCADE,
+  company_id INT NOT NULL REFERENCES companies ON DELETE CASCADE,
+  method SEND_METHODS NOT NULL,
   send_ts TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_ts TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   status MESSAGE_STATUSES NOT NULL DEFAULT 'send',
@@ -41,13 +53,14 @@ CREATE TABLE messages (
   extra JSONB,
   vector tsvector NOT NULL
 );
+CREATE INDEX message_company_id ON messages USING btree (company_id);
 CREATE INDEX message_group_id_send_ts ON messages USING btree (group_id, send_ts);
 CREATE INDEX message_external_id ON messages USING btree (external_id);
-CREATE INDEX message_status ON messages USING btree (status);
-CREATE INDEX message_send_ts ON messages USING btree (send_ts);
-CREATE INDEX message_update_ts ON messages USING btree (update_ts);
-CREATE INDEX message_tags ON messages USING gin (tags);
-CREATE INDEX message_vector ON messages USING gin (vector);
+CREATE INDEX message_send_ts ON messages USING btree (send_ts desc, method, company_id);
+CREATE INDEX message_update_ts ON messages USING btree (update_ts desc);
+CREATE INDEX message_tags ON messages USING gin (tags, method, company_id);
+CREATE INDEX message_vector ON messages USING gin (vector, method, company_id);
+CREATE INDEX message_company_method ON messages USING btree (method, company_id, id);
 
 
 CREATE TABLE events (
@@ -58,7 +71,6 @@ CREATE TABLE events (
   extra JSONB
 );
 CREATE INDEX event_message_id ON events USING btree (message_id);
-CREATE INDEX event_ts ON events USING btree (ts);
 
 
 CREATE TABLE links (
@@ -67,7 +79,7 @@ CREATE TABLE links (
   token VARCHAR(31),
   url TEXT
 );
-CREATE INDEX link_message_id ON links USING btree (message_id);
+-- no index here to messages, wasn't used but be careful if we do a join
 CREATE INDEX link_token ON links USING btree (token);
 
 -- { logic

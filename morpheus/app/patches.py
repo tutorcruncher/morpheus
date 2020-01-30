@@ -152,7 +152,7 @@ async def performance_step4(conn, settings, **kwargs):
     Fourth step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
     """
     print('create the table companies...')
-    await print_run_sql(conn, "SET lock_timeout TO '10s'")
+    await print_run_sql(conn, "SET lock_timeout TO '40s'")
     await print_run_sql(conn, 'LOCK TABLE companies IN SHARE MODE')
 
     await print_run_sql(

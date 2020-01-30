@@ -4,7 +4,7 @@ sudo: required
 language: python
 
 addons:
-  postgresql: '9.6'
+  postgresql: '10'
 
 services:
 - postgresql

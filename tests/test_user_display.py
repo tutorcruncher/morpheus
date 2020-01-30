@@ -48,7 +48,7 @@ async def test_user_list(cli, settings, send_email, db_conn):
         'to_last_name': None,
         'to_user_link': None,
         'to_address': '3@t.com',
-        'company': 'whoever',
+        'company_id': await db_conn.fetchval('select id from companies where code=$1', 'whoever'),
         'method': 'email-test',
         'subject': 'test message',
         'tags': [expected_msg_ids[3][:-6]],
@@ -157,7 +157,8 @@ async def test_user_aggregate(cli, settings, send_email):
     assert sum(v['count'] for v in data['histogram']) == 6
 
 
-async def test_user_aggregate_no_data(cli, settings):
+async def test_user_aggregate_no_data(cli, settings, db_conn):
+    await db_conn.execute('insert into companies (code) values ($1)', 'testing')
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'testing'))
     assert r.status == 200, await r.text()
     data = await r.json()
@@ -382,8 +383,7 @@ async def test_many_events(cli, settings, send_email, db_conn):
 async def test_message_details_missing(cli, settings):
     r = await cli.get(modify_url(f'/user/email-test/message/123.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
-    data = await r.json()
-    assert {'message': 'message not found'} == data
+    assert {'message': 'company not found'} == await r.json()
 
 
 async def test_message_preview(cli, settings, send_email, db_conn):
@@ -428,7 +428,7 @@ async def test_message_preview_disable_links_md(send_email, settings, cli, db_co
     assert 'testing <p><a href="#">hello</a></p>\n' == await r.text()
 
 
-async def test_user_sms(cli, settings, send_sms):
+async def test_user_sms(cli, settings, send_sms, db_conn):
     await send_sms(company_code='snapcrap')
 
     await send_sms(uid=str(uuid.uuid4()), company_code='flip')
@@ -438,7 +438,7 @@ async def test_user_sms(cli, settings, send_sms):
     assert data['count'] == 1
     item = data['items'][0]
     assert item['method'] == 'sms-test'
-    assert item['company'] == 'snapcrap'
+    assert item['company_id'] == await db_conn.fetchval('select id from companies where code=$1', 'snapcrap')
     assert item['status'] == 'send'
     assert item['from_name'] == 'FooBar'
     assert item['cost'] == 0.012
@@ -491,7 +491,8 @@ async def test_user_list_lots(cli, settings, send_email):
     assert f'101 - {min(results, 150)}' not in text
 
 
-async def test_valid_signature(cli, settings):
+async def test_valid_signature(cli, settings, db_conn):
+    await db_conn.execute('insert into companies (code) values ($1)', 'whatever')
     args = dict(company='whatever', expires=to_unix_ms(datetime(2032, 1, 1)))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
