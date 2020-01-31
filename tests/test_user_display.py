@@ -124,7 +124,7 @@ async def test_user_search_space(cli, settings, send_email):
     assert data['count'] == 0
 
 
-async def test_user_aggregate(cli, settings, send_email):
+async def test_user_aggregate(cli, settings, send_email, db_conn):
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
     msg_id = await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
@@ -133,6 +133,9 @@ async def test_user_aggregate(cli, settings, send_email):
     await cli.post('/webhook/test/', json=data)
 
     await send_email(uid=str(uuid.uuid4()), company_code='different')
+
+    await db_conn.execute('refresh materialized view message_aggregation')
+
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'user-aggs'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'

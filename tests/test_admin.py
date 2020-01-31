@@ -22,10 +22,11 @@ async def test_admin_root(cli):
     ) in text
 
 
-async def test_aggregates(cli, send_email):
+async def test_aggregates(cli, send_email, db_conn):
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
 
+    await db_conn.execute('refresh materialized view message_aggregation')
     r = await cli.get('/admin/?method=email-test', headers=gen_headers())
     text = await r.text()
     assert r.status == 200, text
