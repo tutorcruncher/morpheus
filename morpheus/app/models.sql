@@ -139,16 +139,17 @@ $$ LANGUAGE plpgsql;
 -- } logic
 
 -- { message_aggregation
+drop materialized view if exists message_aggregation;
 create materialized view message_aggregation as (
-  select company_id, method, status, date, count(*)
+  select company_id, method, status, date::date, count(*)
   from (
     select company_id, method, status, date_trunc('day', send_ts) as date
     from messages
     where send_ts > current_timestamp::date - '90 days'::interval
   ) as t
   group by company_id, method, status, date
-  order by company_id, company_id, method, status, date desc
+  order by company_id, method, status, date desc
 );
 
-create index message_aggregation_method_company on message_aggregation using btree (method, company_id);
+create index if not exists message_aggregation_method_company on message_aggregation using btree (method, company_id);
 -- } message_aggregation

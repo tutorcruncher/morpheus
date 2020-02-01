@@ -3,6 +3,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from morpheus.app.worker import update_aggregation_view
+
 
 def gen_headers():
     token = base64.b64encode(b'whoever:testing').decode()
@@ -26,7 +28,7 @@ async def test_aggregates(cli, send_email, db_conn):
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
 
-    await db_conn.execute('refresh materialized view message_aggregation')
+    await update_aggregation_view({'pg': db_conn})
     r = await cli.get('/admin/?method=email-test', headers=gen_headers())
     text = await r.text()
     assert r.status == 200, text

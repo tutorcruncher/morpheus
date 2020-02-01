@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 
 import chevron
 from aiohttp import ClientConnectionError, ClientSession, ClientTimeout
-from arq import Retry
+from arq import Retry, cron
 from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
 from buildpg import MultipleValues, Values, asyncpg
@@ -678,6 +678,10 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
         return UpdateStatus.added
 
 
+async def update_aggregation_view(ctx):
+    await ctx['pg'].execute('refresh materialized view message_aggregation')
+
+
 def utcnow():
     return datetime.utcnow().replace(tzinfo=timezone.utc)
 
@@ -689,6 +693,7 @@ class WorkerSettings:
     functions = worker_functions
     on_startup = startup
     on_shutdown = shutdown
+    cron_jobs = [cron(update_aggregation_view, minute=12)]
 
 
 def run_worker(settings: Settings):  # pragma: no cover

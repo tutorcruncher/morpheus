@@ -714,7 +714,7 @@ select json_build_object(
 )
 from (
   select coalesce(json_agg(t), '[]') AS histogram from (
-    select coalesce(sum(count), 0) as count, to_char(date, 'YYYY-MM-DD') as day, status
+    select coalesce(sum(count), 0) as count, date as day, status
     from message_aggregation
     where :where and date > current_timestamp::date - '28 days'::interval
     group by date, status
