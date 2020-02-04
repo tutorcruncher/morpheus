@@ -19,4 +19,4 @@ pytz==2019.3
 tqdm==4.41.1
 ua-parser==0.8.0
 ujson==1.35
-uvloop==0.13.0
+uvloop==0.14.0
