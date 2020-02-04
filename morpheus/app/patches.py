@@ -196,3 +196,11 @@ async def performance_step4(conn, settings, **kwargs):
     await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN company_id SET NOT NULL')
     await print_run_sql(conn, 'ALTER TABLE messages ALTER COLUMN new_method SET NOT NULL')
     await print_run_sql(conn, 'ALTER TABLE messages RENAME new_method TO method')
+
+
+@patch
+async def add_aggregation_view(conn, settings, **kwargs):
+    """
+    run the "message_aggregation" section of models.sql
+    """
+    await run_sql_section('message_aggregation', settings.sql_path.read_text(), conn)

@@ -4,6 +4,7 @@ import json
 import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from operator import itemgetter
 from urllib.parse import urlencode
 
 from arq.utils import to_unix_ms
@@ -11,6 +12,7 @@ from buildpg import MultipleValues, Values
 from pytest_toolbox.comparison import RegexStr
 
 from morpheus.app.models import MessageStatus
+from morpheus.app.worker import update_aggregation_view
 
 
 def modify_url(url, settings, company='foobar'):
@@ -124,7 +126,7 @@ async def test_user_search_space(cli, settings, send_email):
     assert data['count'] == 0
 
 
-async def test_user_aggregate(cli, settings, send_email):
+async def test_user_aggregate(cli, settings, send_email, db_conn):
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
     msg_id = await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
@@ -133,16 +135,15 @@ async def test_user_aggregate(cli, settings, send_email):
     await cli.post('/webhook/test/', json=data)
 
     await send_email(uid=str(uuid.uuid4()), company_code='different')
+
+    await update_aggregation_view({'pg': db_conn})
+
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, 'user-aggs'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = await r.json()
-    today = date.today()
+    histogram = data.pop('histogram')
     assert data == {
-        'histogram': [
-            {'count': 4, 'day': f'{today:%Y-%m-%d}', 'status': 'send'},
-            {'count': 1, 'day': f'{today:%Y-%m-%d}', 'status': 'open'},
-        ],
         'all_90_day': 5,
         'open_90_day': 1,
         'all_7_day': 5,
@@ -150,6 +151,10 @@ async def test_user_aggregate(cli, settings, send_email):
         'all_28_day': 5,
         'open_28_day': 1,
     }
+    assert sorted(histogram, key=itemgetter('count')) == [
+        {'count': 1, 'day': f'{date.today():%Y-%m-%d}', 'status': 'open'},
+        {'count': 4, 'day': f'{date.today():%Y-%m-%d}', 'status': 'send'},
+    ]
 
     r = await cli.get(modify_url('/user/email-test/aggregation.json', settings, '__all__'))
     assert r.status == 200, await r.text()

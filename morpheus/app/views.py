@@ -705,34 +705,31 @@ class UserMessagePreviewView(TemplateView, UserView):
 agg_sql = """
 select json_build_object(
   'histogram', histogram,
-  'all_90_day', agg.all_90,
-  'open_90_day', agg.open_90,
-  'all_28_day', agg.all_28,
-  'open_28_day', agg.open_28,
-  'all_7_day', agg.all_7,
-  'open_7_day', agg.open_7
+  'all_90_day', coalesce(agg.all_90, 0),
+  'open_90_day', coalesce(agg.open_90, 0),
+  'all_28_day', coalesce(agg.all_28, 0),
+  'open_28_day', coalesce(agg.open_28, 0),
+  'all_7_day', coalesce(agg.all_7, 0),
+  'open_7_day', coalesce(agg.open_7, 0)
 )
 from (
   select coalesce(json_agg(t), '[]') AS histogram from (
-    select count(*), to_char(day, 'YYYY-MM-DD') as day, status
-    from (
-      select date_trunc('day', send_ts) as day, status
-      from messages
-      where :where and send_ts > current_timestamp::date - '28 days'::interval
-    ) as t
-    group by day, status
+    select coalesce(sum(count), 0) as count, date as day, status
+    from message_aggregation
+    where :where and date > current_timestamp::date - '28 days'::interval
+    group by date, status
   ) as t
 ) as histogram,
 (
   select
-    count(*) as all_90,
-    count(*) filter (where status = 'open') as open_90,
-    count(*) filter (where send_ts > current_timestamp::date - '28 days'::interval) as all_28,
-    count(*) filter (where send_ts > current_timestamp::date - '28 days'::interval and status = 'open') as open_28,
-    count(*) filter (where send_ts > current_timestamp::date - '7 days'::interval) as all_7,
-    count(*) filter (where send_ts > current_timestamp::date - '7 days'::interval and status = 'open') as open_7
-  from messages
-  where :where and send_ts > current_timestamp::date - '90 days'::interval
+    sum(count) as all_90,
+    sum(count) filter (where status = 'open') as open_90,
+    sum(count) filter (where date > current_timestamp::date - '28 days'::interval) as all_28,
+    sum(count) filter (where date > current_timestamp::date - '28 days'::interval and status = 'open') as open_28,
+    sum(count) filter (where date > current_timestamp::date - '7 days'::interval) as all_7,
+    sum(count) filter (where date > current_timestamp::date - '7 days'::interval and status = 'open') as open_7
+  from message_aggregation
+  where :where
 ) as agg
 """
 
