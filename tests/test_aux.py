@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from morpheus.app.ext import ApiError, ApiSession
+from tests.test_user_display import modify_url
 
 
 async def test_index(cli):
@@ -130,6 +131,46 @@ async def test_create_sub_account_invalid_key(cli, dummy_server):
     data = {'company_code': 'foobar'}
     r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
     assert r.status == 403, await r.text()
+
+
+async def test_create_sub_account_on_send_email(cli, db_conn, send_email, dummy_server):
+    data = {'company_code': 'foobar'}
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert 'subaccount created\n' == await r.text()
+    assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
+    assert 0 == await db_conn.fetchval('select count(*) from companies')
+
+    await send_email(company_code='foobar')
+    assert 1 == await db_conn.fetchval('select count(*) from companies')
+
+
+async def test_create_sub_account_on_send_sms(cli, db_conn, send_sms, dummy_server):
+    data = {'company_code': 'foobar'}
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert 'subaccount created\n' == await r.text()
+    assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
+    assert 0 == await db_conn.fetchval('select count(*) from companies')
+
+    await send_sms(company_code='foobar')
+    assert 1 == await db_conn.fetchval('select count(*) from companies')
+
+
+async def test_create_sub_account_on_get_user_list(cli, settings, db_conn, dummy_server):
+    data = {'company_code': 'foobar'}
+    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status == 201, await r.text()
+    assert 'subaccount created\n' == await r.text()
+    assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
+    assert 0 == await db_conn.fetchval('select count(*) from companies')
+
+    r = await cli.get(modify_url('/user/email-test/messages.json', settings, 'whoever'))
+    assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    data = await r.json()
+    assert data['count'] == 0
+    assert 1 == await db_conn.fetchval('select count(*) from companies')
 
 
 async def _create_test_sub_account(cli, data):
