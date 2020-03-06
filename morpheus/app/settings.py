@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import List
 
 from arq.connections import RedisSettings
 from atoolbox import BaseSettings
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
     redis_settings: RedisSettings = 'redis://localhost:6379'
     pg_dsn = 'postgres://postgres:waffle@localhost:5432/morpheus'
     sql_path: Path = THIS_DIR / 'models.sql'
-    patch_paths = ['app.patches']
+    patch_paths: List[str] = ['app.patches']
 
     cookie_name = 'morpheus'
     auth_key = 'testing'
