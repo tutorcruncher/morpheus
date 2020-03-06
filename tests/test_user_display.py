@@ -525,7 +525,7 @@ async def test_invalid_expiry(cli, settings):
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     assert {
         'message': 'Invalid Data',
-        'details': [{'loc': ['expires'], 'msg': 'invalid datetime format', 'type': 'type_error.datetime'}],
+        'details': [{'loc': ['expires'], 'msg': 'invalid datetime format', 'type': 'value_error.datetime'}],
     } == await r.json()
 
 
