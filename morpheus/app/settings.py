@@ -57,9 +57,9 @@ class Settings(BaseSettings):
 
     class Config:
         fields = {
-            'port': 'PORT',
-            'pg_dsn': 'APP_PG_DSN',
-            'redis_settings': 'APP_REDIS_SETTINGS',
-            'commit': 'COMMIT',
-            'build_time': 'BUILD_TIME',
+            'port': {'env': 'PORT'},
+            'pg_dsn': {'env': 'APP_PG_DSN'},
+            'redis_settings': {'env': 'APP_REDIS_SETTINGS'},
+            'commit': {'env': 'COMMIT'},
+            'build_time': {'env': 'BUILD_TIME'},
         }
