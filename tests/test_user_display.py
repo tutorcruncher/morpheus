@@ -388,7 +388,7 @@ async def test_many_events(cli, settings, send_email, db_conn):
 async def test_message_details_missing(cli, settings):
     r = await cli.get(modify_url(f'/user/email-test/message/123.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
-    assert {'message': 'company not found'} == await r.json()
+    assert {'message': 'message not found'} == await r.json()
 
 
 async def test_message_preview(cli, settings, send_email, db_conn):

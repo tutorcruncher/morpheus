@@ -401,7 +401,7 @@ class _UserMessagesView(UserView):
         where = Var('method') == self.request.match_info['method']
         pg_pool: BuildPgPool = self.app['pg']
         if self.session.company != '__all__':
-            company_id = await get_company_id(pg_pool, self.session.company)
+            company_id = await get_create_company_id(pg_pool, self.session.company)
             where &= Var('company_id') == company_id
 
         if message_id:
