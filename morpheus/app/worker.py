@@ -693,7 +693,7 @@ class WorkerSettings:
     functions = worker_functions
     on_startup = startup
     on_shutdown = shutdown
-    cron_jobs = [cron(update_aggregation_view, minute=12, timeout=3600)]
+    cron_jobs = [cron(update_aggregation_view, minute=12, timeout=1800)]
 
 
 def run_worker(settings: Settings):  # pragma: no cover
