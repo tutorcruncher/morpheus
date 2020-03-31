@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     us_send_number = '15744445663'
 
     class Config:
+        env_prefix = 'APP_'
         fields = {
             'port': {'env': 'PORT'},
             'pg_dsn': {'env': 'APP_PG_DSN'},
