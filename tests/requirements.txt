@@ -1,5 +1,5 @@
 black==19.10b0
-coverage==5.0.4
+coverage==5.1
 docutils==0.16
 flake8==3.7.9
 isort==4.3.21
