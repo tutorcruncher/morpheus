@@ -13,7 +13,7 @@ ipython==7.13.0
 jinja2==2.11.1
 libsass==0.19.4
 misaka==2.1.1
-phonenumbers==8.12.1
+phonenumbers==8.12.2
 pydantic[email]==1.4
 pytz==2019.3
 tqdm==4.45.0
