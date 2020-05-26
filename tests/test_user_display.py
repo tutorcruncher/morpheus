@@ -64,7 +64,7 @@ async def test_user_list(cli, settings, send_email, db_conn):
     data = await r.json()
     assert data['count'] == 6
 
-    r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
+    r = await cli.get(modify_url('/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()
     text = await r.text()
     assert '<caption>Results: <b>6</b></caption>' in text
@@ -112,7 +112,7 @@ async def test_user_search(cli, settings, send_email):
 async def test_user_search_space(cli, settings, send_email):
     uid = str(uuid.uuid4())
     await send_email(
-        uid=uid, company_code='testing', recipients=[{'address': f'testing@example.com'}], subject_template='foobar'
+        uid=uid, company_code='testing', recipients=[{'address': 'testing@example.com'}], subject_template='foobar'
     )
 
     r = await cli.get(modify_url('/user/email-test/messages.json?q=foobar', settings, 'testing'))
@@ -349,7 +349,7 @@ async def test_single_item_events(cli, settings, send_email, db_conn):
 
 
 async def test_invalid_message_id(cli, settings):
-    url = modify_url(f'/user/email-test/messages.json?message_id=foobar', settings, 'test-details')
+    url = modify_url('/user/email-test/messages.json?message_id=foobar', settings, 'test-details')
     r = await cli.get(url)
     assert r.status == 400, await r.text()
     data = await r.json()
@@ -386,7 +386,7 @@ async def test_many_events(cli, settings, send_email, db_conn):
 
 
 async def test_message_details_missing(cli, settings):
-    r = await cli.get(modify_url(f'/user/email-test/message/123.html', settings, 'test-details'))
+    r = await cli.get(modify_url('/user/email-test/message/123.html', settings, 'test-details'))
     assert r.status == 404, await r.text()
     assert {'message': 'company not found'} == await r.json()
 
@@ -409,7 +409,7 @@ async def test_message_preview_disable_links(cli, send_email, settings, db_conn)
             ),
             'unsubscribe_link': 'http://example.org/unsub',
         },
-        recipients=[{'address': f'1@example.org'}],
+        recipients=[{'address': '1@example.org'}],
     )
     message_id = await db_conn.fetchval('select id from messages where external_id=$1', msg_ext_id)
     r = await cli.get(modify_url(f'/user/email-test/{message_id}/preview/', settings, 'preview'))
@@ -478,21 +478,21 @@ async def test_user_list_lots(cli, settings, send_email):
     for i in range(110):
         await send_email(uid=str(uuid.uuid4()), company_code='list-lots', recipients=[{'address': f'{i}@t.com'}])
 
-    r = await cli.get(modify_url(f'/user/email-test/messages.html', settings, '__all__'))
+    r = await cli.get(modify_url('/user/email-test/messages.html', settings, '__all__'))
     assert r.status == 200, await r.text()
     assert r.headers['Access-Control-Allow-Origin'] == '*'
     text = await r.text()
     m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
     results = int(m.groups()[0])
     assert results >= 110
-    assert f'1 - 100' not in text
+    assert '1 - 100' not in text
     assert f'101 - {min(results, 150)}' in text
 
-    url = modify_url(f'/user/email-test/messages.html', settings, '__all__')
+    url = modify_url('/user/email-test/messages.html', settings, '__all__')
     r = await cli.get(url + '&from=100')
     assert r.status == 200, await r.text()
     text = await r.text()
-    assert f'1 - 100' in text
+    assert '1 - 100' in text
     assert f'101 - {min(results, 150)}' not in text
 
 

@@ -26,11 +26,11 @@ async def test_send_email(cli, worker, tmpdir):
         'from_address': 'Samuel <s@muelcolvin.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
-        'context': {'message__render': '# hello\n\nThis is a **{{ b }}**.\n', 'a': 'Apple', 'b': f'Banana'},
+        'context': {'message__render': '# hello\n\nThis is a **{{ b }}**.\n', 'a': 'Apple', 'b': 'Banana'},
         'recipients': [
             {
                 'first_name': 'foo',
-                'last_name': f'bar',
+                'last_name': 'bar',
                 'user_link': '/user/profile/42/',
                 'address': 'foobar@example.org',
                 'tags': ['foobar'],
@@ -251,12 +251,12 @@ async def test_send_email_headers(cli, tmpdir, worker):
         'from_address': 'Samuel <s@muelcolvin.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
-        'context': {'message__render': 'test email {{ a }} {{ b}} {{ c }}.\n', 'a': 'Apple', 'b': f'Banana'},
+        'context': {'message__render': 'test email {{ a }} {{ b}} {{ c }}.\n', 'a': 'Apple', 'b': 'Banana'},
         'headers': {'Reply-To': 'another@whoever.com', 'List-Unsubscribe': '<http://example.org/unsub>'},
         'recipients': [
-            {'first_name': 'foo', 'last_name': f'bar', 'address': f'foobar@example.org', 'context': {'c': 'Carrot'}},
+            {'first_name': 'foo', 'last_name': 'bar', 'address': 'foobar@example.org', 'context': {'c': 'Carrot'}},
             {
-                'address': f'2@example.org',
+                'address': '2@example.org',
                 'context': {'b': 'Banker'},
                 'headers': {'List-Unsubscribe': '<http://example.org/different>'},
             },
@@ -289,9 +289,9 @@ async def test_send_unsub_context(send_email, tmpdir):
             'unsubscribe_link': 'http://example.org/unsub',
         },
         recipients=[
-            {'address': f'1@example.org'},
+            {'address': '1@example.org'},
             {
-                'address': f'2@example.org',
+                'address': '2@example.org',
                 'context': {'unsubscribe_link': 'http://example.org/context'},
                 'headers': {'List-Unsubscribe': '<http://example.org/different>'},
             },

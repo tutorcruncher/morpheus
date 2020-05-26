@@ -151,7 +151,7 @@ async def test_delete_sub_account(cli, dummy_server):
 
     r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 404, await r.text()
-    assert f"No subaccount exists with the id 'foobar'\n" == await r.text()
+    assert "No subaccount exists with the id 'foobar'\n" == await r.text()
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 200',
