@@ -171,8 +171,6 @@ async def _fix_worker(cli, worker_ctx):
     )
 
     yield worker
-
-    worker.pool = None
     await worker.close()
 
 
