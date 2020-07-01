@@ -16,7 +16,7 @@ misaka==2.1.1
 phonenumbers==8.12.4
 pydantic[email]==1.5.1
 pytz==2020.1
-tqdm==4.46.0
+tqdm==4.47.0
 ua-parser==0.10.0
 ujson==2.0.3
 uvloop==0.14.0
