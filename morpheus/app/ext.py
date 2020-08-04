@@ -2,11 +2,10 @@ import hashlib
 import hmac
 import json
 import logging
-from urllib.parse import urlencode
-
 import ujson
 from aiohttp import ClientResponse, ClientSession, ClientTimeout
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
+from urllib.parse import urlencode
 
 from .settings import Settings
 

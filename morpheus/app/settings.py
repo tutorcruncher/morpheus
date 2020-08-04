@@ -1,9 +1,8 @@
-from pathlib import Path
-from typing import List
-
 from arq.connections import RedisSettings
 from atoolbox import BaseSettings
+from pathlib import Path
 from pydantic import NoneStr
+from typing import List
 
 THIS_DIR = Path(__file__).parent.resolve()
 

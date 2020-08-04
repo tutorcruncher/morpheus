@@ -1,8 +1,7 @@
 import asyncio
+import pytest
 import re
 import uuid
-
-import pytest
 from aiohttp.test_utils import teardown_test_loop
 from aioredis import create_redis
 from arq import ArqRedis, Worker

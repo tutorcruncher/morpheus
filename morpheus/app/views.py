@@ -1,19 +1,13 @@
+from dataclasses import asdict
+
 import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import logging
-import re
-from dataclasses import asdict
-from datetime import datetime, timezone
-from html import escape
-from itertools import groupby
-from operator import itemgetter
-from time import time
-from typing import Tuple
-
 import pytz
+import re
 import ujson
 from aiohttp.web import HTTPTemporaryRedirect
 from aiohttp_jinja2 import template
@@ -23,10 +17,16 @@ from atoolbox import JsonErrors
 from buildpg import Func, Values, Var
 from buildpg.asyncpg import BuildPgPool
 from buildpg.clauses import Select
+from datetime import datetime, timezone
+from html import escape
+from itertools import groupby
 from markupsafe import Markup
+from operator import itemgetter
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
+from time import time
+from typing import Tuple
 
 from .ext import Mandrill
 from .models import (
