@@ -546,6 +546,28 @@ async def test_send_with_other_attachment(send_email, tmpdir, db_conn):
     assert set(attachments) == {'::calendar.ics'}
 
 
+async def test_send_with_other_attachment_pdf(send_email, tmpdir, db_conn):
+    msg = 'Look this is some test data'
+    encoded_content = base64.b64encode(b'Look this is some test data').decode()
+    message_id = await send_email(
+        recipients=[
+            {
+                'address': 'foobar@testing.com',
+                'attachments': [
+                    {'name': 'test_pdf.pdf', 'content': msg, 'mime_type': 'application/pdf'},
+                    {'name': 'test_pdf_encoded.pdf', 'content': encoded_content, 'mime_type': 'application/pdf'},
+                ],
+            }
+        ]
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    assert f'test_pdf.pdf:{msg}' in msg_file
+    assert f'test_pdf_encoded.pdf:{msg}' in msg_file
+    attachments = await db_conn.fetchval('select attachments from messages where external_id=$1', message_id)
+    assert set(attachments) == {'::test_pdf.pdf', '::test_pdf_encoded.pdf'}
+
+
 async def test_pdf_not_unicode(send_email, tmpdir, cli):
     message_id = await send_email(
         recipients=[
