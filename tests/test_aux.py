@@ -1,8 +1,7 @@
 import base64
+import pytest
 import uuid
 from datetime import datetime, timedelta, timezone
-
-import pytest
 
 from morpheus.app.ext import ApiError, ApiSession
 from tests.test_user_display import modify_url

@@ -1,24 +1,23 @@
+from dataclasses import asdict, dataclass
+
 import asyncio
 import base64
+import chevron
 import hashlib
 import json
 import logging
 import re
-from asyncio import TimeoutError
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from enum import Enum
-from itertools import chain
-from pathlib import Path
-from typing import Dict, List, Optional
-
-import chevron
 from aiohttp import ClientConnectionError, ClientSession, ClientTimeout
 from arq import Retry, cron
 from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
+from asyncio import TimeoutError
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
+from datetime import datetime, timezone
+from enum import Enum
+from itertools import chain
+from pathlib import Path
 from phonenumbers import (
     NumberParseException,
     PhoneNumberFormat,
@@ -30,6 +29,7 @@ from phonenumbers import (
 )
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic.datetime_parse import parse_datetime
+from typing import Dict, List, Optional
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from .ext import ApiError, Mandrill, MessageBird

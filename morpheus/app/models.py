@@ -3,11 +3,10 @@ import re
 from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List
-from uuid import UUID
-
 from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
+from typing import Dict, List
+from uuid import UUID
 
 THIS_DIR = Path(__file__).parent.resolve()
 

@@ -1,14 +1,14 @@
-import logging
-import re
-import secrets
-from base64 import urlsafe_b64encode
 from dataclasses import dataclass
-from typing import Dict
 
 import chevron
+import logging
+import re
 import sass
+import secrets
+from base64 import urlsafe_b64encode
 from chevron import ChevronError
 from misaka import HtmlRenderer, Markdown
+from typing import Dict
 
 markdown = Markdown(HtmlRenderer(flags=['hard-wrap']), extensions=['no-intra-emphasis'])
 logger = logging.getLogger('morpheus.render')

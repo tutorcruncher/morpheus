@@ -3,13 +3,12 @@ import hmac
 import json
 import re
 import uuid
-from datetime import date, datetime, timedelta, timezone
-from operator import itemgetter
-from urllib.parse import urlencode
-
 from arq.utils import to_unix_ms
 from buildpg import MultipleValues, Values
+from datetime import date, datetime, timedelta, timezone
+from operator import itemgetter
 from pytest_toolbox.comparison import RegexStr
+from urllib.parse import urlencode
 
 from morpheus.app.models import MessageStatus
 from morpheus.app.worker import update_aggregation_view
