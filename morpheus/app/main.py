@@ -1,8 +1,7 @@
-import asyncio
-import logging
-
 import aiohttp_jinja2
+import asyncio
 import jinja2
+import logging
 from aiohttp.web import Application
 from atoolbox.create_app import cleanup, startup
 from atoolbox.middleware import error_middleware

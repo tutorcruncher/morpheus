@@ -4,13 +4,12 @@ import hmac
 import json
 import logging
 import pickle
-import re
-from datetime import datetime, timezone
-from uuid import uuid4
-
 import pytest
+import re
 from arq import Retry
+from datetime import datetime, timezone
 from pytest_toolbox.comparison import AnyInt, RegexStr
+from uuid import uuid4
 
 from morpheus.app.ext import ApiError
 from morpheus.app.main import create_app, get_mandrill_webhook_key
