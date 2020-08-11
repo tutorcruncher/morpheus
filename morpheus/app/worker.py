@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass
 
 import asyncio
 import base64
+import binascii
 import chevron
 import hashlib
 import json
@@ -313,9 +314,16 @@ class SendEmail:
 
     async def _generate_base64(self, attachments: List[AttachmentModel]):
         for attachment in attachments:
-            yield dict(
-                name=attachment.name, type=attachment.mime_type, content=base64.b64encode(attachment.content).decode()
-            )
+            try:
+                # Check to see if content can be decoded from base64
+                base64.b64decode(attachment.content, validate=True)
+            except binascii.Error:
+                # Content has not yet been base64 encoded so needs to be encoded
+                content = base64.b64encode(attachment.content).decode()
+            else:
+                # Content has already been base64 encoded so just pass content through
+                content = attachment.content
+            yield dict(name=attachment.name, type=attachment.mime_type, content=content)
 
     async def _store_email(self, external_id, send_ts, email_info: EmailInfo):
         data = dict(
