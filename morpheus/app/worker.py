@@ -322,7 +322,7 @@ class SendEmail:
                 content = base64.b64encode(attachment.content).decode()
             else:
                 # Content has already been base64 encoded so just pass content through
-                content = attachment.content
+                content = attachment.content.decode()
             yield dict(name=attachment.name, type=attachment.mime_type, content=content)
 
     async def _store_email(self, external_id, send_ts, email_info: EmailInfo):

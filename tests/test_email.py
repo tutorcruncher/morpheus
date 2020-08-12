@@ -8,6 +8,7 @@ import pytest
 import re
 from arq import Retry
 from datetime import datetime, timezone
+from pathlib import Path
 from pytest_toolbox.comparison import AnyInt, RegexStr
 from uuid import uuid4
 
@@ -15,6 +16,8 @@ from morpheus.app.ext import ApiError
 from morpheus.app.main import create_app, get_mandrill_webhook_key
 from morpheus.app.models import EmailRecipientModel
 from morpheus.app.worker import email_retrying, send_email as worker_send_email
+
+THIS_DIR = Path(__file__).parent.resolve()
 
 
 async def test_send_email(cli, worker, tmpdir):
@@ -150,7 +153,10 @@ async def test_mandrill_send(send_email, db_conn, dummy_server):
     assert dummy_server.app['log'] == ['POST /mandrill/messages/send.json > 200']
 
 
-async def test_send_mandrill_with_other_attachment(send_email, db_conn):
+async def test_send_mandrill_with_other_attachments(send_email, db_conn):
+    with open(THIS_DIR / 'attachments/testing.pdf', 'rb') as f:
+        content = f.read()
+    sent_content = base64.b64encode(content).decode()
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobarctestingcom')
     assert m is None
     await send_email(
@@ -159,14 +165,15 @@ async def test_send_mandrill_with_other_attachment(send_email, db_conn):
             {
                 'address': 'foobar_c@testing.com',
                 'attachments': [
-                    {'name': 'calendar.ics', 'content': 'Look this is some test data', 'mime_type': 'text/calendar'}
+                    {'name': 'calendar.ics', 'content': 'Look this is some test data', 'mime_type': 'text/calendar'},
+                    {'name': 'testing.pdf', 'content': sent_content, 'mime_type': 'application/pdf'},
                 ],
             }
         ],
     )
     m = await db_conn.fetchrow('select * from messages where external_id=$1', 'mandrill-foobarctestingcom')
     assert m['to_address'] == 'foobar_c@testing.com'
-    assert set(m['attachments']) == {'::calendar.ics'}
+    assert set(m['attachments']) == {'::calendar.ics', '::testing.pdf'}
 
 
 async def test_example_email_address(send_email, db_conn):
