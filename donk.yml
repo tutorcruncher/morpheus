@@ -3,7 +3,7 @@ install:
 - pip install -r requirements.txt
 
 black: black -S -l 120 --target-version py37 morpheus tests
-isort: isort -rc -w 120 morpheus tests
+isort: isort -w 120 morpheus tests
 
 format:
 - +isort

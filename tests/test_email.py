@@ -4,12 +4,11 @@ import hmac
 import json
 import logging
 import pickle
-from pathlib import Path
-
 import pytest
 import re
 from arq import Retry
 from datetime import datetime, timezone
+from pathlib import Path
 from pytest_toolbox.comparison import AnyInt, RegexStr
 from uuid import uuid4
 
@@ -167,7 +166,7 @@ async def test_send_mandrill_with_other_attachments(send_email, db_conn):
                 'address': 'foobar_c@testing.com',
                 'attachments': [
                     {'name': 'calendar.ics', 'content': 'Look this is some test data', 'mime_type': 'text/calendar'},
-                    {'name': 'testing.pdf', 'content': sent_content, 'mime_type': 'application/pdf'}
+                    {'name': 'testing.pdf', 'content': sent_content, 'mime_type': 'application/pdf'},
                 ],
             }
         ],
