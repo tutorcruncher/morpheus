@@ -18,5 +18,5 @@ pydantic[email]==1.6.1
 pytz==2020.1
 tqdm==4.48.0
 ua-parser==0.10.0
-ujson==3.0.0
+ujson==3.1.0
 uvloop==0.14.0
