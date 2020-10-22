@@ -9,7 +9,7 @@ cffi==1.14.1
 chevron==0.13.1
 click==7.1.2
 dataclasses==0.6
-ipython==7.17.0
+ipython==7.18.1
 jinja2==2.11.2
 libsass==0.20.1
 misaka==2.1.1
