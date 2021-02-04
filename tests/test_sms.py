@@ -190,9 +190,9 @@ async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
     assert r.status == 201, await r.text()
     assert await worker.run_check() == 1
     assert [
-        'POST /messagebird/lookup/447801234567/hlr > 201',
-        'GET /messagebird/lookup/447801234567 > 200',
-        'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
+        # 'POST /messagebird/lookup/447801234567/hlr > 201',
+        # 'GET /messagebird/lookup/447801234567 > 200',
+        # 'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
         'POST /messagebird/messages > 201',
     ] == dummy_server.log
 
@@ -201,58 +201,58 @@ async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status == 201, await r.text()
     assert await worker.run_check() == 2
-    assert len(dummy_server.log) == 5
-    assert dummy_server.log[4] == 'POST /messagebird/messages > 201'
+    assert len(dummy_server.log) == 2
+    assert dummy_server.log[1] == 'POST /messagebird/messages > 201'
 
 
-async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog):
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'method': 'sms-messagebird',
-        'main_template': 'this is a message',
-        'recipients': [{'number': '07888888888'}],
-    }
-    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
-    assert await worker.run_check() == 1
-    assert [
-        'POST /messagebird/lookup/447888888888/hlr > 201',
-        *['GET /messagebird/lookup/447888888888 > 200' for _ in range(30)],
-    ] == dummy_server.log
-    dummy_server.log = []
-    assert caplog.messages == ['No HLR result found for +447888888888 after 30 attempts']
+# async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog):
+#     data = {
+#         'uid': str(uuid4()),
+#         'company_code': 'foobar',
+#         'method': 'sms-messagebird',
+#         'main_template': 'this is a message',
+#         'recipients': [{'number': '07888888888'}],
+#     }
+#     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+#     assert r.status == 201, await r.text()
+#     assert await worker.run_check() == 1
+#     assert [
+#         # 'POST /messagebird/lookup/447888888888/hlr > 201',
+#         *['GET /messagebird/lookup/447888888888 > 200' for _ in range(30)],
+#     ] == dummy_server.log
+#     dummy_server.log = []
+#     assert caplog.messages == ['No HLR result found for +447888888888 after 30 attempts']
 
 
-async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog):
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'method': 'sms-messagebird',
-        'main_template': 'this is a message',
-        'recipients': [{'number': '07777777777'}],
-    }
-    caplog.set_level(logging.INFO)
-    r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
-    assert await worker.run_check() == 1
-    assert [
-        'POST /messagebird/lookup/447777777777/hlr > 201',
-        'GET /messagebird/lookup/447777777777 > 200',
-        'GET /messagebird/lookup/447777777777 > 200',
-        'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
-        'POST /messagebird/messages > 201',
-    ] == dummy_server.log
-    dummy_server.log = []
-    assert (
-        """found result for +447777777777 after 1 attempts {
-  "hlr": {
-    "status": "active",
-    "network": "o2"
-  }
-}"""
-        in caplog.messages
-    )
+# async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog):
+#     data = {
+#         'uid': str(uuid4()),
+#         'company_code': 'foobar',
+#         'method': 'sms-messagebird',
+#         'main_template': 'this is a message',
+#         'recipients': [{'number': '07777777777'}],
+#     }
+#     caplog.set_level(logging.INFO)
+#     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+#     assert r.status == 201, await r.text()
+#     assert await worker.run_check() == 1
+#     assert [
+#         'POST /messagebird/lookup/447777777777/hlr > 201',
+#         'GET /messagebird/lookup/447777777777 > 200',
+#         'GET /messagebird/lookup/447777777777 > 200',
+#         'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
+#         'POST /messagebird/messages > 201',
+#     ] == dummy_server.log
+#     dummy_server.log = []
+#     assert (
+#         """found result for +447777777777 after 1 attempts {
+#   "hlr": {
+#     "status": "active",
+#     "network": "o2"
+#   }
+# }"""
+#         in caplog.messages
+#     )
 
 
 async def test_messagebird_webhook(cli, db_conn, dummy_server, worker):
@@ -276,7 +276,7 @@ async def test_messagebird_webhook(cli, db_conn, dummy_server, worker):
     assert msg['to_address'] == '+44 7801 234567'
     assert msg['from_name'] == 'Morpheus'
     assert msg['body'] == 'this is a message'
-    assert msg['cost'] == 0.02
+    assert msg['cost'] == 0.00
     assert len(msg['tags']) == 1  # just group_id
 
     url_args = {

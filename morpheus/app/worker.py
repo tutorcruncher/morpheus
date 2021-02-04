@@ -529,7 +529,8 @@ class SendSMS:
             return await self._messagebird_get_mcc_cost(redis, mcc)
 
     async def _messagebird_send_sms(self, sms_data: SmsData):
-        msg_cost = await self._messagebird_get_number_cost(sms_data.number)
+        # msg_cost = await self._messagebird_get_number_cost(sms_data.number)
+        msg_cost = 0  # Set to SMS cost to 0 until cost API is working/changed
         if msg_cost is None:
             return
 
