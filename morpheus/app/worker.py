@@ -68,6 +68,10 @@ def worker_function(f):
     return f
 
 
+class MessageBirdExternalError(Exception):
+    pass
+
+
 @dataclass
 class EmailJob:
     group_id: int
@@ -484,7 +488,10 @@ class SendSMS:
                 f'&password={self.settings.messagebird_pricing_password}'
             )
             async with self.ctx['session'].get(url) as r:
-                assert r.status == 200, (r.status, await r.text())
+                if r.status != 200:
+                    response = await r.text()
+                    main_logger.error('error getting messagebird api', extra={'status': r.status, 'response': response})
+                    raise MessageBirdExternalError((r.status, response))
                 data = await r.json()
             if not next((1 for g in data if g['mcc'] == '0'), None):
                 main_logger.error('no default messagebird pricing with mcc "0"', extra={'data': data})
@@ -531,7 +538,7 @@ class SendSMS:
     async def _messagebird_send_sms(self, sms_data: SmsData):
         try:
             msg_cost = await self._messagebird_get_number_cost(sms_data.number)
-        except AssertionError:
+        except MessageBirdExternalError:
             msg_cost = 0  # Set to SMS cost to 0 until cost API is working/changed
         if msg_cost is None:
             return
