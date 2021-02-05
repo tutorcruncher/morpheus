@@ -482,21 +482,17 @@ class SendSMS:
         if not await redis.exists(rates_key):
             # get fresh data on rates by mcc
             main_logger.info('getting fresh pricing data from messagebird...')
-            url = (
-                f'{self.settings.messagebird_pricing_api}'
-                f'?username={self.settings.messagebird_pricing_username}'
-                f'&password={self.settings.messagebird_pricing_password}'
-            )
-            async with self.ctx['session'].get(url) as r:
-                if r.status != 200:
-                    response = await r.text()
-                    main_logger.error('error getting messagebird api', extra={'status': r.status, 'response': response})
-                    raise MessageBirdExternalError((r.status, response))
-                data = await r.json()
-            if not next((1 for g in data if g['mcc'] == '0'), None):
-                main_logger.error('no default messagebird pricing with mcc "0"', extra={'data': data})
-            data = {g['mcc']: f'{float(g["rate"]):0.5f}' for g in data}
-            await asyncio.gather(redis.hmset_dict(rates_key, data), redis.expire(rates_key, ONE_DAY))
+            r = await self.messagebird.get('pricing/sms/outbound')
+            if r.status != 200:
+                response = await r.text()
+                main_logger.error('error getting messagebird api', extra={'status': r.status, 'response': response})
+                raise MessageBirdExternalError((r.status, response))
+            data = await r.json()
+            prices = data['prices']
+            if not next((1 for g in prices if g['mcc'] == '0'), None):
+                main_logger.error('no default messagebird pricing with mcc "0"', extra={'prices': prices})
+            prices = {g['mcc']: f'{float(g["price"]):0.5f}' for g in prices}
+            await asyncio.gather(redis.hmset_dict(rates_key, prices), redis.expire(rates_key, ONE_DAY))
         rate = await redis.hget(rates_key, mcc, encoding='utf8')
         if not rate:
             main_logger.warning('no rate found for mcc: "%s", using default', mcc)

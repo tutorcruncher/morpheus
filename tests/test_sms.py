@@ -192,7 +192,7 @@ async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
     assert [
         'POST /messagebird/lookup/447801234567/hlr > 201',
         'GET /messagebird/lookup/447801234567 > 200',
-        'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
+        'GET /messagebird/pricing/sms/outbound > 200',
         'POST /messagebird/messages > 201',
     ] == dummy_server.log
 
@@ -240,7 +240,7 @@ async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog)
         'POST /messagebird/lookup/447777777777/hlr > 201',
         'GET /messagebird/lookup/447777777777 > 200',
         'GET /messagebird/lookup/447777777777 > 200',
-        'GET /messagebird-pricing?username=mb-username&password=mb-password > 200',
+        'GET /messagebird/pricing/sms/outbound > 200',
         'POST /messagebird/messages > 201',
     ] == dummy_server.log
     dummy_server.log = []

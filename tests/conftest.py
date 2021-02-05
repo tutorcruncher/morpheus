@@ -84,9 +84,6 @@ def settings(tmpdir, dummy_server: DummyServer):
         click_host_name='click.example.com',
         messagebird_key='good-messagebird-testing-key',
         messagebird_url=dummy_server.server_name + '/messagebird',
-        messagebird_pricing_api=dummy_server.server_name + '/messagebird-pricing',
-        messagebird_pricing_username='mb-username',
-        messagebird_pricing_password='mb-password',
         stats_token='test-token',
         max_request_stats=10,
     )
