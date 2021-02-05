@@ -482,7 +482,7 @@ class SendSMS:
         if not await redis.exists(rates_key):
             # get fresh data on rates by mcc
             main_logger.info('getting fresh pricing data from messagebird...')
-            r = await self.messagebird.get(f'pricing/sms/outbound')
+            r = await self.messagebird.get('pricing/sms/outbound')
             if r.status != 200:
                 response = await r.text()
                 main_logger.error('error getting messagebird api', extra={'status': r.status, 'response': response})

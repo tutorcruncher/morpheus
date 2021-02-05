@@ -1,7 +1,7 @@
 import asyncio
 import re
 from aiohttp import web
-from aiohttp.web import HTTPForbidden, Response, json_response
+from aiohttp.web import Response, json_response
 
 
 async def mandrill_send_view(request):
