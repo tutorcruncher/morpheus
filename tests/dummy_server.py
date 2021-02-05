@@ -110,15 +110,14 @@ async def messagebird_send(request):
 
 
 async def messagebird_pricing(request):
-    if not request.query.get('username') == 'mb-username':
-        raise HTTPForbidden(text='bad username')
-    if not request.query.get('password') == 'mb-password':
-        raise HTTPForbidden(text='bad password')
+    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
     return json_response(
-        [
-            {'mcc': '0', 'country_name': 'Default rate', 'rate': '0.0400'},
-            {'mcc': '234', 'country_name': 'United Kingdom', 'rate': '0.0200'},
-        ]
+        {
+            'prices': [
+                {'mcc': '0', 'countryName': 'Default rate', 'price': '0.0400'},
+                {'mcc': '0', 'countryName': 'United Kingdom', 'price': '0.0200'},
+            ]
+        }
     )
 
 
@@ -143,6 +142,6 @@ routes = [
     web.post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post),
     web.get('/messagebird/lookup/{number}', messagebird_lookup),
     web.post('/messagebird/messages', messagebird_send),
-    web.get('/messagebird-pricing', messagebird_pricing),
+    web.get('/messagebird/pricing/sms/outbound', messagebird_pricing),
     web.route('*', '/generate.pdf', generate_pdf),
 ]
