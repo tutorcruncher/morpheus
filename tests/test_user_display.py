@@ -125,6 +125,35 @@ async def test_user_search_space(cli, settings, send_email):
     assert data['count'] == 0
 
 
+async def test_user_list_lots_query_test(cli, settings, send_email):
+    for i in range(110):
+        await send_email(uid=str(uuid.uuid4()), company_code='testing', recipients=[{'address': f'{i}@t.com'}], subject_template='foobar')
+
+    for i in range(20):
+        await send_email(uid=str(uuid.uuid4()), company_code='testing', recipients=[{'address': f'{i}@t.com'}], subject_template='barfoo')
+
+    r = await cli.get(modify_url('/user/email-test/messages.html', settings, 'testing'))
+    assert r.status == 200, await r.text()
+    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    text = await r.text()
+    m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
+    results = int(m.groups()[0])
+    assert results == 130
+    assert '1 - 100' not in text
+    assert f'101 - {min(results, 150)}' in text
+
+    url = modify_url('/user/email-test/messages.html', settings, 'testing')
+    print(url)
+    r = await cli.get(url + '&from=100&q=foobar')
+    assert r.status == 200, await r.text()
+    text = await r.text()
+    m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
+    results = int(m.groups()[0])
+    assert results == 10
+    assert '1 - 100' in text
+    assert f'101 - {min(results, 150)}' not in text
+
+
 async def test_user_aggregate(cli, settings, send_email, db_conn):
     for i in range(4):
         await send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])

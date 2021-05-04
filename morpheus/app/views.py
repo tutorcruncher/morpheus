@@ -632,7 +632,7 @@ class UserMessageListView(TemplateView, _UserMessagesView):
             pagination['previous'] = dict(
                 href=f'?from={previous_offset}', pfrom=previous_offset, text=f'{previous_offset + 1} - {max(offset, 0)}'
             )
-        if request.query.get('q') is not None:
+        if request.query.get('q') is not None and pagination != {}:
             for direction, sub_dict in pagination.items():
                 sub_dict['href'] += f'&q={request.query.get("q")}'
 
