@@ -127,10 +127,20 @@ async def test_user_search_space(cli, settings, send_email):
 
 async def test_user_list_lots_query_test(cli, settings, send_email):
     for i in range(110):
-        await send_email(uid=str(uuid.uuid4()), company_code='testing', recipients=[{'address': f'{i}@t.com'}], subject_template='foobar')
+        await send_email(
+            uid=str(uuid.uuid4()),
+            company_code='testing',
+            recipients=[{'address': f'{i}@t.com'}],
+            subject_template='foobar',
+        )
 
     for i in range(20):
-        await send_email(uid=str(uuid.uuid4()), company_code='testing', recipients=[{'address': f'{i}@t.com'}], subject_template='barfoo')
+        await send_email(
+            uid=str(uuid.uuid4()),
+            company_code='testing',
+            recipients=[{'address': f'{i}@t.com'}],
+            subject_template='barfoo',
+        )
 
     r = await cli.get(modify_url('/user/email-test/messages.html', settings, 'testing'))
     assert r.status == 200, await r.text()
