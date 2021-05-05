@@ -4,38 +4,4 @@ updates:
   directory: "/"
   schedule:
     interval: monthly
-  open-pull-requests-limit: 10
-  ignore:
-  - dependency-name: coverage
-    versions:
-    - 5.3.1
-    - "5.4"
-  - dependency-name: tqdm
-    versions:
-    - 4.55.0
-    - 4.56.0
-  - dependency-name: pytest
-    versions:
-    - 6.2.1
-    - 6.2.2
-  - dependency-name: isort
-    versions:
-    - 5.7.0
-  - dependency-name: pytest-xdist
-    versions:
-    - 2.2.0
-  - dependency-name: aiohttp-jinja2
-    versions:
-    - 1.4.2
-  - dependency-name: ipython
-    versions:
-    - 7.19.0
-  - dependency-name: asyncpg
-    versions:
-    - 0.21.0
-  - dependency-name: arq
-    versions:
-    - 0.19.1
-  - dependency-name: flake8
-    versions:
-    - 3.8.4
+  open-pull-requests-limit: 15
