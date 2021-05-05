@@ -11,4 +11,4 @@ pytest-cov==2.11.1
 pytest-mock==3.5.1
 pytest-sugar==0.9.4
 pytest-toolbox==0.4
-pytest-xdist==2.2.0
+pytest-xdist==2.2.1
