@@ -8,7 +8,7 @@ pyflakes==2.2.0
 pytest==6.2.4
 pytest-aiohttp==0.3.0
 pytest-cov==2.11.1
-pytest-mock==3.5.1
+pytest-mock==3.6.0
 pytest-sugar==0.9.4
 pytest-toolbox==0.4
 pytest-xdist==2.2.1
