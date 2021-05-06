@@ -6,7 +6,7 @@ arq==0.20
 asyncpg==0.22.0
 buildpg==0.2.3
 cffi==1.14.5
-chevron==0.13.1
+chevron==0.14.0
 click==7.1.2
 dataclasses==0.6
 ipython==7.23.0
