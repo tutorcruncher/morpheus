@@ -155,7 +155,7 @@ async def test_user_list_lots_query_test(cli, settings, send_email):
     assert 'href="?from=100"' in text
 
     url = modify_url('/user/email-test/messages.html', settings, 'testing')
-    r = await cli.get(url + '&from=100&q=foobar')
+    r = await cli.get(url + '&q=foobar&from=100')
     assert r.status == 200, await r.text()
     text = await r.text()
     m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
@@ -163,7 +163,7 @@ async def test_user_list_lots_query_test(cli, settings, send_email):
     assert results == 10
     assert '1 - 100' in text
     assert f'101 - {min(results, 150)}' not in text
-    assert 'href="?from=0&amp;q=foobar"' in text
+    assert 'href="?q=foobar&amp;from=0"' in text
 
 
 async def test_user_aggregate(cli, settings, send_email, db_conn):
