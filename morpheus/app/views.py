@@ -27,6 +27,7 @@ from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.data import JsonLexer
 from time import time
 from typing import Tuple
+from urllib.parse import urlencode
 
 from .ext import Mandrill
 from .models import (
@@ -620,21 +621,25 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         size = 100
         offset = self.get_arg_int('from', 0)
         pagination = {}
+        url_params = {}
+        if q := request.query.get('q'):
+            url_params['q'] = q
         if len(hits) == size:
             next_offset = offset + size
+            url_params['from'] = next_offset
             pagination['next'] = dict(
-                href=f'?from={next_offset}',
+                href='?' + urlencode(url_params),
                 pfrom=next_offset,
                 text=f'{next_offset + 1} - {min(next_offset + size, total)}',
             )
         if offset:
             previous_offset = offset - size
+            url_params['from'] = previous_offset
             pagination['previous'] = dict(
-                href=f'?from={previous_offset}', pfrom=previous_offset, text=f'{previous_offset + 1} - {max(offset, 0)}'
+                href='?' + urlencode(url_params),
+                pfrom=previous_offset,
+                text=f'{previous_offset + 1} - {max(offset, 0)}',
             )
-        if request.query.get('q') is not None and pagination != {}:
-            for direction, sub_dict in pagination.items():
-                sub_dict['href'] += f'&q={request.query.get("q")}'
 
         return dict(
             base_template='user/base-{}.jinja'.format('raw' if self.request.query.get('raw') else 'page'),
