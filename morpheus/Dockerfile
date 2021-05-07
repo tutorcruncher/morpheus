@@ -1,6 +1,6 @@
 # ===============================================
 # python build stage
-FROM python:3.7-slim as build
+FROM python:3.9-slim as build
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc linux-libc-dev libc6-dev libffi-dev
@@ -21,11 +21,11 @@ RUN find /usr -name '*.dist-info'  | xargs rm -r
 
 # ===============================================
 # final image
-FROM python:3.7-slim
+FROM python:3.9-slim
 
 COPY --from=build /usr/local/bin/atoolbox /usr/local/bin/
 COPY --from=build /usr/lib/* /usr/lib/
-COPY --from=build /usr/local/lib/python3.7/site-packages /usr/local/lib/python3.7/site-packages
+COPY --from=build /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
 
 ADD ./app /home/root/app
 
