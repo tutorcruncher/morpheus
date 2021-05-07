@@ -622,7 +622,8 @@ class UserMessageListView(TemplateView, _UserMessagesView):
         offset = self.get_arg_int('from', 0)
         pagination = {}
         url_params = {}
-        if q := request.query.get('q'):
+        q = request.query.get('q')
+        if q:
             url_params['q'] = q
         if len(hits) == size:
             next_offset = offset + size
