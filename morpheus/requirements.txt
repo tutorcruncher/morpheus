@@ -11,7 +11,7 @@ click==7.1.2
 dataclasses==0.6
 ipython==7.23.0
 jinja2==2.11.3
-libsass==0.20.1
+libsass==0.21.0
 misaka==2.1.1
 phonenumbers==8.12.22
 pydantic[email]==1.8.1
