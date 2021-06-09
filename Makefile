@@ -1,58 +1,30 @@
-black = black -S -l 120 --target-version py37 morpheus tests
-isort = isort -w 120 morpheus tests
+black = black -S -l 120 --target-version py38
+isort = isort -w 120
 
 PHONY: install
 install:
 	pip install -U setuptools pip
 	pip install -r requirements.txt
 
-PHONY: format:
-- +isort
-- +black
+.PHONY: format
+format:
+	$(isort) morpheus tests
+	$(black) morpheus tests
 
+.PHONY: lint
 lint:
-- flake8 morpheus tests
-- +isort -- --check-only
-- +black -- --check
-- ./tests/check_debug.sh
+	flake8 morpheus tests
+	$(isort) --check-only morpheus tests
+	$(black) --check morpheus tests
 
+.PHONY: test
 test:
-- pytest --cov=morpheus
+	pytest --cov=morpheus
 
-testcov:
-- +test
-- coverage html
-
-all:
-- +testcov
-- +lint
-
+.PHONY: build
 build:
-- _find morpheus -name '*.py[co]' -delete
-- _find morpheus -name '__pycache__' -delete
-- export C=$(git rev-parse HEAD)
-- export BT=$(date)
-- 'docker build morpheus -t morpheus --build-arg COMMIT=$C --build-arg BUILD_TIME="$BT"'
-
-docker-dev:
-- +build
-- docker build mandrill-mock -t mandrill-mock
-- _echo ================================================================================
-- _echo running locally for development and testing
-- _echo You'll want to run docker-logs in another window see what's going on
-- _echo ================================================================================
-- _echo
-- _echo running docker compose...
-- docker-compose up -d
-
-clean:
-- rm -rf `find . -name __pycache__`
-- rm -f `find . -type f -name '*.py[co]' `
-- rm -f `find . -type f -name '*~' `
-- rm -f `find . -type f -name '.*~' `
-- rm -rf .cache
-- rm -rf htmlcov
-- rm -rf *.egg-info
-- rm -f .coverage
-- rm -f .coverage.*
-- rm -rf build
+	_find morpheus -name '*.py[co]' -delete
+	_find morpheus -name '__pycache__' -delete
+	export C=$(git rev-parse HEAD)
+	export BT=$(date)
+	'docker build morpheus -t morpheus --build-arg COMMIT=$C --build-arg BUILD_TIME="$BT"'
