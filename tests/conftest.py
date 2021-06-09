@@ -23,7 +23,7 @@ def pytest_addoption(parser):
     parser.addoption('--reuse-db', action='store_true', default=False, help='keep the existing database if it exists')
 
 
-pg_settings = dict(pg_dsn='postgres://postgres:waffle@localhost:5432/morpheus_test')
+pg_settings = dict(pg_dsn='postgres://postgres:postgres@localhost:5432/morpheus_test')
 
 
 @pytest.fixture(scope='session', name='clean_db')
