@@ -13,12 +13,15 @@ from urllib.parse import urlencode
 import click
 import requests
 from arq.utils import from_unix_ms, to_unix_ms
+from atoolbox.db import prepare_database
 from pydantic.datetime_parse import parse_datetime
 from pygments import highlight
 from pygments.formatters.terminal256 import Terminal256Formatter
 from pygments.lexers.data import JsonLexer
 from pygments.lexers.html import HtmlLexer
 from requests.auth import HTTPBasicAuth
+
+from morpheus.app.settings import Settings
 
 hostname = os.getenv('APP_HOST_NAME', 'morpheus.example.com')
 root_url = os.getenv('MORPHEUS_URL', f'https://{hostname}')
@@ -249,6 +252,13 @@ def send_sms(recipient_number,
     assert r.status_code == 201, (r.status_code, r.text)
     print(f'time taken: {time() - start:0.3f}')
     print(f'sms sent: {r.text}')
+
+
+@cli.command()
+def reset_database():
+    settings = Settings()
+    if not input('Are you SURE you want to wipe the database? [y/n] ').lower() != 'y':
+        prepare_database(settings, True)
 
 
 if __name__ == '__main__':
