@@ -1,16 +1,16 @@
 import asyncio
+import os
 import pytest
 import re
 import uuid
 from aiohttp.test_utils import teardown_test_loop
 from aioredis import create_redis
 from arq import ArqRedis, Worker
-from atoolbox.db import prepare_database
-from atoolbox.db.helpers import DummyPgPool
 from atoolbox.test_utils import DummyServer, create_dummy_server
 from buildpg import Values, asyncpg
 
 from morpheus.app.main import create_app
+from morpheus.app.management import prepare_database
 from morpheus.app.models import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
 from morpheus.app.views import get_create_company_id
@@ -23,13 +23,13 @@ def pytest_addoption(parser):
     parser.addoption('--reuse-db', action='store_true', default=False, help='keep the existing database if it exists')
 
 
-pg_settings = dict(pg_dsn='postgres://postgres:postgres@localhost:5432/morpheus_test')
+DB_DSN = 'postgresql://postgres@localhost:5432/morpheus_test'
 
 
 @pytest.fixture(scope='session', name='clean_db')
 def _fix_clean_db(request):
     # loop fixture has function scope so can't be used here.
-    settings = Settings(**pg_settings)
+    settings = Settings(pg_dsn=os.getenv('DATABASE_URL', DB_DSN))
     loop = asyncio.new_event_loop()
     loop.run_until_complete(prepare_database(settings, not request.config.getoption('--reuse-db')))
     teardown_test_loop(loop)
@@ -72,7 +72,7 @@ async def _fix_dummy_server(aiohttp_server):
 @pytest.fixture
 def settings(tmpdir, dummy_server: DummyServer):
     return Settings(
-        **pg_settings,
+        pg_dsn=os.getenv('DATABASE_URL', DB_DSN),
         auth_key='testing-key',
         test_output=str(tmpdir),
         pdf_generation_url=dummy_server.server_name + '/generate.pdf',
@@ -92,10 +92,10 @@ def settings(tmpdir, dummy_server: DummyServer):
 @pytest.fixture(name='cli')
 async def _fix_cli(loop, test_client, settings, db_conn, redis):
     async def pre_startup(app):
-        app.update(redis=redis, pg=DummyPgPool(db_conn))
+        app.update(redis=redis)
 
     app = create_app(settings=settings)
-    app.update(pg=DummyPgPool(db_conn), webhook_auth_key=b'testing')
+    app.update(webhook_auth_key=b'testing')
     app.on_startup.insert(0, pre_startup)
     cli = await test_client(app)
     cli.server.app['morpheus_api'].root = f'http://localhost:{cli.server.port}/'
@@ -152,7 +152,7 @@ def send_sms(cli, worker):
 
 @pytest.yield_fixture(name='worker_ctx')
 async def _fix_worker_ctx(settings, db_conn):
-    ctx = dict(settings=settings, pg=DummyPgPool(db_conn))
+    ctx = dict(settings=settings)
     await worker_startup(ctx)
 
     yield ctx

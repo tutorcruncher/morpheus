@@ -2,7 +2,6 @@ import aiohttp_jinja2
 import asyncio
 import jinja2
 import logging
-
 from aiohttp import ClientSession, ClientTimeout
 from aiohttp.web import Application
 from arq import create_pool
@@ -99,7 +98,7 @@ async def extra_cleanup(app):
 
 async def startup(app):
     # TODO: When new version of buildpg and then atoolbox are released, we can get rid of this and use atoolbox.startup
-    settings = Settings()
+    settings = app['settings']
     await prepare_database(settings, False)
     app['pg'] = await create_pool_b(dsn=settings.pg_dsn, min_size=2, record_class=Record)
     app['redis'] = await create_pool(settings.redis_settings)

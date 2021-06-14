@@ -1,10 +1,9 @@
-from urllib.parse import urlparse
-
 from arq.connections import RedisSettings
 from atoolbox import BaseSettings
 from pathlib import Path
 from pydantic import NoneStr
 from typing import List
+from urllib.parse import urlparse
 
 THIS_DIR = Path(__file__).parent.resolve()
 

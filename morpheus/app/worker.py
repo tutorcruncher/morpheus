@@ -13,7 +13,6 @@ from arq import Retry, cron
 from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
 from asyncio import TimeoutError
-
 from asyncpg.protocol import protocol
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError

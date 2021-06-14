@@ -1,11 +1,9 @@
 import asyncio
+import logging
 from async_timeout import timeout
 from buildpg import asyncpg
 
-import logging
-
 from .settings import Settings
-
 
 logger = logging.getLogger('morpheus.main')
 
