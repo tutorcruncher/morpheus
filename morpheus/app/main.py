@@ -6,12 +6,13 @@ import logging
 from aiohttp import ClientSession, ClientTimeout
 from aiohttp.web import Application
 from arq import create_pool
+from asyncpg import Record
 from atoolbox.create_app import cleanup
-from atoolbox.db import prepare_database
 from atoolbox.middleware import error_middleware
 from buildpg.asyncpg import create_pool_b
 
 from .ext import Mandrill, MorpheusUserApi
+from .management import prepare_database
 from .models import SendMethod, SmsSendMethod
 from .settings import Settings
 from .utils import THIS_DIR
@@ -99,9 +100,8 @@ async def extra_cleanup(app):
 async def startup(app):
     # TODO: When new version of buildpg and then atoolbox are released, we can get rid of this and use atoolbox.startup
     settings = Settings()
-    logger.info('Accessing db with settings %s %r' % (settings.pg_dsn, settings.pg_dsn.rsplit('/', 1)))
     await prepare_database(settings, False)
-    app['pg'] = await create_pool_b(dsn=settings.pg_dsn, min_size=2)
+    app['pg'] = await create_pool_b(dsn=settings.pg_dsn, min_size=2, record_class=Record)
     app['redis'] = await create_pool(settings.redis_settings)
 
     if getattr(settings, 'create_http_client', False):
