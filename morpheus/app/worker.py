@@ -139,6 +139,7 @@ class UpdateStatus(str, Enum):
 
 async def startup(ctx):
     settings = ctx.get('settings') or Settings()
+    main_logger.info('Starting db with pg settings: %r', settings._pg_dsn_parsed)
     ctx.update(
         settings=settings,
         email_click_url=f'https://{settings.click_host_name}/l',
