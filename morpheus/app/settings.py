@@ -58,6 +58,26 @@ class Settings(BaseSettings):
             host=conf.hostname, port=conf.port, password=conf.password, database=int((conf.path or '0').strip('/'))
         )
 
+    @property
+    def _pg_dsn_parsed(self):
+        return urlparse(self.pg_dsn)
+
+    @property
+    def pg_name(self):
+        return self._pg_dsn_parsed.path.lstrip('/')
+
+    @property
+    def pg_password(self):
+        return self._pg_dsn_parsed.password or None
+
+    @property
+    def pg_host(self):
+        return self._pg_dsn_parsed.hostname
+
+    @property
+    def pg_port(self):
+        return self._pg_dsn_parsed.port
+
     class Config:
         fields = {
             'port': {'env': 'PORT'},
