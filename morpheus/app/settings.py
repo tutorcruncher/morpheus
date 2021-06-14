@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from arq.connections import RedisSettings
 from atoolbox import BaseSettings
 from pathlib import Path
@@ -10,16 +12,15 @@ THIS_DIR = Path(__file__).parent.resolve()
 class Settings(BaseSettings):
     create_app = 'app.main.create_app'
     worker_func = 'app.worker.run_worker'
-    redis_settings: RedisSettings = 'redis://localhost:6379'
-    pg_dsn = 'postgres://postgres:waffle@localhost:5432/morpheus'
+    redis_url = 'redis://localhost:6379'
+    pg_dsn = 'postgres://postgres:postgres@localhost:5432/morpheus'
     sql_path: Path = THIS_DIR / 'models.sql'
     patch_paths: List[str] = ['app.patches']
 
     cookie_name = 'morpheus'
     auth_key = 'testing'
-    locale = ''
 
-    deploy_name = 'testing'
+    locale = ''  # Required, don't delete
     host_name: NoneStr = 'localhost'
     click_host_name = 'click.example.com'
     mandrill_key = ''
@@ -50,12 +51,22 @@ class Settings(BaseSettings):
     # https://support.messagebird.com/hc/en-us/articles/208747865-United-States
     us_send_number = '15744445663'
 
+    @property
+    def redis_settings(self):
+        conf = urlparse(self.redis_url)
+        return RedisSettings(
+            host=conf.hostname, port=conf.port, password=conf.password, database=int((conf.path or '0').strip('/'))
+        )
+
     class Config:
-        env_prefix = 'APP_'
         fields = {
             'port': {'env': 'PORT'},
-            'pg_dsn': {'env': 'APP_PG_DSN'},
-            'redis_settings': {'env': 'APP_REDIS_SETTINGS'},
+            'pg_dsn': {'env': 'DATABASE_URL'},
+            'redis_url': {'env': 'REDIS_URL'},
             'commit': {'env': 'COMMIT'},
             'build_time': {'env': 'BUILD_TIME'},
+            'messagebird_key': {'env': 'MESSAGEBIRD_KEY'},
+            'stats_token': {'env': 'STATS_TOKEN'},
+            'click_host_name': {'env': 'CLICK_HOST_NAME'},
+            'sentry_dsn': {'env': 'SENTRY_DSN'},
         }
