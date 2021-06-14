@@ -2,9 +2,14 @@ import aiohttp_jinja2
 import asyncio
 import jinja2
 import logging
+
+from aiohttp import ClientSession, ClientTimeout
 from aiohttp.web import Application
-from atoolbox.create_app import cleanup, startup
+from arq import create_pool
+from atoolbox.create_app import cleanup
+from atoolbox.db import prepare_database
 from atoolbox.middleware import error_middleware
+from buildpg.asyncpg import create_pool_b
 
 from .ext import Mandrill, MorpheusUserApi
 from .models import SendMethod, SmsSendMethod
@@ -89,6 +94,18 @@ async def extra_startup(app):
 
 async def extra_cleanup(app):
     await asyncio.gather(app['morpheus_api'].close(), app['mandrill'].close())
+
+
+async def startup(app):
+    # TODO: When new version of buildpg and then atoolbox are released, we can get rid of this and use atoolbox.startup
+    settings = Settings()
+    await prepare_database(settings, False)
+    app['pg'] = await create_pool_b(dsn=settings.pg_dsn, min_size=2)
+    app['redis'] = await create_pool(settings.redis_settings)
+
+    if getattr(settings, 'create_http_client', False):
+        timeout = getattr(settings, 'http_client_timeout', 30)
+        app['http_client'] = ClientSession(timeout=ClientTimeout(total=timeout))
 
 
 def create_app(settings: Settings = None):

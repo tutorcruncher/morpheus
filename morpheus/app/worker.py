@@ -13,6 +13,8 @@ from arq import Retry, cron
 from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
 from asyncio import TimeoutError
+
+from asyncpg.protocol import protocol
 from buildpg import MultipleValues, Values, asyncpg
 from chevron import ChevronError
 from datetime import datetime, timezone
@@ -139,12 +141,11 @@ class UpdateStatus(str, Enum):
 
 async def startup(ctx):
     settings = ctx.get('settings') or Settings()
-    main_logger.info('Starting db with pg settings: %r', settings._pg_dsn_parsed)
     ctx.update(
         settings=settings,
         email_click_url=f'https://{settings.click_host_name}/l',
         sms_click_url=f'{settings.click_host_name}/l',
-        pg=ctx.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=2),
+        pg=ctx.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=2, record_class=protocol.Record),
         session=ClientSession(timeout=ClientTimeout(total=30)),
         mandrill=Mandrill(settings=settings),
         messagebird=MessageBird(settings=settings),
