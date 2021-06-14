@@ -1,0 +1,4 @@
+build:
+  docker:
+    web: morpheus/Dockerfile
+    worker: morpheus/Dockerfile
