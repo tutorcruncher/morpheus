@@ -99,6 +99,7 @@ async def extra_cleanup(app):
 async def startup(app):
     # TODO: When new version of buildpg and then atoolbox are released, we can get rid of this and use atoolbox.startup
     settings = Settings()
+    logger.info('Accessing db with settings %s %r' % (settings.pg_dsn, settings.pg_dsn.rsplit('/', 1)))
     await prepare_database(settings, False)
     app['pg'] = await create_pool_b(dsn=settings.pg_dsn, min_size=2)
     app['redis'] = await create_pool(settings.redis_settings)
