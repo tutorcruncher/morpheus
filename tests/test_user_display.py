@@ -10,7 +10,7 @@ from operator import itemgetter
 from pytest_toolbox.comparison import RegexStr
 from urllib.parse import urlencode
 
-from morpheus.app.models import MessageStatus
+from morpheus.app.schema import MessageStatus
 from morpheus.app.worker import update_aggregation_view
 
 

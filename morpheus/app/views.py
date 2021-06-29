@@ -30,7 +30,7 @@ from typing import Tuple
 from urllib.parse import urlencode
 
 from .ext import Mandrill
-from .models import (
+from .schema import (
     EmailSendModel,
     MandrillSingleWebhook,
     MessageBirdWebHook,

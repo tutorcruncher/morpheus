@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from morpheus.app.ext import ApiError
 from morpheus.app.main import create_app, get_mandrill_webhook_key
-from morpheus.app.models import EmailRecipientModel
+from morpheus.app.schema import EmailRecipientModel
 from morpheus.app.worker import email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()

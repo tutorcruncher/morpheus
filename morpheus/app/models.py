@@ -1,257 +1,88 @@
-import json
-import re
-from datetime import date, datetime, timezone
-from enum import Enum
-from pathlib import Path
-from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
-from pydantic.validators import str_validator
-from typing import Dict, List
-from uuid import UUID
+from sqlalchemy import Column, ForeignKey, Integer, func, VARCHAR, Index, Enum, TEXT, Float
+from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP, ARRAY, JSONB, TSVECTOR
+from sqlalchemy.orm import relationship
 
-THIS_DIR = Path(__file__).parent.resolve()
+from .management import Base
+from .schema import SendMethod, MessageStatus
 
 
-class BaseModel(_BaseModel):
-    def __setstate__(self, state):
-        if '__values__' in state:
-            object.__setattr__(self, '__dict__', state['__values__'])
-        else:
-            object.__setattr__(self, '__dict__', state['__dict__'])
-        object.__setattr__(self, '__fields_set__', state['__fields_set__'])
+class Company(Base):
+    __tablename__ = 'companies'
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(VARCHAR(63), unique=True, nullable=False)
 
 
-class SendMethod(str, Enum):
-    """
-    Should match SEND_METHODS sql enum
-    """
+class MessageGroup(Base):
+    __tablename__ = 'message_groups'
 
-    email_mandrill = 'email-mandrill'
-    email_ses = 'email-ses'
-    email_test = 'email-test'
-    sms_messagebird = 'sms-messagebird'
-    sms_test = 'sms-test'
+    id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(UUID, nullable=False)
+    company_id = Column(Integer, ForeignKey('companies.id'), index=True)
+    message_method = Column(Enum(SendMethod), nullable=False, index=True)
+    created_ts = Column(TIMESTAMP, nullable=False, default=func.now(), index=True)
+    from_email = Column(VARCHAR(255))
+    from_name = Column(VARCHAR(255))
 
+    company = relationship(Company, back_populates='message_groups')
 
-class EmailSendMethod(str, Enum):
-    email_mandrill = 'email-mandrill'
-    email_ses = 'email-ses'
-    email_test = 'email-test'
-
-
-class SmsSendMethod(str, Enum):
-    sms_messagebird = 'sms-messagebird'
-    sms_test = 'sms-test'
+    Index('message_group_company_method', 'company_id', 'message_method')
+    Index('message_group_uuid', 'uuid', unique=True)
 
 
-class MandrillMessageStatus(str, Enum):
-    """
-    compatible with mandrill webhook event field
-    https://mandrill.zendesk.com/hc/en-us/articles/205583307-Message-Event-Webhook-format
-    """
+class Message(Base):
+    __tablename__ = 'messages'
 
-    send = 'send'
-    deferral = 'deferral'
-    hard_bounce = 'hard_bounce'
-    soft_bounce = 'soft_bounce'
-    open = 'open'
-    click = 'click'
-    spam = 'spam'
-    unsub = 'unsub'
-    reject = 'reject'
+    id = Column(Integer, primary_key=True, index=True)
+    external_id = Column(VARCHAR(255), nullable=False, index=True)
+    group_id = Column(Integer, ForeignKey('message_groups.id', ondelete='CASCADE'), nullable=False)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), index=True, nullable=False)
 
+    method = Column(Enum(SendMethod), nullable=False)
+    send_ts = Column(TIMESTAMP, nullable=False, default=func.now())
+    update_ts = Column(TIMESTAMP, nullable=False, default=func.now())
+    status = Column(Enum(MessageStatus), default=MessageStatus.send, nullable=False)
+    to_first_name = Column(VARCHAR(255))
+    to_last_name = Column(VARCHAR(255))
+    to_user_link = Column(VARCHAR(255))
+    to_address = Column(VARCHAR(255))
+    tags = Column(ARRAY(VARCHAR(255)))
+    subject = Column(TEXT)
+    body = Column(TEXT)
+    attachments = Column(ARRAY(VARCHAR(255)))
+    cost = Column(Float)
+    extra = Column(JSONB)
+    vector = Column(TSVECTOR, nullable=False)
 
-class MessageBirdMessageStatus(str, Enum):
-    """
-    https://developers.messagebird.com/docs/messaging#messaging-dlr
-    """
+    company = relationship(Company, back_populates='messages')
+    group = relationship(MessageGroup, back_populates='messages')
 
-    scheduled = 'scheduled'
-    send = 'send'
-    buffered = 'buffered'
-    delivered = 'delivered'
-    expired = 'expired'
-    delivery_failed = 'delivery_failed'
-
-
-class MessageStatus(str, Enum):
-    """
-    Combined MandrillMessageStatus and MessageBirdMessageStatus
-
-    Should match MESSAGE_STATUSES sql enum
-    """
-
-    render_failed = 'render_failed'
-    send_request_failed = 'send_request_failed'
-
-    send = 'send'
-    deferral = 'deferral'
-    hard_bounce = 'hard_bounce'
-    soft_bounce = 'soft_bounce'
-    open = 'open'
-    click = 'click'
-    spam = 'spam'
-    unsub = 'unsub'
-    reject = 'reject'
-
-    # used for sms
-    scheduled = 'scheduled'
-    # send = 'send'  # above
-    buffered = 'buffered'
-    delivered = 'delivered'
-    expired = 'expired'
-    delivery_failed = 'delivery_failed'
+    Index('message_group_id_send_ts', 'group_id', 'send_ts')
+    Index('message_send_ts', 'send_ts desc', 'method', 'company_id')
+    Index('message_update_ts', 'update_ts desc')
+    Index('message_tags', 'tags', 'method', 'company_id', postgresql_using='gin')
+    Index('message_vector', 'vector', 'method', 'company_id', postgresql_using='gin')
+    Index('message_company_method', 'method', 'company_id', 'id')
 
 
-class PDFAttachmentModel(BaseModel):
-    name: str
-    html: str
-    id: int = None
+class Event(Base):
+    __tablename__ = 'events'
 
-    class Config:
-        max_anystr_length = int(1e7)
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), index=True)
+    status = Column(Enum(MessageStatus), default=MessageStatus.send, nullable=False)
+    ts = Column(TIMESTAMP, nullable=False, default=func.now())
+    extra = Column(JSONB)
 
-
-class AttachmentModel(BaseModel):
-    name: str
-    mime_type: str
-    content: bytes
+    message = relationship(Message, back_populates='events')
 
 
-class EmailRecipientModel(BaseModel):
-    first_name: str = None
-    last_name: str = None
-    user_link: str = None
-    address: str = ...
-    tags: List[str] = []
-    context: dict = {}
-    headers: dict = {}
-    pdf_attachments: List[PDFAttachmentModel] = []
-    attachments: List[AttachmentModel] = []
+class Link(Base):
+    __tablename__ = 'links'
 
-    class Config:
-        max_anystr_length = int(1e7)
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'))
+    token = Column(VARCHAR(31))
+    url = Column(TEXT)
 
-
-class EmailSendModel(BaseModel):
-    uid: UUID
-    main_template: str = (THIS_DIR / 'extra' / 'default-email-template.mustache').read_text()
-    mustache_partials: Dict[str, str] = None
-    macros: Dict[str, str] = None
-    subject_template: str = ...
-    company_code: str = ...
-    from_address: NameEmail = ...
-    method: EmailSendMethod = ...
-    subaccount: str = None
-    tags: List[str] = []
-    context: dict = {}
-    headers: dict = {}
-    important = False
-    recipients: List[EmailRecipientModel] = ...
-
-
-class SubaccountModel(BaseModel):
-    company_code: str = ...
-    company_name: str = None
-
-
-class SmsRecipientModel(BaseModel):
-    first_name: str = None
-    last_name: str = None
-    user_link: str = None
-    number: str = ...
-    tags: List[str] = []
-    context: dict = {}
-
-
-class SmsSendModel(BaseModel):
-    uid: constr(min_length=20, max_length=40)
-    main_template: str
-    company_code: str
-    cost_limit: float = None
-    country_code: constr(min_length=2, max_length=2) = 'GB'
-    from_name: constr(min_length=1, max_length=11) = 'Morpheus'
-    method: SmsSendMethod = ...
-    tags: List[str] = []
-    context: dict = {}
-    recipients: List[SmsRecipientModel] = ...
-
-
-class SmsNumbersModel(BaseModel):
-    numbers: Dict[int, str]
-    country_code: constr(min_length=2, max_length=2) = 'GB'
-
-
-class SmsBillingModel(BaseModel):
-    start: date
-    end: date
-
-
-class BaseWebhook(BaseModel):
-    ts: datetime
-    status: MessageStatus
-    message_id: str
-
-    def extra_json(self, sort_keys=False):
-        raise NotImplementedError()
-
-    @validator('ts')
-    def add_tz(cls, v):
-        if v and not v.tzinfo:
-            return v.replace(tzinfo=timezone.utc)
-        return v
-
-
-ID_REGEX = re.compile(r'[/<>= ]')
-
-
-class IDStr(str):
-    @classmethod
-    def get_validators(cls):
-        yield str_validator
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, value: str) -> str:
-        return ID_REGEX.sub('', value)
-
-
-class MandrillSingleWebhook(BaseWebhook):
-    ts: datetime
-    status: MandrillMessageStatus
-    message_id: IDStr
-    user_agent: str = None
-    location: dict = None
-    msg: dict = {}
-
-    def extra_json(self, sort_keys=False):
-        return json.dumps(
-            {
-                'user_agent': self.user_agent,
-                'location': self.location,
-                **{f: self.msg.get(f) for f in self.__config__.msg_fields},
-            },
-            sort_keys=sort_keys,
-        )
-
-    class Config:
-        ignore_extra = True
-        fields = {'message_id': '_id', 'status': 'event'}
-        msg_fields = ('bounce_description', 'clicks', 'diag', 'reject', 'opens', 'resends', 'smtp_events', 'state')
-
-
-class MandrillWebhook(BaseModel):
-    events: List[MandrillSingleWebhook]
-
-
-class MessageBirdWebHook(BaseWebhook):
-    ts: datetime
-    status: MessageBirdMessageStatus
-    message_id: IDStr
-    error_code: str = None
-
-    def extra_json(self, sort_keys=False):
-        return json.dumps({'error_code': self.error_code} if self.error_code else {}, sort_keys=sort_keys)
-
-    class Config:
-        ignore_extra = True
-        fields = {'message_id': 'id', 'ts': 'statusDatetime', 'error_code': 'statusErrorCode'}
+    message = relationship(Message, back_populates='links')

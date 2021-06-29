@@ -1,98 +1,85 @@
-import asyncio
 import logging
-from async_timeout import timeout
-from buildpg import asyncpg
+from contextlib import contextmanager
+from time import sleep
+
+import psycopg2
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .settings import Settings
 
-logger = logging.getLogger('morpheus.main')
+settings = Settings()
+logger = logging.getLogger('tc-hubspot')
 
 
-async def lenient_conn(settings: Settings):
-    for retry in range(8, -1, -1):
-        try:
-            async with timeout(2):
-                conn = await asyncpg.connect_b(dsn=settings.pg_dsn)
-        except (asyncpg.PostgresError, OSError) as e:
-            if retry == 0:
-                raise
-            else:
-                logger.warning('pg temporary connection error "%s", %d retries remaining...', e, retry)
-                await asyncio.sleep(1)
+engine = create_engine(settings.pg_dsn)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+Base.metadata.create_all(bind=engine)
+
+
+def lenient_connection(settings: Settings, retries=5):
+    try:
+        return psycopg2.connect(dsn=settings.pg_dsn, password=settings.pg_password)
+    except psycopg2.Error as e:
+        if retries <= 0:
+            raise
         else:
-            log = logger.debug if retry == 8 else logger.info
-            log('pg connection successful, version: %s', await conn.fetchval('SELECT version()'))
-            return conn
+            logger.warning('%s: %s (%d retries remaining)', e.__class__.__name__, e, retries)
+            sleep(1)
+            return lenient_connection(settings, retries=retries - 1)
+
+
+@contextmanager
+def psycopg2_cursor(settings):
+    conn = lenient_connection(settings)
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    yield cur
+
+    cur.close()
+    conn.close()
+
+
+def populate_db(engine):
+    Base.metadata.create_all(engine)
 
 
 DROP_CONNECTIONS = """
-select pg_terminate_backend(pg_stat_activity.pid)
-from pg_stat_activity
-where pg_stat_activity.datname = $1 AND pid <> pg_backend_pid();
+SELECT pg_terminate_backend(pg_stat_activity.pid)
+FROM pg_stat_activity
+WHERE pg_stat_activity.datname = %s AND pid <> pg_backend_pid();
 """
 
 
-async def prepare_database(settings: Settings, overwrite_existing: bool) -> bool:  # noqa: C901 (ignore complexity)
+def prepare_database(delete_existing: bool) -> bool:
     """
     (Re)create a fresh database and run migrations.
-    :param settings: settings to use for db connection
-    :param overwrite_existing: whether or not to drop an existing database if it exists
-    :return: whether or not a database has been (re)created
+    :param delete_existing: whether or not to drop an existing database if it exists
+    :return: whether or not a database as (re)created
     """
-    if settings.pg_db_exists:
-        conn = await lenient_conn(settings)
-        try:
-            tables = await conn.fetchval("select count(*) from information_schema.tables where table_schema='public'")
-            logger.info('existing tables: %d', tables)
-            if tables > 0:
-                if overwrite_existing:
-                    logger.debug('database already exists...')
-                else:
-                    logger.debug('database already exists ✓')
-                    return False
-        finally:
-            await conn.close()
-    else:
-        conn = await lenient_conn(settings)
-        try:
-            if not overwrite_existing:
-                # don't drop connections and try creating a db if it already exists and we're not overwriting
-                exists = await conn.fetchval('select 1 from pg_database where datname=$1', settings.pg_name)
-                if exists:
-                    return False
-
-            await conn.execute(DROP_CONNECTIONS, settings.pg_name)
-            logger.debug('attempting to create database "%s"...', settings.pg_name)
-            try:
-                await conn.execute('create database {}'.format(settings.pg_name))
-            except (asyncpg.DuplicateDatabaseError, asyncpg.UniqueViolationError):
-                if overwrite_existing:
-                    logger.debug('database already exists...')
-                else:
-                    logger.debug('database already exists, skipping creation')
-                    return False
+    with psycopg2_cursor(settings) as cur:
+        cur.execute('SELECT EXISTS (SELECT datname FROM pg_catalog.pg_database WHERE datname=%s)', (settings.pg_name,))
+        already_exists = bool(cur.fetchone()[0])
+        if already_exists:
+            if not delete_existing:
+                print(f'database "{settings.pg_name}" already exists, not recreating it')
+                return False
             else:
-                logger.debug('database did not exist, now created')
+                print(f'dropping existing connections to "{settings.pg_name}"...')
+                cur.execute(DROP_CONNECTIONS, (settings.pg_name,))
 
-            logger.debug('settings db timezone to utc...')
-            await conn.execute(f"alter database {settings.pg_name} set timezone to 'UTC';")
-        finally:
-            await conn.close()
+                logger.debug('dropping and re-creating the schema...')
+                cur.execute('drop schema public cascade;\ncreate schema public;')
+        else:
+            print(f'database "{settings.pg_name}" does not yet exist, creating')
+            cur.execute(f'CREATE DATABASE {settings.pg_name}')
 
-    logger.debug('dropping and re-creating teh schema...')
-    conn = await asyncpg.connect(dsn=settings.pg_dsn)
-    try:
-        async with conn.transaction():
-            await conn.execute('drop schema public cascade;\ncreate schema public;')
-    finally:
-        await conn.close()
-
-    logger.debug('creating tables from model definition...')
-    conn = await asyncpg.connect(dsn=settings.pg_dsn)
-    try:
-        async with conn.transaction():
-            await conn.execute(settings.sql)
-    finally:
-        await conn.close()
-    logger.info('database successfully setup ✓')
+    engine = create_engine(settings.pg_dsn)
+    print('creating tables from model definition...')
+    populate_db(engine)
+    engine.dispose()
+    print('db and tables creation finished.')
     return True

@@ -11,7 +11,7 @@ from buildpg import Values, asyncpg
 
 from morpheus.app.main import create_app
 from morpheus.app.management import prepare_database
-from morpheus.app.models import EmailSendModel, SendMethod
+from morpheus.app.schema import EmailSendModel, SendMethod
 from morpheus.app.settings import Settings
 from morpheus.app.views import get_create_company_id
 from morpheus.app.worker import startup as worker_startup, worker_functions

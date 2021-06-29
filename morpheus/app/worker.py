@@ -35,7 +35,7 @@ from typing import Dict, List, Optional
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from .ext import ApiError, Mandrill, MessageBird
-from .models import (
+from .schema import (
     THIS_DIR,
     AttachmentModel,
     BaseWebhook,

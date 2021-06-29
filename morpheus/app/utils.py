@@ -22,7 +22,7 @@ from pydantic import BaseModel, ValidationError
 from typing import Dict, Optional, Type, TypeVar
 
 from .ext import ApiError
-from .models import SendMethod
+from .schema import SendMethod
 from .settings import Settings
 
 THIS_DIR = Path(__file__).parent.resolve()

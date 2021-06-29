@@ -12,7 +12,7 @@ from buildpg.asyncpg import create_pool_b
 
 from .ext import Mandrill, MorpheusUserApi
 from .management import prepare_database
-from .models import SendMethod, SmsSendMethod
+from .schema import SendMethod, SmsSendMethod
 from .settings import Settings
 from .utils import THIS_DIR
 from .views import (
