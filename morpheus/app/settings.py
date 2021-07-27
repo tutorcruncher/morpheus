@@ -1,18 +1,14 @@
-from arq.connections import RedisSettings
-from atoolbox import BaseSettings
 from pathlib import Path
+
+from foxglove import BaseSettings
 from pydantic import NoneStr
 from typing import List
-from urllib.parse import urlparse
 
 THIS_DIR = Path(__file__).parent.resolve()
 
 
 class Settings(BaseSettings):
-    create_app = 'app.main.create_app'
-    worker_func = 'app.worker.run_worker'
-    redis_url = 'redis://localhost:6379'
-    pg_dsn = 'postgres://postgres:postgres@localhost:5432/morpheus'
+    pg_dsn = 'postgresql://postgres@localhost:5432/morpheus'
     sql_path: Path = THIS_DIR / 'models.sql'
     patch_paths: List[str] = ['app.patches']
 
@@ -25,12 +21,8 @@ class Settings(BaseSettings):
     mandrill_key = ''
     mandrill_url = 'https://mandrillapp.com/api/1.0'
     mandrill_timeout = 30.0
-    raven_dsn: str = None
     log_level = 'INFO'
     verbose_http_errors = True
-    commit = 'unknown'
-    build_time = 'unknown'
-    release_date = 'unknown'
     user_auth_key: bytes = b'insecure'
     admin_basic_auth_password = 'testing'
     test_output: Path = None
@@ -51,41 +43,17 @@ class Settings(BaseSettings):
     us_send_number = '15744445663'
 
     @property
-    def redis_settings(self):
-        conf = urlparse(self.redis_url)
-        return RedisSettings(
-            host=conf.hostname, port=conf.port, password=conf.password, database=int((conf.path or '0').strip('/'))
-        )
-
-    @property
-    def _pg_dsn_parsed(self):
-        return urlparse(self.pg_dsn)
-
-    @property
-    def pg_name(self):
-        return self._pg_dsn_parsed.path.lstrip('/')
-
-    @property
-    def pg_password(self):
-        return self._pg_dsn_parsed.password or None
-
-    @property
-    def pg_host(self):
-        return self._pg_dsn_parsed.hostname
-
-    @property
-    def pg_port(self):
-        return self._pg_dsn_parsed.port
+    def mandrill_webhook_url(self):
+        return f'https://{self.host_name}/webhook/mandrill/'
 
     class Config:
         fields = {
             'port': {'env': 'PORT'},
             'pg_dsn': {'env': 'DATABASE_URL'},
-            'redis_url': {'env': 'REDIS_URL'},
-            'commit': {'env': 'COMMIT'},
-            'build_time': {'env': 'BUILD_TIME'},
+            'redis_settings': {'env': ['REDISCLOUD_URL', 'REDIS_URL']},
+            'sentry_dsn': {'env': 'SENTRY_DSN'},
+            'release': {'env': ['COMMIT', 'RELEASE', 'HEROKU_SLUG_COMMIT']},
             'messagebird_key': {'env': 'MESSAGEBIRD_KEY'},
             'stats_token': {'env': 'STATS_TOKEN'},
             'click_host_name': {'env': 'CLICK_HOST_NAME'},
-            'sentry_dsn': {'env': 'SENTRY_DSN'},
         }

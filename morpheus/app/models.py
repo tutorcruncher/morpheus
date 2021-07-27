@@ -1,6 +1,6 @@
-from sqlalchemy import Column, ForeignKey, Integer, func, VARCHAR, Index, Enum, TEXT, Float
+from sqlalchemy import Column, ForeignKey, Integer, func, VARCHAR, Index, Enum, TEXT, Float, event
 from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP, ARRAY, JSONB, TSVECTOR
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 
 from .management import Base
 from .schema import SendMethod, MessageStatus
@@ -63,6 +63,34 @@ class Message(Base):
     Index('message_tags', 'tags', 'method', 'company_id', postgresql_using='gin')
     Index('message_vector', 'vector', 'method', 'company_id', postgresql_using='gin')
     Index('message_company_method', 'method', 'company_id', 'id')
+
+    @property
+    def details(self):
+        yield 'ID', self.external_id
+        yield 'Status', self.status.title()
+
+        dst = f'{self.to_first_name or ""} {self.to_last_name or ""} <{self.to_address}>'.strip(' ')
+        if self.to_user_link:
+            yield 'To', dict(href=self.to_user_link, value=dst)
+        else:
+            yield 'To', dst
+
+        yield 'Subject', self.subject
+        # could do with using prettier timezones here
+        yield 'Send Time', {'class': 'datetime', 'value': self.send_ts}
+        yield 'Last Updated', {'class': 'datetime', 'value': self.update_ts}
+
+    def get_attachments(self):
+        if self.attachments:
+            for a in self.attachments:
+                name = None
+                try:
+                    doc_id, name = a.split('::')
+                    doc_id = int(doc_id)
+                except ValueError:
+                    yield '#', name or a
+                else:
+                    yield f'/attachment-doc/{doc_id}/', name
 
 
 class Event(Base):

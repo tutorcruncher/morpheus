@@ -1,8 +1,5 @@
 import logging
-from contextlib import contextmanager
-from time import sleep
-
-import psycopg2
+from foxglove.db.main import prepare_database as fox_prepare_database, lenient_conn
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -12,74 +9,115 @@ settings = Settings()
 logger = logging.getLogger('tc-hubspot')
 
 
-engine = create_engine(settings.pg_dsn)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-Base.metadata.create_all(bind=engine)
-
-
-def lenient_connection(settings: Settings, retries=5):
-    try:
-        return psycopg2.connect(dsn=settings.pg_dsn, password=settings.pg_password)
-    except psycopg2.Error as e:
-        if retries <= 0:
-            raise
-        else:
-            logger.warning('%s: %s (%d retries remaining)', e.__class__.__name__, e, retries)
-            sleep(1)
-            return lenient_connection(settings, retries=retries - 1)
-
-
-@contextmanager
-def psycopg2_cursor(settings):
-    conn = lenient_connection(settings)
-    conn.autocommit = True
-    cur = conn.cursor()
-
-    yield cur
-
-    cur.close()
-    conn.close()
-
-
-def populate_db(engine):
-    Base.metadata.create_all(engine)
-
-
-DROP_CONNECTIONS = """
-SELECT pg_terminate_backend(pg_stat_activity.pid)
-FROM pg_stat_activity
-WHERE pg_stat_activity.datname = %s AND pid <> pg_backend_pid();
-"""
-
-
-def prepare_database(delete_existing: bool) -> bool:
+async def prepare_database(settings: Settings, delete_existing: bool):
     """
     (Re)create a fresh database and run migrations.
     :param delete_existing: whether or not to drop an existing database if it exists
     :return: whether or not a database as (re)created
     """
-    with psycopg2_cursor(settings) as cur:
-        cur.execute('SELECT EXISTS (SELECT datname FROM pg_catalog.pg_database WHERE datname=%s)', (settings.pg_name,))
-        already_exists = bool(cur.fetchone()[0])
-        if already_exists:
-            if not delete_existing:
-                print(f'database "{settings.pg_name}" already exists, not recreating it')
-                return False
-            else:
-                print(f'dropping existing connections to "{settings.pg_name}"...')
-                cur.execute(DROP_CONNECTIONS, (settings.pg_name,))
+    await fox_prepare_database(settings, delete_existing)
+    async with lenient_conn(settings, with_db=True) as conn:
+        await conn.execute(UPDATE_MESSAGE_TRIGGER)
+        await conn.execute(MESSAGE_VECTOR_TRIGGER)
+        await conn.execute(DT_FUNCTIONS)
+        await conn.execute(AGGREGATION_VIEW)
 
-                logger.debug('dropping and re-creating the schema...')
-                cur.execute('drop schema public cascade;\ncreate schema public;')
-        else:
-            print(f'database "{settings.pg_name}" does not yet exist, creating')
-            cur.execute(f'CREATE DATABASE {settings.pg_name}')
 
-    engine = create_engine(settings.pg_dsn)
-    print('creating tables from model definition...')
-    populate_db(engine)
-    engine.dispose()
-    print('db and tables creation finished.')
-    return True
+prepare_database(settings, False)
+asyncio.get_event_loop().create_task()
+
+
+engine = create_engine(settings.pg_dsn)
+SessionLocal = sessionmaker(bind=engine)
+
+Base = declarative_base()
+Base.metadata.create_all(bind=engine)
+
+
+UPDATE_MESSAGE_TRIGGER = """
+CREATE OR REPLACE FUNCTION update_message() RETURNS trigger AS $$
+  DECLARE
+    current_update_ts timestamptz;
+  BEGIN
+    select update_ts into current_update_ts from messages where id=new.message_id;
+    if new.ts > current_update_ts then
+      update messages set update_ts=new.ts, status=new.status where id=new.message_id;
+    end if;
+    return null;
+  END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_message ON events;
+CREATE TRIGGER update_message AFTER INSERT ON events FOR EACH ROW EXECUTE PROCEDURE update_message();
+"""
+
+
+MESSAGE_VECTOR_TRIGGER = """
+CREATE OR REPLACE FUNCTION set_message_vector() RETURNS trigger AS $$
+  BEGIN
+    RAISE NOTICE '%', NEW.external_id;
+    NEW.vector := setweight(to_tsvector(coalesce(NEW.external_id, '')), 'A') ||
+                  setweight(to_tsvector(coalesce(NEW.to_first_name, '')), 'A') ||
+                  setweight(to_tsvector(coalesce(NEW.to_last_name, '')), 'A') ||
+                  setweight(to_tsvector(coalesce(NEW.to_address, '')), 'A') ||
+                  setweight(to_tsvector(coalesce(NEW.subject, '')), 'B') ||
+                  setweight(to_tsvector(coalesce(array_to_string(NEW.tags, ' '), '')), 'B') ||
+                  setweight(to_tsvector(coalesce(array_to_string(NEW.attachments, ' '), '')), 'C') ||
+                  setweight(to_tsvector(coalesce(NEW.body, '')), 'D');
+    return NEW;
+  END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS create_tsvector ON messages;
+CREATE TRIGGER create_tsvector BEFORE INSERT ON messages FOR EACH ROW EXECUTE PROCEDURE set_message_vector();
+"""
+
+
+DT_FUNCTIONS = """
+CREATE OR REPLACE FUNCTION iso_ts(v TIMESTAMPTZ, tz VARCHAR(63)) RETURNS VARCHAR(63) AS $$
+  DECLARE
+  BEGIN
+    PERFORM set_config('timezone', tz, true);
+    return to_char(v, 'YYYY-MM-DD"T"HH24:MI:SSOF');
+  END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION pretty_ts(v TIMESTAMPTZ, tz VARCHAR(63)) RETURNS VARCHAR(63) AS $$
+  DECLARE
+  BEGIN
+    PERFORM set_config('timezone', tz, true);
+    return to_char(v, 'Dy YYYY-MM-DD HH24:MI TZ');
+  END;
+$$ LANGUAGE plpgsql;
+"""
+
+AGGREGATION_VIEW = """
+DROP materialized view IF EXISTS message_aggregation;
+CREATE materialized view message_aggregation AS (
+  SELECT company_id, method, status, date::date, COUNT(*)
+  FROM (
+    SELECT company_id, method, status, date_trunc('day', send_ts) AS date
+    FROM messages
+    WHERE send_ts > current_timestamp::date - '90 days'::interval
+  ) AS t
+  GROUP BY company_id, method, status, date
+  ORDER BY company_id, method, status, date DESC
+);
+
+create index if not exists message_aggregation_method_company on message_aggregation using btree (method, company_id);
+"""
+
+
+async def prepare_database(settings: Settings, delete_existing: bool):
+    """
+    (Re)create a fresh database and run migrations.
+    :param delete_existing: whether or not to drop an existing database if it exists
+    :return: whether or not a database as (re)created
+    """
+    await fox_prepare_database(settings, delete_existing)
+    async with lenient_conn(settings, with_db=True) as conn:
+        await conn.execute(UPDATE_MESSAGE_TRIGGER)
+        await conn.execute(MESSAGE_VECTOR_TRIGGER)
+        await conn.execute(DT_FUNCTIONS)
+        await conn.execute(AGGREGATION_VIEW)
