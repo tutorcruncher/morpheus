@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import hmac
-import logging
 
 import ujson
 from fastapi import APIRouter, Header
@@ -12,7 +11,6 @@ from foxglove.route_class import KeepBodyAPIRoute
 from morpheus.app.schema import MandrillSingleWebhook, SendMethod, MessageBirdWebHook
 from morpheus.app.views.common import index
 
-logger = logging.getLogger('views.webhooks')
 app = APIRouter(route_class=KeepBodyAPIRoute)
 
 

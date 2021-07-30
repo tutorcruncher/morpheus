@@ -1,12 +1,8 @@
-import hashlib
-import hmac
 import json
 import logging
 import ujson
 from aiohttp import ClientResponse, ClientSession, ClientTimeout
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
-from urllib.parse import urlencode
-
 from .settings import Settings
 
 logger = logging.getLogger('morpheus.ext')
@@ -100,24 +96,6 @@ class Mandrill(ApiSession):
     def _modify_request(self, method, url, data):
         data['key'] = self.settings.mandrill_key
         return method, url, data
-
-
-far_future = '2032-01-01T00:00:00+00'
-
-
-class MorpheusUserApi(ApiSession):
-    def __init__(self, settings):
-        super().__init__(settings.local_api_url, settings)
-
-    def _modify_request(self, method, url, data):
-        return method, self.modify_url(url), data
-
-    def modify_url(self, url):
-        args = dict(company='__all__', expires=far_future)
-        body = '{company}:{expires}'.format(**args).encode()
-        args['signature'] = hmac.new(self.settings.user_auth_key, body, hashlib.sha256).hexdigest()
-        url = str(url)
-        return url + ('&' if '?' in url else '?') + urlencode(args)
 
 
 class MessageBird(ApiSession):

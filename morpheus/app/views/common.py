@@ -6,11 +6,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header
 from foxglove import glove
-from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpRedirect
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.requests import Request
 from starlette.templating import Jinja2Templates
+
+from morpheus.app import crud
 
 logger = logging.getLogger('views.common')
 app = APIRouter(route_class=KeepBodyAPIRoute)
@@ -33,7 +34,7 @@ async def click_redirect_view(
     conn=Depends(get_db),
 ):
     token = token.rstrip('.')
-    link = await conn.fetchrow('select id, url from links where token=$1', token)
+    link = crud.get_link(conn, token)
 
     if arg_url := u:
         try:

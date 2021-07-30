@@ -24,8 +24,6 @@ async def prepare_database(settings: Settings, delete_existing: bool):
 
 
 prepare_database(settings, False)
-asyncio.get_event_loop().create_task()
-
 
 engine = create_engine(settings.pg_dsn)
 SessionLocal = sessionmaker(bind=engine)
@@ -107,17 +105,3 @@ CREATE materialized view message_aggregation AS (
 
 create index if not exists message_aggregation_method_company on message_aggregation using btree (method, company_id);
 """
-
-
-async def prepare_database(settings: Settings, delete_existing: bool):
-    """
-    (Re)create a fresh database and run migrations.
-    :param delete_existing: whether or not to drop an existing database if it exists
-    :return: whether or not a database as (re)created
-    """
-    await fox_prepare_database(settings, delete_existing)
-    async with lenient_conn(settings, with_db=True) as conn:
-        await conn.execute(UPDATE_MESSAGE_TRIGGER)
-        await conn.execute(MESSAGE_VECTOR_TRIGGER)
-        await conn.execute(DT_FUNCTIONS)
-        await conn.execute(AGGREGATION_VIEW)

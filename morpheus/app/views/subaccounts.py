@@ -2,20 +2,18 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends
-from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpConflict, HttpNotFound, HttpBadRequest
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.responses import JSONResponse
-from starlette.templating import Jinja2Templates
 
+from morpheus.app import crud
 from morpheus.app.ext import Mandrill
 from morpheus.app.schema import SendMethod, SubaccountModel
 from morpheus.app.settings import Settings
+from morpheus.app.utils import get_db
 
-
-logger = logging.getLogger('views.common')
+logger = logging.getLogger('views.subaccounts')
 app = APIRouter(route_class=KeepBodyAPIRoute)
-templates = Jinja2Templates(directory='templates/')
 
 
 @app.post('/create-subaccount/{method}/')
@@ -60,17 +58,11 @@ async def delete_subaccount(method: SendMethod, m: SubaccountModel, conn=Depends
     r = await mandrill.post('subaccounts/delete.json', allowed_statuses=(200, 500), id=m.company_code, timeout_=12)
     data = await r.json()
     if r.status == 200:
-        company_id = await conn.fetchval('select id from companies where code=$1', m.company_code)
+        company_id = crud.get_company_id(conn, m.company_code)
+        m_count, g_count = 0, 0
         if company_id:
-            async with conn.transaction() as tr:
-                del_messages_resp = await tr.execute('delete from messages where company_id=$1', company_id)
-                del_groups_resp = await tr.execute('delete from message_groups where company_id=$1', company_id)
-                await tr.execute('delete from companies where id=$1', company_id)
-            del_messages_count = int(del_messages_resp.replace('DELETE ', ''))
-            del_groups_count = int(del_groups_resp.replace('DELETE ', ''))
-        else:
-            del_messages_count = del_groups_count = 0
-        msg = f'deleted_messages={del_messages_count} deleted_message_groups={del_groups_count}'
+            m_count, g_count = crud.delete_company(conn, company_id)
+        msg = f'deleted_messages={m_count} deleted_message_groups={g_count}'
         logger.info('deleting company=%s %s', m.company_name, msg)
         return msg + '\n'
 

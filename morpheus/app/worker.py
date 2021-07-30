@@ -13,8 +13,7 @@ from arq import Retry, cron
 from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
 from asyncio import TimeoutError
-from asyncpg.protocol import protocol
-from buildpg import MultipleValues, Values, asyncpg
+from buildpg import MultipleValues, Values
 from chevron import ChevronError
 from datetime import datetime, timezone
 from enum import Enum
@@ -34,7 +33,9 @@ from pydantic.datetime_parse import parse_datetime
 from typing import Dict, List, Optional
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
+from . import crud
 from .ext import ApiError, Mandrill, MessageBird
+from .models import Message, Link
 from .schema import (
     THIS_DIR,
     AttachmentModel,
@@ -52,6 +53,7 @@ from .schema import (
 from .render import EmailInfo, render_email
 from .render.main import MessageDef, MessageTooLong, SmsLength, apply_short_links, sms_length
 from .settings import Settings
+from .utils import get_db
 
 test_logger = logging.getLogger('morpheus.worker.test')
 main_logger = logging.getLogger('morpheus.worker')
@@ -144,7 +146,7 @@ async def startup(ctx):
         settings=settings,
         email_click_url=f'https://{settings.click_host_name}/l',
         sms_click_url=f'{settings.click_host_name}/l',
-        pg=ctx.get('pg') or await asyncpg.create_pool_b(dsn=settings.pg_dsn, min_size=2, record_class=protocol.Record),
+        pg=ctx.get('pg') or get_db(),
         session=ClientSession(timeout=ClientTimeout(total=30)),
         mandrill=Mandrill(settings=settings),
         messagebird=MessageBird(settings=settings),
@@ -352,33 +354,25 @@ class SendEmail:
         ]
         if attachments:
             data['attachments'] = attachments
-        message_id = await self.ctx['pg'].fetchval_b(
-            'insert into messages (:values__names) values :values returning id', values=Values(**data)
-        )
+        message = crud.create_message(self.ctx['pg'], Message(**data))
         if email_info.shortened_link:
-            await self.ctx['pg'].execute_b(
-                'insert into links (:values__names) values :values',
-                values=MultipleValues(
-                    *[Values(message_id=message_id, token=token, url=url) for url, token in email_info.shortened_link]
-                ),
-            )
+            links = [Link(message=message, token=token, url=url) for url, token in email_info.shortened_link]
+            crud.create_links(self.ctx['pg'], *links)
 
     async def _store_email_failed(self, status: MessageStatus, error_msg):
-        await self.ctx['pg'].execute_b(
-            'insert into messages (:values__names) values :values',
-            values=Values(
-                group_id=self.group_id,
-                company_id=self.company_id,
-                method=self.m.method,
-                status=status,
-                to_first_name=self.recipient.first_name,
-                to_last_name=self.recipient.last_name,
-                to_user_link=self.recipient.user_link,
-                to_address=self.recipient.address,
-                tags=self.tags,
-                body=error_msg,
-            ),
+        message = Message(
+            group_id=self.group_id,
+            company_id=self.company_id,
+            method=self.m.method,
+            status=status,
+            to_first_name=self.recipient.first_name,
+            to_last_name=self.recipient.last_name,
+            to_user_link=self.recipient.user_link,
+            to_address=self.recipient.address,
+            tags=self.tags,
+            body=error_msg,
         )
+        crud.create_message(self.ctx['pg'], message)
 
 
 @worker_function
@@ -435,21 +429,19 @@ class SendSMS:
                     error = str(e)
 
         if error:
-            await self.ctx['pg'].execute_b(
-                'insert into messages (:values__names) values :values',
-                values=Values(
-                    group_id=self.group_id,
-                    company_id=self.company_id,
-                    method=self.m.method,
-                    status=MessageStatus.render_failed,
-                    to_first_name=self.recipient.first_name,
-                    to_last_name=self.recipient.last_name,
-                    to_user_link=self.recipient.user_link,
-                    to_address=number_info.number_formatted if number_info else self.recipient.number,
-                    tags=self.tags,
-                    body=error,
-                ),
+            message = Message(
+                group_id=self.group_id,
+                company_id=self.company_id,
+                method=self.m.method,
+                status=MessageStatus.render_failed,
+                to_first_name=self.recipient.first_name,
+                to_last_name=self.recipient.last_name,
+                to_user_link=self.recipient.user_link,
+                to_address=number_info.number_formatted if number_info else self.recipient.number,
+                tags=self.tags,
+                body=error,
             )
+            crud.create_message(self.ctx['pg'], message)
         else:
             return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
 

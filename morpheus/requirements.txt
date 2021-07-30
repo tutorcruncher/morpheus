@@ -7,4 +7,7 @@ aiofiles
 ujson
 sqlalchemy
 psycopg2
-Markup
+markupsafe
+chevron
+phonenumbers
+ua_parser

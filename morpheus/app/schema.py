@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
-from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
+from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator, BaseModel
 from pydantic.validators import str_validator
 from typing import Dict, List
 from uuid import UUID
@@ -252,52 +252,6 @@ class MessageBirdWebHook(BaseWebhook):
         fields = {'message_id': 'id', 'ts': 'statusDatetime', 'error_code': 'statusErrorCode'}
 
 
-#
-# class Message(BaseModel):
-#     id: int
-#     external_id: int
-#     group_id: int
-#     company_id: int
-#     method: SendMethod
-#     send_ts: datetime
-#     update_ts: datetime
-#     status: MessageStatus = MessageStatus.send
-#     to_first_name: str = ''
-#     to_last_name: str = ''
-#     to_user_link: str = None
-#     to_address: str = None
-#     tags: List[str] = []
-#     subject: str = None
-#     body: str = None
-#     attachments: List[str] = []
-#     cost: float
-#     extra: dict
-#     vector: str
-#
-#     @property
-#     def details(self):
-#         yield 'ID', self.external_id
-#         yield 'Status', self.status.title()
-#
-#         dst = f'{self.to_first_name} {self.to_last_name} <{self.to_address}>'.strip(' ')
-#         if self.to_user_link:
-#             yield 'To', dict(href=self.to_user_link, value=dst)
-#         else:
-#             yield 'To', dst
-#
-#         yield 'Subject', self.subject
-#         # could do with using prettier timezones here
-#         yield 'Send Time', {'class': 'datetime', 'value': self.send_ts}
-#         yield 'Last Updated', {'class': 'datetime', 'value': self.update_ts}
-#
-#     def get_attachments(self):
-#         if self.attachments:
-#             for a in self.attachments:
-#                 name = None
-#                 try:
-#                     doc_id, name = a.split('::')
-#                     doc_id = int(doc_id)
-#                 except ValueError:
-#                     yield '#', name or a
-#                 else:
-#                     yield f'/attachment-doc/{doc_id}/', name
+class Session(BaseModel):
+    company: str
+    expires: datetime
