@@ -1,6 +1,7 @@
 import asyncio
+import logging
 
-from morpheus.app.main import logger
+logger = logging.getLogger('mandrill')
 
 
 async def get_mandrill_webhook_key(app):

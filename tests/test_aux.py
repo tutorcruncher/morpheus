@@ -3,7 +3,7 @@ import pytest
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from morpheus.app.ext import ApiError, ApiSession
+from src.ext import ApiError, ApiSession
 from tests.test_user_display import modify_url
 
 

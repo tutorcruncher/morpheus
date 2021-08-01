@@ -12,11 +12,11 @@ from pathlib import Path
 from pytest_toolbox.comparison import AnyInt, RegexStr
 from uuid import uuid4
 
-from morpheus.app.ext import ApiError
-from morpheus.app.main import create_app
-from morpheus.app.mandrill import get_mandrill_webhook_key
-from morpheus.app.schema import EmailRecipientModel
-from morpheus.app.worker import email_retrying, send_email as worker_send_email
+from src.ext import ApiError
+from src.main import create_app
+from src.mandrill import get_mandrill_webhook_key
+from src.schema import EmailRecipientModel
+from src.worker import email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()
 

@@ -3,7 +3,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from morpheus.app.worker import update_aggregation_view
+from src.worker import update_aggregation_view
 
 
 def gen_headers():

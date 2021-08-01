@@ -1,9 +1,9 @@
 import json
 import re
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator, BaseModel
+from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
 from typing import Dict, List
 from uuid import UUID
@@ -255,3 +255,11 @@ class MessageBirdWebHook(BaseWebhook):
 class Session(BaseModel):
     company: str
     expires: datetime
+
+
+class CompanyModel(BaseModel):
+    id: int
+    code: str
+
+    class Config:
+        orm_mode = True

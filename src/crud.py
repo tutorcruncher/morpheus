@@ -1,12 +1,11 @@
 from datetime import date
-from typing import Tuple, List
-
 from foxglove.exceptions import HttpNotFound
-from sqlalchemy import select, func, insert
+from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session
+from typing import List, Tuple
 
-from morpheus.app.models import Message, Event, Company, MessageGroup, Link
-from morpheus.app.schema import SmsSendMethod
+from src.models import Company, Event, Link, Message, MessageGroup
+from src.schema import SendMethod, SmsSendMethod
 
 
 def get_company_id(conn, company_code: str) -> int:
@@ -34,9 +33,13 @@ def create_message(conn: Session, message: Message):
     return message
 
 
-def get_message(conn: Session, company_code: str, id: int) -> Message:
-    company_id = get_company_id(conn, company_code)
-    return conn.query(Message).filter(Message.company_id == company_id, Message.id == id).first()
+def get_message(conn: Session, id: int, company_code: str = None, send_method: SendMethod = None) -> Message:
+    if company_code:
+        company_id = get_company_id(conn, company_code)
+        return conn.query(Message).filter(Message.company_id == company_id, Message.id == id).first()
+    else:
+        assert send_method
+        return conn.query(Message).filter(Message.method == send_method, Message.id == id).first()
 
 
 def get_message_events(conn: Session, message_id: int) -> Tuple[int, List[Event]]:
@@ -58,8 +61,19 @@ def create_links(conn: Session, *links: Link):
     conn.execute(Link.c.insert(), links)
 
 
-def get_link(conn: Session, token: str) -> Link:
-    return conn.query(Link).filter(Link.token == token)
+def get_link(conn: Session, token: str = None, id: int = None) -> Link:
+    if token:
+        return conn.query(Link).filter(Link.token == token)
+    else:
+        assert id
+        return conn.query(Link).filter(Link.id == id)
+
+
+def create_event(conn: Session, event: Event) -> Event:
+    conn.add(event)
+    conn.commit()
+    conn.refresh(event)
+    return event
 
 
 def get_sms_spend(conn: Session, company_id: int, start: date, end: date, method: SmsSendMethod):

@@ -1,9 +1,10 @@
-from sqlalchemy import Column, ForeignKey, Integer, func, VARCHAR, Index, Enum, TEXT, Float, event
-from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP, ARRAY, JSONB, TSVECTOR
-from sqlalchemy.orm import relationship, validates
+from sqlalchemy import TEXT, VARCHAR, Column, Enum, Float, ForeignKey, Index, Integer, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, TSVECTOR, UUID
+from sqlalchemy.orm import declarative_base, relationship
 
-from .management import Base
-from .schema import SendMethod, MessageStatus
+from src.schema import MessageStatus, SendMethod
+
+Base = declarative_base()
 
 
 class Company(Base):

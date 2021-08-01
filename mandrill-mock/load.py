@@ -1,9 +1,8 @@
+import aiohttp
 import asyncio
 import random
 import secrets
 import uuid
-
-import aiohttp
 
 
 async def send(session):

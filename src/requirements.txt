@@ -11,3 +11,9 @@ markupsafe
 chevron
 phonenumbers
 ua_parser
+misaka
+libsass
+tqdm
+uvicorn
+pydantic[email]
+jinja2

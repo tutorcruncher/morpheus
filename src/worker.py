@@ -13,7 +13,6 @@ from arq import Retry, cron
 from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
 from asyncio import TimeoutError
-from buildpg import MultipleValues, Values
 from chevron import ChevronError
 from datetime import datetime, timezone
 from enum import Enum
@@ -33,10 +32,12 @@ from pydantic.datetime_parse import parse_datetime
 from typing import Dict, List, Optional
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
-from . import crud
-from .ext import ApiError, Mandrill, MessageBird
-from .models import Message, Link
-from .schema import (
+from src import crud
+from src.ext import ApiError, Mandrill, MessageBird
+from src.models import Event, Link, Message
+from src.render import EmailInfo, render_email
+from src.render.main import MessageDef, MessageTooLong, SmsLength, apply_short_links, sms_length
+from src.schema import (
     THIS_DIR,
     AttachmentModel,
     BaseWebhook,
@@ -50,13 +51,11 @@ from .schema import (
     SmsSendMethod,
     SmsSendModel,
 )
-from .render import EmailInfo, render_email
-from .render.main import MessageDef, MessageTooLong, SmsLength, apply_short_links, sms_length
-from .settings import Settings
-from .utils import get_db
+from src.settings import Settings
+from src.utils import get_db
 
-test_logger = logging.getLogger('morpheus.worker.test')
-main_logger = logging.getLogger('morpheus.worker')
+test_logger = logging.getLogger('worker.test')
+main_logger = logging.getLogger('worker')
 MOBILE_NUMBER_TYPES = PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE
 ONE_DAY = 86400
 ONE_YEAR = ONE_DAY * 365
@@ -552,33 +551,26 @@ class SendSMS:
         await self._store_sms(data['id'], send_ts, sms_data, cost)
 
     async def _store_sms(self, external_id, send_ts, sms_data: SmsData, cost: float):
-        async with self.ctx['pg'].acquire() as conn:
-            message_id = await conn.fetchval_b(
-                'insert into messages (:values__names) values :values returning id',
-                values=Values(
-                    external_id=external_id,
-                    group_id=self.group_id,
-                    company_id=self.company_id,
-                    method=self.m.method,
-                    send_ts=send_ts,
-                    status=MessageStatus.send,
-                    to_first_name=self.recipient.first_name,
-                    to_last_name=self.recipient.last_name,
-                    to_user_link=self.recipient.user_link,
-                    to_address=sms_data.number.number_formatted,
-                    tags=self.tags,
-                    body=sms_data.message,
-                    cost=cost,
-                    extra=json.dumps(asdict(sms_data.length)),
-                ),
-            )
-            if sms_data.shortened_link:
-                await conn.execute_b(
-                    'insert into links (:values__names) values :values',
-                    values=MultipleValues(
-                        *[Values(message_id=message_id, token=token, url=url) for url, token in sms_data.shortened_link]
-                    ),
-                )
+        message = Message(
+            external_id=external_id,
+            group_id=self.group_id,
+            company_id=self.company_id,
+            method=self.m.method,
+            send_ts=send_ts,
+            status=MessageStatus.send,
+            to_first_name=self.recipient.first_name,
+            to_last_name=self.recipient.last_name,
+            to_user_link=self.recipient.user_link,
+            to_address=sms_data.number.number_formatted,
+            tags=self.tags,
+            body=sms_data.message,
+            cost=cost,
+            extra=json.dumps(asdict(sms_data.length)),
+        )
+        crud.create_message(self.ctx['pg'], message)
+        if sms_data.shortened_link:
+            links = [Link(message=message, token=token, url=url) for token, url in sms_data.shortened_link]
+            crud.create_links(self.ctx['pg'], *links)
 
 
 def validate_number(number, country, include_description=True) -> Optional[Number]:
@@ -631,26 +623,20 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
             return 'recently_clicked'
         await redis.expire(cache_key, 60)
 
-    async with ctx['pg'].acquire() as conn:
-        message_id, target = await conn.fetchrow('select message_id, url from links where id=$1', link_id)
-        extra = {'target': target, 'ip': ip, 'user_agent': user_agent}
-        if user_agent:
-            ua_dict = ParseUserAgent(user_agent)
-            platform = ua_dict['device']['family']
-            if platform in {'Other', None}:
-                platform = ua_dict['os']['family']
-            extra['user_agent_display'] = (
-                ('{user_agent[family]} {user_agent[major]} on ' '{platform}')
-                .format(platform=platform, **ua_dict)
-                .strip(' ')
-            )
+    link = crud.get_link(ctx['pg'], id=link_id)
+    extra = {'target': link.url, 'ip': ip, 'user_agent': user_agent}
+    if user_agent:
+        ua_dict = ParseUserAgent(user_agent)
+        platform = ua_dict['device']['family']
+        if platform in {'Other', None}:
+            platform = ua_dict['os']['family']
+        extra['user_agent_display'] = '{user_agent[family]} {user_agent[major]} on {platform}'.format(
+            platform=platform, **ua_dict
+        ).strip(' ')
 
         ts = parse_datetime(ts)
         status = 'click'
-        await conn.execute_b(
-            'insert into events (:values__names) values :values',
-            values=Values(message_id=message_id, status=status, ts=ts, extra=json.dumps(extra)),
-        )
+        crud.create_event(ctx['pg'], Event(message=link.message, status=status, ts=ts, extra=json.dumps(extra)))
 
 
 @worker_function
@@ -660,29 +646,22 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     with await ctx['redis'] as redis:
         v = await redis.incr(ref)
         if v > 1:
-            log_each and main_logger.info(
-                'event already exists %s, ts: %s, ' 'status: %s. skipped', m.message_id, m.ts, m.status
-            )
+            if log_each:
+                main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
             return UpdateStatus.duplicate
         await redis.expire(ref, 86400)
 
-    async with ctx['pg'].acquire() as conn:
-        message_id = await conn.fetchval(
-            'select id from messages where method = $1 and external_id = $2', send_method, m.message_id
-        )
-        if not message_id:
-            return UpdateStatus.missing
+    if not (message := crud.get_message(ctx['pg'], send_method=send_method, id=m.message_id)):
+        return UpdateStatus.missing
 
-        if not m.ts.tzinfo:
-            m.ts = m.ts.replace(tzinfo=timezone.utc)
+    if not m.ts.tzinfo:
+        m.ts = m.ts.replace(tzinfo=timezone.utc)
 
-        log_each and main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
+    if log_each:
+        main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
-        await conn.execute_b(
-            'insert into events (:values__names) values :values',
-            values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
-        )
-        return UpdateStatus.added
+    crud.create_event(ctx['pg'], Event(message=message, status=m.status, ts=m.ts, extra=m.extra_json()))
+    return UpdateStatus.added
 
 
 async def update_aggregation_view(ctx):

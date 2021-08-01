@@ -1,9 +1,7 @@
-import asyncio
 import logging.config
 import os
 import random
 import re
-
 from aiohttp import web
 from aiohttp.web import Response, json_response
 

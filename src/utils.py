@@ -1,4 +1,4 @@
-from morpheus.app.management import SessionLocal
+from src.management import SessionLocal
 
 
 def get_db():

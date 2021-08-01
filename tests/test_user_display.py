@@ -10,8 +10,8 @@ from operator import itemgetter
 from pytest_toolbox.comparison import RegexStr
 from urllib.parse import urlencode
 
-from morpheus.app.schema import MessageStatus
-from morpheus.app.worker import update_aggregation_view
+from src.schema import MessageStatus
+from src.worker import update_aggregation_view
 
 
 def modify_url(url, settings, company='foobar'):

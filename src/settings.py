@@ -1,6 +1,5 @@
-from pathlib import Path
-
 from foxglove import BaseSettings
+from pathlib import Path
 from pydantic import NoneStr
 from typing import List
 
@@ -14,6 +13,7 @@ class Settings(BaseSettings):
 
     cookie_name = 'morpheus'
     auth_key = 'testing'
+    app: str = 'main:app'
 
     locale = ''  # Required, don't delete
     host_name: NoneStr = 'localhost'

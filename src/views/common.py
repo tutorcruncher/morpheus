@@ -1,26 +1,27 @@
 import base64
 import logging
-from html import escape
-from time import time
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Header
 from foxglove import glove
 from foxglove.exceptions import HttpRedirect
 from foxglove.route_class import KeepBodyAPIRoute
+from html import escape
 from starlette.requests import Request
 from starlette.templating import Jinja2Templates
+from time import time
+from typing import Optional
 
-from morpheus.app import crud
+from src import crud
+from src.utils import get_db
 
 logger = logging.getLogger('views.common')
 app = APIRouter(route_class=KeepBodyAPIRoute)
-templates = Jinja2Templates(directory='templates/')
+templates = Jinja2Templates(directory='src/templates/')
 
 
 @app.get('/')
-async def index():
+async def index(request: Request):
     ctx = {k: escape(v) for k, v in glove.settings.dict(include={'commit', 'release_date', 'build_time'}).items()}
+    ctx['request'] = request
     return templates.TemplateResponse('index.jinja', context=ctx)
 
 
@@ -31,6 +32,7 @@ async def click_redirect_view(
     request: Request,
     X_Forwarded_For: Optional[str] = Header(None),
     X_Request_Start: Optional[str] = Header(None),
+    User_Agent: Optional[str] = Header(None),
     conn=Depends(get_db),
 ):
     token = token.rstrip('.')
@@ -53,11 +55,9 @@ async def click_redirect_view(
 
         link_id, url = link
 
-        await glove.redis.enqueue_job(
-            'store_click', link_id=link_id, ip=ip_address, user_agent=request.headers.get('User-Agent'), ts=ts
-        )
+        await glove.redis.enqueue_job('store_click', link_id=link_id, ip=ip_address, user_agent=User_Agent, ts=ts)
         if arg_url and arg_url != url:
-            logger.warning('db url does not match arg url: %r !+ %r', url, arg_url)
+            logger.warning('db url does not match arg url: %r != %r', url, arg_url)
         raise HttpRedirect(location=url)
     elif arg_url:
         logger.warning('no url found, using arg url "%s"', arg_url)

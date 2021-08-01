@@ -3,9 +3,10 @@ import logging
 import ujson
 from aiohttp import ClientResponse, ClientSession, ClientTimeout
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
+
 from .settings import Settings
 
-logger = logging.getLogger('morpheus.ext')
+logger = logging.getLogger('ext')
 
 
 def lenient_json(v):

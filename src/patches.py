@@ -1,6 +1,5 @@
 import asyncio
-from atoolbox import patch
-from atoolbox.db.helpers import run_sql_section
+from foxglove.db.patches import patch, run_sql_section
 from textwrap import dedent, indent
 from time import time
 from tqdm import tqdm

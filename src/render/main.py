@@ -11,7 +11,7 @@ from misaka import HtmlRenderer, Markdown
 from typing import Dict
 
 markdown = Markdown(HtmlRenderer(flags=['hard-wrap']), extensions=['no-intra-emphasis'])
-logger = logging.getLogger('morpheus.render')
+logger = logging.getLogger('render')
 
 
 @dataclass

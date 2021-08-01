@@ -1,36 +1,19 @@
+import asyncio
 import logging
-from foxglove.db.main import prepare_database as fox_prepare_database, lenient_conn
+from foxglove.db.main import prepare_database as fox_prepare_database
 from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
-from .settings import Settings
+from src.models import Base
+from src.settings import Settings
 
 settings = Settings()
-logger = logging.getLogger('tc-hubspot')
-
-
-async def prepare_database(settings: Settings, delete_existing: bool):
-    """
-    (Re)create a fresh database and run migrations.
-    :param delete_existing: whether or not to drop an existing database if it exists
-    :return: whether or not a database as (re)created
-    """
-    await fox_prepare_database(settings, delete_existing)
-    async with lenient_conn(settings, with_db=True) as conn:
-        await conn.execute(UPDATE_MESSAGE_TRIGGER)
-        await conn.execute(MESSAGE_VECTOR_TRIGGER)
-        await conn.execute(DT_FUNCTIONS)
-        await conn.execute(AGGREGATION_VIEW)
-
-
-prepare_database(settings, False)
+logger = logging.getLogger('management')
 
 engine = create_engine(settings.pg_dsn)
 SessionLocal = sessionmaker(bind=engine)
 
-Base = declarative_base()
 Base.metadata.create_all(bind=engine)
-
 
 UPDATE_MESSAGE_TRIGGER = """
 CREATE OR REPLACE FUNCTION update_message() RETURNS trigger AS $$
@@ -49,11 +32,9 @@ DROP TRIGGER IF EXISTS update_message ON events;
 CREATE TRIGGER update_message AFTER INSERT ON events FOR EACH ROW EXECUTE PROCEDURE update_message();
 """
 
-
 MESSAGE_VECTOR_TRIGGER = """
 CREATE OR REPLACE FUNCTION set_message_vector() RETURNS trigger AS $$
   BEGIN
-    RAISE NOTICE '%', NEW.external_id;
     NEW.vector := setweight(to_tsvector(coalesce(NEW.external_id, '')), 'A') ||
                   setweight(to_tsvector(coalesce(NEW.to_first_name, '')), 'A') ||
                   setweight(to_tsvector(coalesce(NEW.to_last_name, '')), 'A') ||
@@ -69,7 +50,6 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS create_tsvector ON messages;
 CREATE TRIGGER create_tsvector BEFORE INSERT ON messages FOR EACH ROW EXECUTE PROCEDURE set_message_vector();
 """
-
 
 DT_FUNCTIONS = """
 CREATE OR REPLACE FUNCTION iso_ts(v TIMESTAMPTZ, tz VARCHAR(63)) RETURNS VARCHAR(63) AS $$
@@ -105,3 +85,33 @@ CREATE materialized view message_aggregation AS (
 
 create index if not exists message_aggregation_method_company on message_aggregation using btree (method, company_id);
 """
+
+
+async def populate_db(engine):
+    Base.metadata.create_all(engine)
+
+
+async def prepare_database(settings: Settings, delete_existing: bool):
+    """
+    (Re)create a fresh database and run migrations.
+    :param delete_existing: whether or not to drop an existing database if it exists
+    :return: whether or not a database as (re)created
+    """
+    await fox_prepare_database(settings, delete_existing)
+
+    engine = create_engine(settings.pg_dsn)
+    await populate_db(engine)
+    engine.execute(UPDATE_MESSAGE_TRIGGER)
+    engine.execute(MESSAGE_VECTOR_TRIGGER)
+    engine.execute(DT_FUNCTIONS)
+    engine.execute(AGGREGATION_VIEW)
+    engine.dispose()
+
+
+def reset_database(settings):
+    if not input('Confirm database reset? y/n ').lower() == 'y':
+        print('cancelling')
+    else:
+        print('resetting database...')
+        asyncio.run(prepare_database(settings, True))
+        print('done.')

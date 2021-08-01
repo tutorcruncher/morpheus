@@ -1,15 +1,14 @@
 import logging
-
 from fastapi import APIRouter, Depends
 from foxglove import glove
 from foxglove.exceptions import HttpConflict
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.responses import JSONResponse
 
-from morpheus.app.models import MessageGroup
-from morpheus.app.schema import EmailSendModel
-from morpheus.app import crud
-from morpheus.app.utils import get_db
+from src import crud
+from src.models import MessageGroup
+from src.schema import EmailSendModel
+from src.utils import get_db
 
 logger = logging.getLogger('views.email')
 app = APIRouter(route_class=KeepBodyAPIRoute)
