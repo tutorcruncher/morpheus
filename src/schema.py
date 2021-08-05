@@ -255,11 +255,3 @@ class MessageBirdWebHook(BaseWebhook):
 class Session(BaseModel):
     company: str
     expires: datetime
-
-
-class CompanyModel(BaseModel):
-    id: int
-    code: str
-
-    class Config:
-        orm_mode = True

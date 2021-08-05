@@ -15,7 +15,7 @@ async def test_send_message(cli, tmpdir, worker):
         'recipients': [{'number': '07891123856', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d71-447891123856.txt'
@@ -42,7 +42,7 @@ async def test_send_message_usa(cli, settings, tmpdir, worker):
         'recipients': [{'number': '+1 818 337 3095', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d72-18183373095.txt'
@@ -70,7 +70,7 @@ async def test_validate_number(cli, tmpdir):
         },
     }
     r = await cli.get('/validate/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 200, await r.text()
+    assert r.status_code == 200, await r.text()
     data = await r.json()
     # debug(data)
     assert {
@@ -109,12 +109,12 @@ async def test_repeat_uuid(cli, tmpdir, worker):
         'recipients': [{'number': '07891123856'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     assert str(tmpdir.listdir()[0]).endswith('69eb85e8-1504-40aa-94ff-75bb65fd8d73-447891123856.txt')
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 409, await r.text()
+    assert r.status_code == 409, await r.text()
     data = await r.json()
     assert {'message': 'Send group with id "69eb85e8-1504-40aa-94ff-75bb65fd8d73" already exists\n'} == data
 
@@ -134,7 +134,7 @@ async def test_invalid_number(cli, tmpdir, worker):
         ],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 4
     assert len(tmpdir.listdir()) == 2
     files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
@@ -153,25 +153,25 @@ async def test_exceed_cost_limit(cli, tmpdir, worker):
         'recipients': [{'number': f'0789112385{i}'} for i in range(4)],
     }
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 4
     assert {'status': 'enqueued', 'spend': 0.0} == await r.json()
     assert len(tmpdir.listdir()) == 4
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 8
     assert {'status': 'enqueued', 'spend': 0.048} == await r.json()
     assert len(tmpdir.listdir()) == 8
 
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     obj = await r.json()
     assert 0.095 < obj['spend'] < 0.097
     assert await worker.run_check() == 12
     assert len(tmpdir.listdir()) == 12
 
     r = await cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status == 402, await r.text()
+    assert r.status_code == 402, await r.text()
     obj = await r.json()
     assert 0.143 < obj['spend'] < 0.145
     assert obj['cost_limit'] == 0.1
@@ -187,7 +187,7 @@ async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
         'recipients': [{'number': '07801234567'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447801234567/hlr > 201',
@@ -199,7 +199,7 @@ async def test_send_messagebird(cli, tmpdir, dummy_server, worker):
     # send again, this time hlr look and pricing requests shouldn't occur
     data = dict(data, uid=str(uuid4()))
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 2
     assert len(dummy_server.log) == 5
     assert dummy_server.log[4] == 'POST /messagebird/messages > 201'
@@ -214,7 +214,7 @@ async def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog):
         'recipients': [{'number': '07888888888'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447888888888/hlr > 201',
@@ -234,7 +234,7 @@ async def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog)
     }
     caplog.set_level(logging.INFO)
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert [
         'POST /messagebird/lookup/447777777777/hlr > 201',
@@ -264,7 +264,7 @@ async def test_messagebird_webhook(cli, db_conn, dummy_server, worker):
         'recipients': [{'first_name': 'John', 'last_name': 'Doe', 'user_link': 4321, 'number': '07801234567'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -287,7 +287,7 @@ async def test_messagebird_webhook(cli, db_conn, dummy_server, worker):
         'statusDatetime': '2032-06-06T12:00:00',
     }
     r = await cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
-    assert r.status == 200, await r.text()
+    assert r.status_code == 200, await r.text()
     assert await worker.run_check() == 2
 
     assert 1 == await db_conn.fetchval('select count(*) from messages')
@@ -305,7 +305,7 @@ async def test_failed_render(cli, tmpdir, db_conn, worker):
         'recipients': [{'number': '07891123856'}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 0
 
@@ -323,7 +323,7 @@ async def test_link_shortening(cli, tmpdir, db_conn, worker):
         'recipients': [{'number': '07891123856', 'context': {'foo': 'http://whatever.com/foo/bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d75-447891123856.txt'
@@ -341,11 +341,11 @@ async def test_link_shortening(cli, tmpdir, db_conn, worker):
     assert link['token'] == token
 
     r = await cli.get(f'/l{token}', allow_redirects=False)
-    assert r.status == 307, await r.text()
+    assert r.status_code == 307, await r.text()
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
 
     r = await cli.get(f'/l{token}.', allow_redirects=False)
-    assert r.status == 307, await r.text()
+    assert r.status_code == 307, await r.text()
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
 
 
@@ -358,7 +358,7 @@ async def test_send_multi_part(cli, tmpdir, worker):
         'recipients': [{'number': '07891123856', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     assert await worker.run_check() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d76-447891123856.txt'
@@ -378,7 +378,7 @@ async def test_send_too_long(cli, tmpdir):
         'recipients': [{'number': '07891123856', 'context': {'foo': 'bar'}}],
     }
     r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    assert r.status_code == 201, await r.text()
     # no messages sent:
     assert len(tmpdir.listdir()) == 0
 
@@ -393,5 +393,5 @@ async def test_sms_billing(cli, send_sms):
     r = await cli.get(
         '/billing/sms-test/billing-test/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
     )
-    assert r.status == 200, await r.text()
+    assert r.status_code == 200, await r.text()
     assert {'company': 'billing-test', 'start': start, 'end': end, 'spend': 0.048} == await r.json()

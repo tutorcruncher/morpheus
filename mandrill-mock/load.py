@@ -18,7 +18,7 @@ async def send(session):
     print(f'sending to {recipient_count} recipients...')
     headers = {'Authorization': 'testing'}
     async with session.post('http://localhost:5000/send/email/', json=data, headers=headers) as r:
-        assert r.status == 201, r.status
+        assert r.status_code == 201, r.status
 
 
 async def main():

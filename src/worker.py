@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from itertools import chain
 from pathlib import Path
+
+from foxglove import glove
 from phonenumbers import (
     NumberParseException,
     PhoneNumberFormat,
@@ -30,9 +32,11 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic.datetime_parse import parse_datetime
 from typing import Dict, List, Optional
+
+from sqlalchemy.exc import NoResultFound
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
-from src import crud
+from src.db import SessionLocal
 from src.ext import ApiError, Mandrill, MessageBird
 from src.models import Event, Link, Message
 from src.render import EmailInfo, render_email
@@ -145,7 +149,7 @@ async def startup(ctx):
         settings=settings,
         email_click_url=f'https://{settings.click_host_name}/l',
         sms_click_url=f'{settings.click_host_name}/l',
-        pg=ctx.get('pg') or get_db(),
+        pg=ctx.get('pg') or SessionLocal(),
         session=ClientSession(timeout=ClientTimeout(total=30)),
         mandrill=Mandrill(settings=settings),
         messagebird=MessageBird(settings=settings),
@@ -153,7 +157,18 @@ async def startup(ctx):
 
 
 async def shutdown(ctx):
-    await asyncio.gather(ctx['session'].close(), ctx['pg'].close(), ctx['mandrill'].close(), ctx['messagebird'].close())
+    coros = []
+    if http := getattr(glove, 'http', None):
+        coros.append(http.aclose())
+    if pg := getattr(glove, 'pg', None):
+        coros.append(pg.close())
+    if redis := getattr(glove, 'redis', None):
+        redis.close()
+        coros.append(redis.wait_closed())
+    await asyncio.gather(*coros)
+    for prop in 'pg', '_http', 'redis', 'mandrill':
+        if hasattr(glove, prop):
+            delattr(glove, prop)
 
 
 email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
@@ -234,7 +249,7 @@ class SendEmail:
         job_try = self.ctx['job_try']
         defer = email_retrying[job_try - 1]
         try:
-            response = await self.ctx['mandrill'].post('messages/send.json', **data)
+            r = await self.ctx['mandrill'].post('messages/send.json', **data)
         except (ClientConnectionError, TimeoutError) as e:
             main_logger.info('client connection error group_id=%s job_try=%s defer=%ss', self.group_id, job_try, defer)
             raise Retry(defer=defer) from e
@@ -252,7 +267,7 @@ class SendEmail:
                 # if the status is not 502 or 504, or 500 from nginx then raise
                 raise
 
-        data = await response.json()
+        data = r.json()
         assert len(data) == 1, data
         data = data[0]
         assert data['email'] == self.recipient.address, data
@@ -311,7 +326,7 @@ class SendEmail:
         headers = dict(pdf_page_size='A4', pdf_zoom='1.25', pdf_margin_left='8mm', pdf_margin_right='8mm')
         for a in pdf_attachments:
             async with self.ctx['session'].get(self.settings.pdf_generation_url, data=a.html, headers=headers) as r:
-                if r.status == 200:
+                if r.status_code == 200:
                     pdf_content = await r.read()
                     yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
                 else:
@@ -353,13 +368,14 @@ class SendEmail:
         ]
         if attachments:
             data['attachments'] = attachments
-        message = crud.create_message(self.ctx['pg'], Message(**data))
+        message = Message.manager.create(self.ctx['pg'], **data)
         if email_info.shortened_link:
             links = [Link(message=message, token=token, url=url) for url, token in email_info.shortened_link]
-            crud.create_links(self.ctx['pg'], *links)
+            Link.manager.create_many(self.ctx['pg'], *links)
 
     async def _store_email_failed(self, status: MessageStatus, error_msg):
-        message = Message(
+        Message.manager.create(
+            self.ctx['pg'],
             group_id=self.group_id,
             company_id=self.company_id,
             method=self.m.method,
@@ -371,7 +387,6 @@ class SendEmail:
             tags=self.tags,
             body=error_msg,
         )
-        crud.create_message(self.ctx['pg'], message)
 
 
 @worker_function
@@ -381,7 +396,7 @@ async def send_sms(ctx, group_id: int, company_id: int, recipient: SmsRecipientM
 
 
 class SendSMS:
-    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags', 'messagebird', 'from_name'
+    __slots__ = ('ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags', 'messagebird', 'from_name')
 
     def __init__(self, ctx: dict, group_id: int, company_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
         self.ctx = ctx
@@ -428,7 +443,8 @@ class SendSMS:
                     error = str(e)
 
         if error:
-            message = Message(
+            Message.manager.create(
+                self.ctx['pg'],
                 group_id=self.group_id,
                 company_id=self.company_id,
                 method=self.m.method,
@@ -440,7 +456,6 @@ class SendSMS:
                 tags=self.tags,
                 body=error,
             )
-            crud.create_message(self.ctx['pg'], message)
         else:
             return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
 
@@ -475,10 +490,12 @@ class SendSMS:
             # get fresh data on rates by mcc
             main_logger.info('getting fresh pricing data from messagebird...')
             r = await self.messagebird.get('pricing/sms/outbound')
-            if r.status != 200:
-                response = await r.text()
-                main_logger.error('error getting messagebird api', extra={'status': r.status, 'response': response})
-                raise MessageBirdExternalError((r.status, response))
+            if r.status_code != 200:
+                response = r.text
+                main_logger.error(
+                    'error getting messagebird api', extra={'status': r.status_code, 'response': response}
+                )
+                raise MessageBirdExternalError((r.status_code, response))
             data = await r.json()
             prices = data['prices']
             if not next((1 for g in prices if g['mcc'] == '0'), None):
@@ -551,7 +568,8 @@ class SendSMS:
         await self._store_sms(data['id'], send_ts, sms_data, cost)
 
     async def _store_sms(self, external_id, send_ts, sms_data: SmsData, cost: float):
-        message = Message(
+        message = Message.manager.create(
+            self.ctx['pg'],
             external_id=external_id,
             group_id=self.group_id,
             company_id=self.company_id,
@@ -567,10 +585,9 @@ class SendSMS:
             cost=cost,
             extra=json.dumps(asdict(sms_data.length)),
         )
-        crud.create_message(self.ctx['pg'], message)
         if sms_data.shortened_link:
             links = [Link(message=message, token=token, url=url) for token, url in sms_data.shortened_link]
-            crud.create_links(self.ctx['pg'], *links)
+            Link.manager.create_many(self.ctx['pg'], *links)
 
 
 def validate_number(number, country, include_description=True) -> Optional[Number]:
@@ -623,7 +640,7 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
             return 'recently_clicked'
         await redis.expire(cache_key, 60)
 
-    link = crud.get_link(ctx['pg'], id=link_id)
+    link = Link.get(ctx['pg'], id=link_id)
     extra = {'target': link.url, 'ip': ip, 'user_agent': user_agent}
     if user_agent:
         ua_dict = ParseUserAgent(user_agent)
@@ -635,8 +652,10 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
         ).strip(' ')
 
         ts = parse_datetime(ts)
+        if not ts.tzinfo:
+            ts = ts.replace(tzinfo=timezone.utc)
         status = 'click'
-        crud.create_event(ctx['pg'], Event(message=link.message, status=status, ts=ts, extra=json.dumps(extra)))
+        Event.manager.create(ctx['pg'], message=link.message, status=status, ts=ts, extra=json.dumps(extra))
 
 
 @worker_function
@@ -651,7 +670,9 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
             return UpdateStatus.duplicate
         await redis.expire(ref, 86400)
 
-    if not (message := crud.get_message(ctx['pg'], send_method=send_method, id=m.message_id)):
+    try:
+        message = Message.manager.get(ctx['pg'], method=send_method, external_id=m.message_id)
+    except NoResultFound:
         return UpdateStatus.missing
 
     if not m.ts.tzinfo:
@@ -660,7 +681,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     if log_each:
         main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
-    crud.create_event(ctx['pg'], Event(message=message, status=m.status, ts=m.ts, extra=m.extra_json()))
+    Event.manager.create(ctx['pg'], message_id=message.id, status=m.status, ts=m.ts, extra=m.extra_json())
     return UpdateStatus.added
 
 

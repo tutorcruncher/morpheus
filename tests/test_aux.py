@@ -1,93 +1,58 @@
 import base64
+
 import pytest
-import uuid
-from datetime import datetime, timedelta, timezone
+
+from foxglove.test_server import DummyServer
+from foxglove.testing import Client
+from sqlalchemy.orm import Session
+from starlette.testclient import TestClient
 
 from src.ext import ApiError, ApiSession
+from src.models import Company, MessageGroup, Message
 from tests.test_user_display import modify_url
 
 
-async def test_index(cli):
-    r = await cli.get('/')
-    assert r.status == 200
-    assert 'Morpheus - The Greek God' in await r.text()
+def test_index(cli: TestClient):
+    r = cli.get('/')
+    assert r.status_code == 200
+    assert 'Morpheus - The Greek God' in r.content.decode()
 
 
-async def test_index_head(cli):
-    r = await cli.head('/')
-    assert r.status == 200
-    assert '' == await r.text()
+def test_index_head(cli: TestClient):
+    r = cli.head('/')
+    assert r.status_code == 200
+    assert '' == r.text
 
 
-async def test_robots(cli):
-    r = await cli.get('/robots.txt')
-    assert r.status == 200
-    assert 'User-agent: *' in await r.text()
+def test_robots(cli: TestClient):
+    r = cli.get('/robots.txt')
+    assert r.status_code == 200
+    assert 'User-agent: *' in r.text
 
 
-async def test_favicon(cli):
-    r = await cli.get('/favicon.ico', allow_redirects=False)
-    assert r.status == 200
+def test_favicon(cli: TestClient):
+    r = cli.get('/favicon.ico', allow_redirects=False)
+    assert r.status_code == 200
     assert 'image' in r.headers['Content-Type']  # value can vary
 
 
-async def test_405(cli):
-    r = await cli.post('/')
-    assert r.status == 405, await r.text()
+def test_405(cli: TestClient):
+    r = cli.post('/')
+    assert r.status_code == 405, r.text
 
 
-async def test_message_stats(cli, send_email):
-    for i in range(5):
-        await send_email(uid=str(uuid.uuid4()), recipients=[{'address': f'{i}@t.com'}])
-
-    r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data == [{'count': 5, 'age': 0, 'method': 'email-test', 'status': 'send'}]
-
-    await send_email()
-
-    r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
-    assert r.status == 200, await r.text()
-    data2 = await r.json()
-    assert data2 == data  # last message has no effect due to caching
-
-
-async def test_message_stats_old(cli, send_email, db_conn):
-    expected_msg_ids = []
-    for i in range(5):
-        uid = str(uuid.uuid4())
-        await send_email(uid=uid, company_code='whoever', recipients=[{'address': f'{i}@t.com'}])
-        expected_msg_ids.append(f'{uid}-{i}tcom')
-
-    old = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(minutes=20)
-
-    await db_conn.execute(
-        'update messages set send_ts=$1, update_ts=$2 where external_id=$3', old, old, expected_msg_ids[0]
-    )
-    await db_conn.execute(
-        'update messages set send_ts=$1, status=$2 where external_id=$3', old, 'open', expected_msg_ids[1]
-    )
-
-    r = await cli.get('/stats/messages/', headers={'Authorization': 'test-token'})
-    assert r.status == 200, await r.text()
-    data = await r.json()
-    assert data == [
-        {'count': 3, 'age': 0, 'method': 'email-test', 'status': 'send'},
-        {'count': 1, 'age': 1200, 'method': 'email-test', 'status': 'open'},
-    ]
-
-
-async def test_create_sub_account_new_few_sent(cli, dummy_server):
+def test_create_subaccount_new_few_sent(cli: Client, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
-    assert 'subaccount created\n' == await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert r.json() == {'message': 'subaccount created'}
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
 
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 200, await r.text()
-    assert 'subaccount already exists with only 42 emails sent, reuse of subaccount id permitted\n' == await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        'message': 'subaccount already exists with only 42 emails sent, reuse of subaccount id permitted'
+    }
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/add.json > 500',
@@ -95,14 +60,16 @@ async def test_create_sub_account_new_few_sent(cli, dummy_server):
     ]
 
 
-async def test_create_sub_account_lots(cli, dummy_server):
+def test_create_subaccount_lots(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'lots-sent'}
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
 
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 409, await r.text()
-    assert 'subaccount already exists with 200 emails sent, reuse of subaccount id not permitted\n' == await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 409, r.text
+    assert r.json() == {
+        'message': 'subaccount already exists with 200 emails sent, reuse of subaccount id not permitted'
+    }
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/add.json > 500',
@@ -110,88 +77,78 @@ async def test_create_sub_account_lots(cli, dummy_server):
     ]
 
 
-async def test_create_sub_account_wrong_response(cli, dummy_server):
+def test_create_subaccount_wrong_response(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'broken'}
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 400, await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 400, r.text
 
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 500']
 
 
-async def test_create_sub_account_other_method(cli, dummy_server):
-    r = await cli.post('/create-subaccount/email-test/', headers={'Authorization': 'testing-key'})
-    assert r.status == 200, await r.text()
-    assert 'no subaccount creation required for "email-test"\n' == await r.text()
+def test_create_subaccount_other_method(cli: TestClient, db: Session, dummy_server: DummyServer):
+    r = cli.post('/create-subaccount/email-test/', headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'no subaccount creation required for "email-test"'}
 
     assert dummy_server.log == []
 
 
-async def test_create_sub_account_invalid_key(cli, dummy_server):
+def test_create_subaccount_invalid_key(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
-    assert r.status == 403, await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
+    assert r.status_code == 403, r.text
 
 
-async def test_create_sub_account_on_send_email(cli, db_conn, send_email, dummy_server):
+def test_create_subaccount_on_send_email(cli: TestClient, db: Session, dummy_server, send_email):
     data = {'company_code': 'foobar'}
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
-    assert 'subaccount created\n' == await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert r.json() == {'message': 'subaccount created'}
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
-    assert 0 == await db_conn.fetchval('select count(*) from companies')
 
-    await send_email(company_code='foobar')
-    assert 1 == await db_conn.fetchval('select count(*) from companies')
+    assert Company.manager.count(db) == 0
+
+    send_email(company_code='foobar')
+    assert Company.manager.count(db) == 1
 
 
-async def test_create_sub_account_on_send_sms(cli, db_conn, send_sms, dummy_server):
+def test_create_subaccount_on_send_sms(cli: TestClient, db: Session, dummy_server, send_sms):
     data = {'company_code': 'foobar'}
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
-    assert 'subaccount created\n' == await r.text()
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert r.json() == {'message': 'subaccount created'}
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
-    assert 0 == await db_conn.fetchval('select count(*) from companies')
+    assert Company.manager.count(db) == 0
 
-    await send_sms(company_code='foobar')
-    assert 1 == await db_conn.fetchval('select count(*) from companies')
+    send_sms(company_code='foobar')
+    assert Company.manager.count(db) == 1
 
 
-async def test_create_sub_account_on_get_user_list(cli, settings, db_conn, dummy_server):
+def test_user_list_subaccount_doesnt_exist(cli, settings, db, dummy_server: DummyServer):
+    r = cli.get(modify_url('/user/email-test/messages.json', settings))
+    assert r.status_code == 404
+
+
+def _create_test_subaccount(cli, data):
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+
+
+def test_delete_subaccount(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
-    assert 'subaccount created\n' == await r.text()
-    assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
-    assert 0 == await db_conn.fetchval('select count(*) from companies')
+    _create_test_subaccount(cli, data)
 
-    r = await cli.get(modify_url('/user/email-test/messages.json', settings, 'whoever'))
-    assert r.status == 200, await r.text()
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
-    data = await r.json()
-    assert data['count'] == 0
-    assert 1 == await db_conn.fetchval('select count(*) from companies')
-
-
-async def _create_test_sub_account(cli, data):
-    r = await cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 201, await r.text()
-
-
-async def test_delete_sub_account(cli, dummy_server):
-    data = {'company_code': 'foobar'}
-    await _create_test_sub_account(cli, data)
-
-    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 200, await r.text()
-    assert 'deleted_messages=0 deleted_message_groups=0\n' == await r.text()
+    r = cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 200',
     ]
 
-    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 404, await r.text()
-    assert "No subaccount exists with the id 'foobar'\n" == await r.text()
+    r = cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 404, r.text
+    assert r.json() == {'message': "No subaccount exists with the id 'foobar'"}
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 200',
@@ -199,105 +156,101 @@ async def test_delete_sub_account(cli, dummy_server):
     ]
 
 
-async def test_delete_sub_account_wrong_response(cli, dummy_server):
+def test_delete_subaccount_wrong_response(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'broken1'}
-    await _create_test_sub_account(cli, data)
+    _create_test_subaccount(cli, data)
 
-    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status == 400, await r.text()
+    r = cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 400, r.text
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 500',
     ]
 
 
-async def test_delete_sub_account_other_method(cli, dummy_server):
-    r = await cli.post('/delete-subaccount/email-test/', headers={'Authorization': 'testing-key'})
-    assert r.status == 200, await r.text()
-    assert 'no subaccount deletion required for "email-test"\n' == await r.text()
+def test_delete_subaccount_other_method(cli: TestClient, db: Session, dummy_server: DummyServer):
+    r = cli.post('/delete-subaccount/email-test/', headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'no subaccount deletion required for "email-test"'}
 
     assert dummy_server.log == []
 
 
-async def test_delete_sub_account_invalid_key(cli):
+def test_delete_subaccount_invalid_key(cli: TestClient, db: Session):
     data = {'company_code': 'foobar'}
-    await _create_test_sub_account(cli, data)
-
-    r = await cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
-    assert r.status == 403, await r.text()
+    r = cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
+    assert r.status_code == 403, r.text
 
 
-async def test_delete_sub_account_and_saved_messages(cli, db_conn, send_email, send_sms):
-    await send_email(company_code='foobar1')
-    await send_sms(company_code='foobar1')
-    await send_email(company_code='foobar2', recipients=[{'address': f'{i}@test.com'} for i in range(5)])
-    assert 3 == await db_conn.fetchval('select count(*) from message_groups')
-    assert 7 == await db_conn.fetchval('select count(*) from messages')
+def test_delete_subaccount_and_saved_messages(
+    cli: TestClient, db: Session, send_email, send_sms, dummy_server: DummyServer
+):
+    send_email(company_code='foobar1')
+    send_sms(company_code='foobar1')
+    send_email(company_code='foobar2', recipients=[{'address': f'{i}@test.com'} for i in range(5)])
+    assert Company.manager.count(db) == 2
+    assert MessageGroup.manager.count(db) == 3
+    assert Message.manager.count(db) == 7
 
     fb1_data = {'company_code': 'foobar1'}
-    await _create_test_sub_account(cli, fb1_data)
+    _create_test_subaccount(cli, fb1_data)
     fb2_data = {'company_code': 'foobar2'}
-    await _create_test_sub_account(cli, fb2_data)
+    _create_test_subaccount(cli, fb2_data)
 
-    r = await cli.post('/delete-subaccount/email-mandrill/', json=fb1_data, headers={'Authorization': 'testing-key'})
-    assert r.status == 200, await r.text()
-    assert 'deleted_messages=2 deleted_message_groups=2\n' == await r.text()
+    r = cli.post('/delete-subaccount/email-mandrill/', json=fb1_data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'deleted_messages=2 deleted_message_groups=2'}
 
-    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
-    assert 5 == await db_conn.fetchval('select count(*) from messages')
+    assert MessageGroup.manager.count(db) == 1
+    assert Message.manager.count(db) == 5
 
-    r = await cli.post('/delete-subaccount/email-mandrill/', json=fb2_data, headers={'Authorization': 'testing-key'})
-    assert r.status == 200, await r.text()
-    assert 'deleted_messages=5 deleted_message_groups=1\n' == await r.text()
+    r = cli.post('/delete-subaccount/email-mandrill/', json=fb2_data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'deleted_messages=5 deleted_message_groups=1'}
 
-    assert 0 == await db_conn.fetchval('select count(*) from message_groups')
-    assert 0 == await db_conn.fetchval('select count(*) from messages')
+    assert MessageGroup.manager.count(db) == 0
+    assert Message.manager.count(db) == 0
 
-    await send_email(company_code='foobar3')
-    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
-    assert 1 == await db_conn.fetchval('select count(*) from messages')
+    send_email(company_code='foobar3')
+    assert MessageGroup.manager.count(db) == 1
+    assert Message.manager.count(db) == 1
 
-    await _create_test_sub_account(cli, {'company_code': 'foobar3'})
+    _create_test_subaccount(cli, {'company_code': 'foobar3'})
     with pytest.raises(TypeError):
-        await cli.post(
+        cli.post(
             '/delete-subaccount/email-mandrill/',
             json={'company_code': object()},
             headers={'Authorization': 'testing-key'},
         )
-    assert 1 == await db_conn.fetchval('select count(*) from message_groups')
-    assert 1 == await db_conn.fetchval('select count(*) from messages')
+    assert MessageGroup.manager.count(db) == 1
+    assert Message.manager.count(db) == 1
 
 
-async def test_missing_link(cli):
-    r = await cli.get('/lxxx')
-    assert r.status == 404, await r.text()
-    text = await r.text()
+def test_missing_link(cli: TestClient):
+    r = cli.get('/lxxx')
+    assert r.status_code == 404, r.text
     assert (
-        f'<p>404: No redirect could be found for "http://127.0.0.1:{cli.server.port}/lxxx", '
-        f'this link may have expired.</p>'
-    ) in text
+        f'<p>404: No redirect could be found for "http://testserver/lxxx", ' f'this link may have expired.</p>'
+    ) in r.text
 
 
-async def test_missing_url_with_arg(cli):
+def test_missing_url_with_arg(cli: TestClient):
     url = 'https://example.com/foobar'
-    r = await cli.get('/lxxx?u=' + base64.urlsafe_b64encode(url.encode()).decode(), allow_redirects=False)
-    assert r.status == 307, await r.text()
+    r = cli.get('/lxxx?u=' + base64.urlsafe_b64encode(url.encode()).decode(), allow_redirects=False)
+    assert r.status_code == 307, r.text
     assert r.headers['Location'] == url
 
 
-async def test_missing_url_with_arg_bad(cli):
-    r = await cli.get('/lxxx?u=xxx', allow_redirects=False)
-    assert r.status == 404, await r.text()
+def test_missing_url_with_arg_bad(cli: TestClient):
+    r = cli.get('/lxxx?u=xxx', allow_redirects=False)
+    assert r.status_code == 404, r.text
 
 
-async def test_api_error(settings, loop, dummy_server):
+def test_api_error(settings, loop, dummy_server: DummyServer):
     s = ApiSession(dummy_server.server_name, settings)
-    try:
-        with pytest.raises(ApiError) as exc_info:
-            await s.get('/foobar')
-        assert str(exc_info.value) == f'GET {dummy_server.server_name}/foobar, unexpected response 404'
-    finally:
-        await s.close()
+    with pytest.raises(ApiError) as exc_info:
+        loop.run_until_complete(s.get('/foobar'))
+    assert str(exc_info.value) == f'GET {dummy_server.server_name}/foobar, unexpected response 404'
 
 
 def test_settings(settings):

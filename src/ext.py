@@ -1,8 +1,8 @@
 import json
 import logging
-import ujson
-from aiohttp import ClientResponse, ClientSession, ClientTimeout
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
+from foxglove import glove
+from httpx import AsyncClient, Response
 
 from .settings import Settings
 
@@ -30,60 +30,52 @@ class ApiError(RuntimeError):
 
 
 class ApiSession:
-    def __init__(self, root_url, settings: Settings, *, client_timeout=30):
+    def __init__(self, root_url, settings: Settings):
         self.settings = settings
-        self.session = ClientSession(json_serialize=ujson.dumps, timeout=ClientTimeout(total=client_timeout))
         self.root = root_url.rstrip('/') + '/'
 
-    async def close(self):
-        await self.session.close()
-
-    async def get(self, uri, *, allowed_statuses=(200,), **data):
+    async def get(self, uri, *, allowed_statuses=(200,), **data) -> Response:
         return await self._request(METH_GET, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def delete(self, uri, *, allowed_statuses=(200,), **data):
+    async def delete(self, uri, *, allowed_statuses=(200,), **data) -> Response:
         return await self._request(METH_DELETE, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def post(self, uri, *, allowed_statuses=(200, 201), **data):
+    async def post(self, uri, *, allowed_statuses=(200, 201), **data) -> Response:
         return await self._request(METH_POST, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def put(self, uri, *, allowed_statuses=(200, 201), **data):
+    async def put(self, uri, *, allowed_statuses=(200, 201), **data) -> Response:
         return await self._request(METH_PUT, uri, allowed_statuses=allowed_statuses, **data)
 
-    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> ClientResponse:
+    async def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> Response:
         method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)
         kwargs = {}
         headers = data.pop('headers_', None)
         if headers is not None:
             kwargs['headers'] = headers
-        timeout = data.pop('timeout_', None)
-        if timeout is not None:
+        if timeout := data.pop('timeout_', None):
             kwargs['timeout'] = timeout
-        async with self.session.request(method, url, json=data or None, **kwargs) as r:
-            # always read entire response before closing the connection
-            response_text = await r.text()
-
+        r = await glove.http.request(method, url, json=data or None, **kwargs)
         if isinstance(allowed_statuses, int):
             allowed_statuses = (allowed_statuses,)
-        if allowed_statuses != '*' and r.status not in allowed_statuses:
+        if allowed_statuses != '*' and r.status_code not in allowed_statuses:
             data = {
-                'request_real_url': str(r.request_info.real_url),
-                'request_headers': dict(r.request_info.headers),
+                'request_real_url': str(r.request.url),
+                'request_headers': dict(r.request.headers),
                 'request_data': data,
                 'response_headers': dict(r.headers),
-                'response_content': lenient_json(response_text),
+                'response_content': lenient_json(r.text),
             }
             logger.warning(
                 '%s unexpected response %s /%s -> %s',
                 self.__class__.__name__,
                 method,
                 uri,
-                r.status,
+                r.status_code,
                 extra={'data': data} if self.settings.verbose_http_errors else {},
             )
-            raise ApiError(method, url, r.status, response_text)
+            raise ApiError(method, url, r.status_code, r.text)
         else:
-            logger.debug('%s /%s -> %s', method, uri, r.status)
+            logger.debug('%s /%s -> %s', method, uri, r.status_code)
             return r
 
     def _modify_request(self, method, url, data):
@@ -92,7 +84,7 @@ class ApiSession:
 
 class Mandrill(ApiSession):
     def __init__(self, settings):
-        super().__init__(settings.mandrill_url, settings, client_timeout=settings.mandrill_timeout)
+        super().__init__(settings.mandrill_url, settings)
 
     def _modify_request(self, method, url, data):
         data['key'] = self.settings.mandrill_key

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     log_level = 'INFO'
     verbose_http_errors = True
     user_auth_key: bytes = b'insecure'
+    # Used to sign Mandrill webhooks
+    webhook_auth_key: bytes = b'insecure'
+
     admin_basic_auth_password = 'testing'
     test_output: Path = None
     pdf_generation_url = 'http://pdf/generate.pdf'
@@ -34,7 +37,7 @@ class Settings(BaseSettings):
     stats_token = ''
     max_request_stats = int(1e5)
 
-    # message bird
+    # messagebird
     messagebird_key = ''
     messagebird_url = 'https://rest.messagebird.com'
 

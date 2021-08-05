@@ -1,110 +1,146 @@
 import asyncio
-import os
+
+import arq
 import pytest
 import re
 import uuid
-from aiohttp.test_utils import teardown_test_loop
-from aioredis import create_redis
-from arq import ArqRedis, Worker
-from atoolbox.test_utils import DummyServer, create_dummy_server
-from buildpg import Values, asyncpg
 
-from src.main import create_app
-from src.management import prepare_database
+from arq import create_pool, Worker
+from foxglove.test_server import create_dummy_server
+from httpx import AsyncClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from foxglove.testing import Client as TestClient
+
+from src.db import prepare_database
+from src.main import app, glove
+from src.models import MessageGroup, Company
 from src.schema import EmailSendModel, SendMethod
 from src.settings import Settings
-from src.views import get_create_company_id
+from src.utils import get_db
 from src.worker import startup as worker_startup, worker_functions
 
 from . import dummy_server
 
 
-def pytest_addoption(parser):
-    parser.addoption('--reuse-db', action='store_true', default=False, help='keep the existing database if it exists')
+@pytest.fixture(name='loop')
+def fix_loop(settings):
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop
 
 
 DB_DSN = 'postgresql://postgres@localhost:5432/morpheus_test'
 
-
-@pytest.fixture(scope='session', name='clean_db')
-def _fix_clean_db(request):
-    # loop fixture has function scope so can't be used here.
-    settings = Settings(pg_dsn=os.getenv('DATABASE_URL', DB_DSN))
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(prepare_database(settings, not request.config.getoption('--reuse-db')))
-    teardown_test_loop(loop)
+engine = create_engine(DB_DSN)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-@pytest.fixture(name='db_conn')
-async def _fix_db_conn(loop, settings, clean_db):
-    conn = await asyncpg.connect_b(dsn=settings.pg_dsn, loop=loop)
-
-    tr = conn.transaction()
-    await tr.start()
-
-    await conn.execute("set client_min_messages = 'log'")
-
-    yield conn
-
-    await tr.rollback()
-    await conn.close()
+def override_get_db():
+    try:
+        db = TestingSessionLocal()
+        yield db
+    finally:
+        db.close()
 
 
-@pytest.yield_fixture
-async def redis(loop, settings):
-    addr = settings.redis_settings.host, settings.redis_settings.port
-
-    redis = await create_redis(addr, db=settings.redis_settings.database, encoding='utf8', commands_factory=ArqRedis)
-    await redis.flushdb()
-
-    yield redis
-
-    redis.close()
-    await redis.wait_closed()
+app.dependency_overrides[get_db] = override_get_db
 
 
-@pytest.fixture(name='dummy_server')
-async def _fix_dummy_server(aiohttp_server):
-    ctx = {'mandrill_subaccounts': {}}
-    return await create_dummy_server(aiohttp_server, extra_routes=dummy_server.routes, extra_context=ctx)
-
-
-@pytest.fixture
-def settings(tmpdir, dummy_server: DummyServer):
-    return Settings(
-        pg_dsn=os.getenv('DATABASE_URL', DB_DSN),
-        auth_key='testing-key',
+@pytest.fixture(name='settings')
+def fix_settings(tmpdir):
+    settings = Settings(
+        dev_mode=False,
+        test_mode=True,
+        pg_dsn=DB_DSN,
         test_output=str(tmpdir),
-        pdf_generation_url=dummy_server.server_name + '/generate.pdf',
+        mandrill_url='http://localhost:8000/mandrill/',
         mandrill_key='good-mandrill-testing-key',
-        log_level='ERROR',
-        mandrill_url=dummy_server.server_name + '/mandrill',
-        mandrill_timeout=0.5,
-        host_name=None,
-        click_host_name='click.example.com',
-        messagebird_key='good-messagebird-testing-key',
-        messagebird_url=dummy_server.server_name + '/messagebird',
-        stats_token='test-token',
-        max_request_stats=10,
+        auth_key='testing-key',
+        secret_key='testkey',
+        origin='https://example.com',
     )
+    assert not settings.dev_mode
+    glove._settings = settings
+
+    yield settings
+    glove.pg = TestingSessionLocal()
+    glove._settings = None
+
+
+@pytest.fixture(name='db')
+def clean_db(settings, loop):
+    loop.run_until_complete(prepare_database(settings, True))
+    yield from override_get_db()
 
 
 @pytest.fixture(name='cli')
-async def _fix_cli(loop, test_client, settings, db_conn, redis):
-    async def pre_startup(app):
-        app.update(redis=redis)
-
-    app = create_app(settings=settings)
-    app.update(webhook_auth_key=b'testing')
-    app.on_startup.insert(0, pre_startup)
-    cli = await test_client(app)
-    cli.server.app['morpheus_api'].root = f'http://localhost:{cli.server.port}/'
-    return cli
+def client(loop):
+    app.user_middleware = []
+    app.middleware_stack = app.build_middleware_stack()
+    app.state.webhook_auth_key = b'testing'
+    with TestClient(app) as cli:
+        yield cli
 
 
 @pytest.fixture
-def send_email(cli, worker):
-    async def _send_message(status_code=201, **extra):
+def redis(loop, settings):
+    redis = loop.run_until_complete(create_pool(settings.redis_settings))
+    yield redis
+
+
+class CustomAsyncClient(AsyncClient):
+    def __init__(self, *args, settings, local_server, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.settings: Settings = settings
+        self.scheme, host_port = local_server.split('://')
+        self.host, port = host_port.split(':')
+        self.port = int(port)
+
+    def request(self, method, url, **kwargs):
+        url = url.replace('8000', str(self.port))
+        return super().request(method, url, **kwargs)
+
+
+@pytest.fixture(name='dummy_server')
+def _fix_dummy_server(loop, settings):
+    ctx = {'mandrill_subaccounts': {}}
+    ds = loop.run_until_complete(create_dummy_server(loop, extra_routes=dummy_server.routes, extra_context=ctx))
+
+    custom_client = CustomAsyncClient(settings=settings, local_server=ds.server_name)
+    glove._http = custom_client
+    yield ds
+
+    loop.run_until_complete(ds.stop())
+
+
+@pytest.fixture(name='worker_ctx')
+def _fix_worker_ctx(loop, settings):
+    ctx = dict(settings=settings, pg=TestingSessionLocal())
+    loop.run_until_complete(worker_startup(ctx))
+    yield ctx
+
+
+@pytest.fixture(name='worker')
+def _fix_worker(loop, cli, worker_ctx):
+    worker = Worker(
+        functions=worker_functions,
+        redis_pool=loop.run_until_complete(arq.create_pool(glove.settings.redis_settings)),
+        burst=True,
+        poll_delay=0.01,
+        ctx=worker_ctx,
+    )
+    yield worker
+    loop.run_until_complete(worker.close())
+
+
+@pytest.fixture()
+def send_email(cli, worker, loop):
+    def _send_email(status_code=201, **extra):
         data = dict(
             uid=str(uuid.uuid4()),
             main_template='<body>\n{{{ message }}}\n</body>',
@@ -115,22 +151,21 @@ def send_email(cli, worker):
             context={'message': 'this is a test'},
             recipients=[{'address': 'foobar@testing.com'}],
         )
-        # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
-        r = await cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-        assert r.status == status_code
-        await worker.run_check()
+        r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+        assert r.status_code == status_code
+        loop.run_until_complete(worker.run_check())
         if len(data['recipients']) != 1:
             return NotImplemented
         else:
             return re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
 
-    return _send_message
+    return _send_email
 
 
 @pytest.fixture
-def send_sms(cli, worker):
-    async def _send_message(**extra):
+def send_sms(cli, worker, loop):
+    def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),
             main_template='this is a test {{ variable }}',
@@ -140,34 +175,13 @@ def send_sms(cli, worker):
             context={'variable': 'apples'},
             recipients=[{'number': '07896541236'}],
         )
-        # assert all(e in data for e in extra), f'{extra.keys()} fields not in {data.keys()}'
         data.update(**extra)
-        r = await cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-        assert r.status == 201
-        await worker.run_check()
+        r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+        assert r.status_code == 201
+        loop.run_until_complete(worker.run_check())
         return data['uid'] + '-447896541236'
 
     return _send_message
-
-
-@pytest.yield_fixture(name='worker_ctx')
-async def _fix_worker_ctx(settings, db_conn):
-    ctx = dict(settings=settings)
-    await worker_startup(ctx)
-
-    yield ctx
-
-    await asyncio.gather(ctx['session'].close(), ctx['mandrill'].close(), ctx['messagebird'].close())
-
-
-@pytest.yield_fixture(name='worker')
-async def _fix_worker(cli, worker_ctx):
-    worker = Worker(
-        functions=worker_functions, redis_pool=cli.server.app['redis'], burst=True, poll_delay=0.01, ctx=worker_ctx
-    )
-
-    yield worker
-    await worker.close()
 
 
 @pytest.fixture(name='call_send_emails')
@@ -182,17 +196,15 @@ def _fix_call_send_emails(db_conn):
             recipients=[],
         )
         m = EmailSendModel(**dict(base_kwargs, **kwargs))
-        company_id = await get_create_company_id(db_conn, m.company_code)
-        group_id = await db_conn.fetchval_b(
-            'insert into message_groups (:values__names) values :values returning id',
-            values=Values(
-                uuid=m.uid,
-                company_id=company_id,
-                message_method=m.method.value,
-                from_email=m.from_address.email,
-                from_name=m.from_address.name,
-            ),
+        company = Company.manager.create(db_conn, code=m.company_code)
+        group = MessageGroup.manager.create(
+            db_conn,
+            uuid=m.uid,
+            company_id=company.id,
+            message_method=m.method.value,
+            from_email=m.from_address.email,
+            from_name=m.from_address.name,
         )
-        return group_id, company_id, m
+        return group.id, company.id, m
 
     return run

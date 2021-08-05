@@ -5,8 +5,7 @@ from foxglove.exceptions import HttpConflict
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.responses import JSONResponse
 
-from src import crud
-from src.models import MessageGroup
+from src.models import MessageGroup, Company
 from src.schema import EmailSendModel
 from src.utils import get_db
 
@@ -23,19 +22,19 @@ async def email_send_view(m: EmailSendModel, conn=Depends(get_db)):
     await glove.redis.expire(group_key, 86400)
 
     logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
-    company_id = crud.get_create_company_id(conn, m.company_code)
+    company = Company.manager.get_or_create(conn, code=m.company_code)
 
-    message_group = MessageGroup(
-        uuid=m.uid,
-        company_id=company_id,
+    message_group = MessageGroup.manager.create(
+        conn,
+        uuid=str(m.uid),
+        company_id=company.id,
         message_method=m.method,
         from_email=m.from_address.email,
         from_name=m.from_address.name,
     )
-    message_group = crud.create_message_group(conn, message_group)
     recipients = m.recipients
     m_base = m.copy(exclude={'recipients'})
     del m
     for recipient in recipients:
-        await glove.redis.enqueue_job('send_email', message_group.id, company_id, recipient, m_base)
-    return JSONResponse('201 job enqueued\n', status_code=201)
+        await glove.redis.enqueue_job('send_email', message_group.id, company.id, recipient, m_base)
+    return JSONResponse({'message': '201 job enqueued'}, status_code=201)

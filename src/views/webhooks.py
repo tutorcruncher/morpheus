@@ -1,13 +1,15 @@
 import base64
 import hashlib
 import hmac
-import ujson
+import json
+
 from fastapi import APIRouter, Header
 from foxglove import glove
-from foxglove.exceptions import HttpBadRequest, HttpForbidden
+from foxglove.exceptions import HttpForbidden
 from foxglove.route_class import KeepBodyAPIRoute
+from starlette.requests import Request
 
-from src.schema import MandrillSingleWebhook, MessageBirdWebHook, SendMethod
+from src.schema import MandrillSingleWebhook, MessageBirdWebHook, SendMethod, MandrillWebhook
 from src.views.common import index
 
 app = APIRouter(route_class=KeepBodyAPIRoute)
@@ -28,22 +30,16 @@ async def mandrill_head_view():
 
 
 @app.post('/mandrill/')
-async def mandrill_webhook_view(event_data: dict, X_Mandrill_Signature: str = Header(None)):
+async def mandrill_webhook_view(request: Request, events: MandrillWebhook, X_Mandrill_Signature: bytes = Header(None)):
+    events_json = json.dumps((await request.json())['events'])
+    msg = f'{glove.settings.mandrill_webhook_url}mandrill_events{events_json}'
     sig_generated = base64.b64encode(
-        hmac.new(
-            glove.settings.webhook_auth_key,
-            msg=(glove.settings.mandrill_webhook_url + 'mandrill_events' + event_data).encode(),
-            digestmod=hashlib.sha1,
-        ).digest()
+        hmac.new(request.app.state.webhook_auth_key, msg=msg.encode(), digestmod=hashlib.sha1).digest()
     )
     if not hmac.compare_digest(sig_generated, X_Mandrill_Signature):
         raise HttpForbidden('invalid signature')
-    try:
-        events = ujson.loads(event_data)
-    except ValueError as e:
-        raise HttpBadRequest(f'invalid json data: {e}')
 
-    await glove.redis.enqueue_job('update_mandrill_webhooks', events)
+    await glove.redis.enqueue_job('update_mandrill_webhooks', events.events)
     return 'message status updated\n'
 
 

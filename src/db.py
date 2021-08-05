@@ -8,7 +8,7 @@ from src.models import Base
 from src.settings import Settings
 
 settings = Settings()
-logger = logging.getLogger('management')
+logger = logging.getLogger('db')
 
 engine = create_engine(settings.pg_dsn)
 SessionLocal = sessionmaker(bind=engine)
@@ -51,25 +51,6 @@ DROP TRIGGER IF EXISTS create_tsvector ON messages;
 CREATE TRIGGER create_tsvector BEFORE INSERT ON messages FOR EACH ROW EXECUTE PROCEDURE set_message_vector();
 """
 
-DT_FUNCTIONS = """
-CREATE OR REPLACE FUNCTION iso_ts(v TIMESTAMPTZ, tz VARCHAR(63)) RETURNS VARCHAR(63) AS $$
-  DECLARE
-  BEGIN
-    PERFORM set_config('timezone', tz, true);
-    return to_char(v, 'YYYY-MM-DD"T"HH24:MI:SSOF');
-  END;
-$$ LANGUAGE plpgsql;
-
-
-CREATE OR REPLACE FUNCTION pretty_ts(v TIMESTAMPTZ, tz VARCHAR(63)) RETURNS VARCHAR(63) AS $$
-  DECLARE
-  BEGIN
-    PERFORM set_config('timezone', tz, true);
-    return to_char(v, 'Dy YYYY-MM-DD HH24:MI TZ');
-  END;
-$$ LANGUAGE plpgsql;
-"""
-
 AGGREGATION_VIEW = """
 DROP materialized view IF EXISTS message_aggregation;
 CREATE materialized view message_aggregation AS (
@@ -103,7 +84,6 @@ async def prepare_database(settings: Settings, delete_existing: bool):
     await populate_db(engine)
     engine.execute(UPDATE_MESSAGE_TRIGGER)
     engine.execute(MESSAGE_VECTOR_TRIGGER)
-    engine.execute(DT_FUNCTIONS)
     engine.execute(AGGREGATION_VIEW)
     engine.dispose()
 

@@ -1,3 +1,5 @@
+import asyncio
+
 import arq
 import logging
 import uvicorn as uvicorn
@@ -7,13 +9,13 @@ from foxglove.middleware import ErrorMiddleware
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.staticfiles import StaticFiles
 
-from src.management import SessionLocal, prepare_database
+from src.db import SessionLocal, prepare_database
+from src.ext import Mandrill
 from src.settings import Settings
 from src.views import common, email, messages, sms, subaccounts, webhooks
 
 logger = logging.getLogger('main')
 settings = Settings()
-
 
 glove._settings = Settings()
 
@@ -23,16 +25,30 @@ async def startup():
 
     setup_sentry()
     if not hasattr(glove, 'pg'):
-        await prepare_database(settings, False)
-        glove.pg = SessionLocal
+        await prepare_database(glove.settings, False)
+        glove.pg = SessionLocal()
     if not hasattr(glove, 'redis') and glove.settings.redis_settings:
         glove.redis = await arq.create_pool(glove.settings.redis_settings)
+    glove.mandrill = Mandrill(glove.settings)
+
+
+async def shutdown():
+    coros = []
+    if http := getattr(glove, 'http', None):
+        coros.append(http.aclose())
+    if redis := getattr(glove, 'redis', None):
+        redis.close()
+        coros.append(redis.wait_closed())
+    await asyncio.gather(*coros)
+    for prop in 'pg', '_http', 'redis', 'mandrill':
+        if hasattr(glove, prop):
+            delattr(glove, prop)
 
 
 app = FastAPI(
     title='Morpheus',
     on_startup=[startup],
-    on_shutdown=[glove.shutdown],
+    on_shutdown=[shutdown],
     docs_url=None,
     redoc_url=None,
     openapi_url=None,

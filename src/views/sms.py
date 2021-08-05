@@ -4,13 +4,14 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from foxglove import glove
-from foxglove.exceptions import HttpConflict
+from foxglove.exceptions import HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
+from sqlalchemy.exc import NoResultFound
 from starlette.responses import JSONResponse
 from typing import Tuple
 
 from src import crud
-from src.models import MessageGroup
+from src.models import MessageGroup, Company, Message
 from src.schema import Session, SmsNumbersModel, SmsSendMethod, SmsSendModel
 from src.utils import get_db
 from src.worker import validate_number
@@ -23,8 +24,11 @@ app = APIRouter(route_class=KeepBodyAPIRoute)
 async def sms_billing_view(
     session: Session, method: SmsSendMethod, start: datetime, end: datetime, conn=Depends(get_db)
 ):
-    company_id = crud.get_company_id(conn, session.company)
-    total_spend = crud.get_sms_spend(conn, company_id, start, end, method)
+    try:
+        company = Company.manager.get(conn, code=session.company)
+    except NoResultFound:
+        raise HttpNotFound('company not found')
+    total_spend = Message.manager.get_sms_spend(conn, company.id, start, end, method)
     return {
         'company': session.company,
         'start': start.strftime('%Y-%m-%d'),
@@ -47,24 +51,25 @@ async def send_sms(m: SmsSendModel, conn=Depends(get_db)):
     await glove.redis.expire(group_key, 86400)
 
     month_spend = None
-    company_id = crud.get_create_company_id(conn, m.company_code)
+    company = Company.manager.get_or_create(conn, code=m.company_code)
     if m.cost_limit is not None:
         start, end = month_interval()
-        month_spend = crud.get_sms_spend(conn, company_id, start, end, m.method)
+        month_spend = Message.manager.get_sms_spend(conn, company.id, start, end, m.method)
         if month_spend >= m.cost_limit:
             return JSONResponse(
                 content={'status': 'send limit exceeded', 'cost_limit': m.cost_limit, 'spend': month_spend},
                 status_code=402,
             )
-    message_group = MessageGroup(uuid=m.uid, company_id=company_id, message_method=m.method, from_name=m.from_name)
-    message_group = crud.create_message_group(conn, message_group)
-    logger.info('%s sending %d SMSs', company_id, len(m.recipients))
+    message_group = MessageGroup.manager.create(
+        conn, uuid=m.uid, company_id=company.id, message_method=m.method, from_name=m.from_name
+    )
+    logger.info('%s sending %d SMSs', company.id, len(m.recipients))
 
     recipients = m.recipients
     m_base = m.copy(exclude={'recipients'})
     del m
     for recipient in recipients:
-        await glove.redis.enqueue_job('send_sms', message_group.id, company_id, recipient, m_base)
+        await glove.redis.enqueue_job('send_sms', message_group.id, company.id, recipient, m_base)
 
     return JSONResponse(content={'status': 'enqueued', 'spend': month_spend}, status_code=201)
 

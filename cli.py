@@ -1,29 +1,24 @@
+from pprint import pprint
+
 import click
 import hashlib
 import hmac
 import json
 import os
-import re
 import requests
 import uuid
 from arq.utils import to_unix_ms
 from datetime import datetime
 from functools import partial
+
+from foxglove import glove
 from pydantic.datetime_parse import parse_datetime
-from pygments import highlight
-from pygments.formatters.terminal256 import Terminal256Formatter
-from pygments.lexers.data import JsonLexer
-from pygments.lexers.html import HtmlLexer
 from time import time
 from urllib.parse import urlencode
 
-from src.settings import Settings
 
 hostname = os.getenv('APP_HOST_NAME', 'morpheus.example.com')
 root_url = os.getenv('MORPHEUS_URL', f'https://{hostname}')
-
-
-settings = Settings()
 
 
 def sizeof_fmt(num):
@@ -41,29 +36,9 @@ def get_data(r):
         raise RuntimeError(f'response not valid json:\n{r.text}')
 
 
-formatter = Terminal256Formatter(style='vim')
-
-
-def replace_data(m):
-    dt = parse_datetime(m.group())
-    # WARNING: this means the output is not valid json, but is more readable
-    return f'{m.group()} ({dt:%a %Y-%m-%d %H:%M})'
-
-
-def print_data(data, fmt='json'):
-    if fmt == 'html':
-        lexer = HtmlLexer()
-    else:
-        lexer = JsonLexer()
-    if not isinstance(data, str):
-        data = json.dumps(data, indent=2)
-        data = re.sub(r'14\d{8,11}', replace_data, data)
-    print(highlight(data, lexer, formatter))
-
-
 def print_response(r, *, include=None, exclude=set()):
     data = {k: v for k, v in get_data(r).items() if k not in exclude and (not include or k in include)}
-    print_data(data)
+    pprint(data)
 
 
 def modify_url(url, user_auth_key, company):
@@ -238,9 +213,9 @@ def reset_database():
     """
     Delete the main database and recreate it empty. THIS CAN BE DESTRUCTIVE!
     """
-    from src.management import reset_database
+    from src.db import reset_database
 
-    reset_database(settings)
+    reset_database(glove.settings)
 
 
 if __name__ == '__main__':

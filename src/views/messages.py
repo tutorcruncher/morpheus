@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends
 from foxglove.exceptions import HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from markupsafe import Markup
+from sqlalchemy.exc import NoResultFound
 from starlette.requests import Request
 from typing import List, Optional
 
 from src import crud
+from src.models import Company, Message
 from src.schema import SendMethod, Session
 from src.utils import get_db
 from src.views.sms import month_interval
@@ -25,11 +27,14 @@ async def messages_list(
     session=Session,
 ):
     sms_method = 'sms' in method
-    company_id = crud.get_company_id(conn, session.company)
-    data = {'messages': crud.get_messages(conn, company_id, tags=tags, q=q, p_from=p_from)}
+    try:
+        company = Company.manager.get(conn, code=session.company)
+    except NoResultFound:
+        raise HttpNotFound('company not found')
+    data = {'messages': Message.manager.filter(conn, company_id=company.id, tags=tags, q=q, p_from=p_from)}
     if sms_method:
         start, end = month_interval()
-        data['spend'] = crud.get_sms_spend(conn, company_id, start, end, method)
+        data['spend'] = Message.manager.get_sms_spend(conn, company.id, start, end, method)
     return data
 
 
@@ -41,12 +46,13 @@ async def message_details(
     session=Session,
     conn=Depends(get_db),
 ):
-    m = crud.get_message(conn, session.company, id)
-    if not m:
+    try:
+        m = Message.get(conn, company__code=session.company, id=id)
+    except NoResultFound:
         raise HttpNotFound('message not found')
     preview_path = request.url_for('preview_message', method=method, id=id)
 
-    extra_count, events = crud.get_message_events(conn, m.id)
+    extra_count, events = Message.manager.get_events(conn, message_id=m.id)
     events_data = []
     for event in events[:50]:
         event_data = dict(status=event['status'].title(), datetime=event['ts'])
@@ -79,7 +85,7 @@ async def preview_message(method: SendMethod, id: int, session=Session, conn=Dep
     """
     preview a message
     """
-    m = crud.get_message(conn, session.company, id)
+    m = Message.manager.get(conn, company__code=session.company, id=id)
     if not m:
         raise HttpNotFound('message not found')
 
@@ -106,5 +112,8 @@ async def message_aggregation(method: SendMethod, session=Session, conn=Depends(
     """
     Aggregated sends and opens over time for an authenticated user
     """
-    company_id = crud.get_company_id(conn, session.company)
-    return crud.get_messages_aggregated(conn, company_id, method)
+    try:
+        company = Company.manager.get(conn, code=session.company)
+    except NoResultFound:
+        raise HttpNotFound('company not found')
+    return crud.get_messages_aggregated(conn, company.id, method)
