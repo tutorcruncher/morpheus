@@ -8,7 +8,6 @@ import hashlib
 import json
 import logging
 import re
-from aiohttp import ClientConnectionError, ClientSession, ClientTimeout
 from arq import Retry, cron
 from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
@@ -33,6 +32,7 @@ from phonenumbers.geocoder import country_name_for_number, description_for_numbe
 from pydantic.datetime_parse import parse_datetime
 from typing import Dict, List, Optional
 
+from pydf import AsyncPydf
 from sqlalchemy.exc import NoResultFound
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
@@ -56,7 +56,6 @@ from src.schema import (
     SmsSendModel,
 )
 from src.settings import Settings
-from src.utils import get_db
 
 test_logger = logging.getLogger('worker.test')
 main_logger = logging.getLogger('worker')
@@ -150,9 +149,9 @@ async def startup(ctx):
         email_click_url=f'https://{settings.click_host_name}/l',
         sms_click_url=f'{settings.click_host_name}/l',
         pg=ctx.get('pg') or SessionLocal(),
-        session=ClientSession(timeout=ClientTimeout(total=30)),
         mandrill=Mandrill(settings=settings),
         messagebird=MessageBird(settings=settings),
+        pydf=AsyncPydf(),
     )
 
 
@@ -323,15 +322,14 @@ class SendEmail:
             await self._store_email_failed(MessageStatus.render_failed, f'Error rendering email: {e}')
 
     async def _generate_base64_pdf(self, pdf_attachments):
-        headers = dict(pdf_page_size='A4', pdf_zoom='1.25', pdf_margin_left='8mm', pdf_margin_right='8mm')
+        kwargs = dict(page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm')
         for a in pdf_attachments:
-            async with self.ctx['session'].get(self.settings.pdf_generation_url, data=a.html, headers=headers) as r:
-                if r.status_code == 200:
-                    pdf_content = await r.read()
-                    yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
-                else:
-                    data = await r.text()
-                    main_logger.warning('error generating pdf %s, data: %s', r.status, data)
+            try:
+                pdf_content = await self.ctx['pydf'].generate_pdf(a.html, **kwargs)
+            except RuntimeError as e:
+                main_logger.warning('error generating pdf, data: %s', e)
+            else:
+                yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
 
     async def _generate_base64(self, attachments: List[AttachmentModel]):
         for attachment in attachments:

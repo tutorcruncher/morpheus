@@ -2,7 +2,7 @@ import json
 import logging
 from aiohttp.hdrs import METH_DELETE, METH_GET, METH_POST, METH_PUT
 from foxglove import glove
-from httpx import AsyncClient, Response
+from httpx import Response
 
 from .settings import Settings
 

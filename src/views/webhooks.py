@@ -34,7 +34,7 @@ async def mandrill_webhook_view(request: Request, events: MandrillWebhook, X_Man
     events_json = json.dumps((await request.json())['events'])
     msg = f'{glove.settings.mandrill_webhook_url}mandrill_events{events_json}'
     sig_generated = base64.b64encode(
-        hmac.new(request.app.state.webhook_auth_key, msg=msg.encode(), digestmod=hashlib.sha1).digest()
+        hmac.new(glove.settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
     )
     if not hmac.compare_digest(sig_generated, X_Mandrill_Signature):
         raise HttpForbidden('invalid signature')

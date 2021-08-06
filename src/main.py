@@ -29,7 +29,8 @@ async def startup():
         glove.pg = SessionLocal()
     if not hasattr(glove, 'redis') and glove.settings.redis_settings:
         glove.redis = await arq.create_pool(glove.settings.redis_settings)
-    glove.mandrill = Mandrill(glove.settings)
+    if not hasattr(glove, 'mandrill'):
+        glove.mandrill = Mandrill(glove.settings)
 
 
 async def shutdown():

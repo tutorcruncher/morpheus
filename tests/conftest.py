@@ -60,6 +60,7 @@ def fix_settings(tmpdir):
         test_output=str(tmpdir),
         mandrill_url='http://localhost:8000/mandrill/',
         mandrill_key='good-mandrill-testing-key',
+        mandrill_webhook_key='testing-mandrill-api-key',
         auth_key='testing-key',
         secret_key='testkey',
         origin='https://example.com',

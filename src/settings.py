@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     mandrill_key = ''
     mandrill_url = 'https://mandrillapp.com/api/1.0'
     mandrill_timeout = 30.0
+    mandrill_webhook_key: str = ''
     log_level = 'INFO'
     verbose_http_errors = True
     user_auth_key: bytes = b'insecure'
@@ -29,7 +30,6 @@ class Settings(BaseSettings):
 
     admin_basic_auth_password = 'testing'
     test_output: Path = None
-    pdf_generation_url = 'http://pdf/generate.pdf'
     local_api_url = 'http://localhost:8000'
     public_local_api_url = 'http://localhost:5000'
 
@@ -57,6 +57,9 @@ class Settings(BaseSettings):
             'sentry_dsn': {'env': 'SENTRY_DSN'},
             'release': {'env': ['COMMIT', 'RELEASE', 'HEROKU_SLUG_COMMIT']},
             'messagebird_key': {'env': 'MESSAGEBIRD_KEY'},
+            'mandrill_key': {'env': 'MANDRILL_KEY'},
             'stats_token': {'env': 'STATS_TOKEN'},
             'click_host_name': {'env': 'CLICK_HOST_NAME'},
+            'mandrill_webhook_key': {'env': 'MANDRILL_WEBHOOK_KEY'},
+            'auth_key': {'env': 'AUTH_KEY'},
         }

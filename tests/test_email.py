@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import json
 import logging
-import pickle
 import pytest
 import re
 from arq import Retry
@@ -16,7 +15,6 @@ from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
 from src.ext import ApiError
-from src.mandrill import get_mandrill_webhook_key
 from src.models import Message, Event, Link
 from src.schema import EmailRecipientModel
 from src.worker import email_retrying, send_email as worker_send_email
@@ -108,7 +106,7 @@ def test_webhook_old(cli: TestClient, send_email, db: Session, worker, loop):
     assert r.status_code == 200, r.text
     assert loop.run_until_complete(worker.run_check()) == 2
 
-    message = db.refresh(message)
+    db.refresh(message)
     assert message.status == 'send'
     events = Event.manager.filter(db, message_id=message.id)
     assert len(events) == 1
@@ -188,7 +186,7 @@ def test_example_email_address(send_email, db: Session, dummy_server):
     assert m.status == 'send'
 
 
-def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop, dummy_server):
+def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop, dummy_server, settings):
     send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     assert Message.manager.count(db) == 1
 
@@ -199,7 +197,7 @@ def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop
 
     sig = base64.b64encode(
         hmac.new(
-            b'testing',
+            settings.mandrill_webhook_key.encode(),
             msg=(
                 b'https://localhost/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
                 b'"event": "open", "_id": "mandrill-testingexampleorg", "foobar": ["hello", "world"]}]'
@@ -218,14 +216,14 @@ def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop
     assert events[0].status == 'open'
 
 
-def test_mandrill_webhook_invalid(cli: TestClient, send_email, db: Session, dummy_server):
+def test_mandrill_webhook_invalid(cli: TestClient, send_email, db: Session, dummy_server, settings):
     send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
     data = {'events': messages}
 
     sig = base64.b64encode(
         hmac.new(
-            b'testing',
+            settings.mandrill_webhook_key.encode(),
             msg=(
                 b'https://localhost/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
                 b'"event": "open", "_id": "e587306</div></body><meta name=", "foobar": ["x"]}]'
@@ -511,6 +509,7 @@ def test_send_with_pdf(send_email, tmpdir, db: Session):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
+    debug(msg_file)
     assert '<h1>testing</h1>"' in msg_file
 
     attachments = Message.manager.get(db, external_id=message_id).attachments
@@ -568,7 +567,7 @@ def test_pdf_not_unicode(send_email, tmpdir, cli):
     assert '"testing.pdf:binary-"' in msg_file
 
 
-def test_pdf_empty(send_email, tmpdir):
+def test_pdf_empty(send_email, tmpdir, dummy_server):
     message_id = send_email(
         recipients=[{'address': 'foobar@testing.com', 'pdf_attachments': [{'name': 'testing.pdf', 'html': ''}]}]
     )
@@ -780,59 +779,9 @@ def test_link_shortening_not_image(send_email, tmpdir, cli):
     assert re.search(r'<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
 
 
-def test_mandrill_key_not_setup(settings):
-    try:
-        assert app['webhook_auth_key'] is None
-        get_mandrill_webhook_key(app)
-        assert app['webhook_auth_key'] is None
-    finally:
-        app['mandrill'].close()
-        app['morpheus_api'].close()
-
-
-def test_mandrill_key_existing(settings):
-    settings.host_name = 'example.com'
-    try:
-        assert app['webhook_auth_key'] is None
-        get_mandrill_webhook_key(app)
-        assert app['webhook_auth_key'] == b'existing-auth-key'
-    finally:
-        app['mandrill'].close()
-        app['morpheus_api'].close()
-
-
-def test_mandrill_key_new(settings):
-    settings.host_name = 'different.com'
-    app = create_app(settings)
-    app['server_up_wait'] = 0
-    try:
-        assert app['webhook_auth_key'] is None
-        get_mandrill_webhook_key(app)
-        assert app['webhook_auth_key'] == b'new-auth-key'
-    finally:
-        app['mandrill'].close()
-        app['morpheus_api'].close()
-
-
-def test_mandrill_key_fail(settings):
-    settings.host_name = 'fail.com'
-    app = create_app(settings)
-    app['server_up_wait'] = 0
-    try:
-        assert app['webhook_auth_key'] is None
-        with pytest.raises(ApiError) as exc_info:
-            get_mandrill_webhook_key(app)
-        assert app['webhook_auth_key'] is None
-        pickle.dumps(exc_info.value)
-    finally:
-        app['mandrill'].close()
-        app['morpheus_api'].close()
-
-
 def test_not_json(cli: TestClient, tmpdir):
     r = cli.post('/send/email/', data='xxx', headers={'Authorization': 'testing-key'})
-    assert r.status_code == 400, r.text
-    assert {'message': 'Error decoding JSON'} == r.json()
+    assert r.status_code == 422, r.text
 
 
 def test_invalid_json(cli: TestClient, tmpdir):
@@ -846,8 +795,7 @@ def test_invalid_json(cli: TestClient, tmpdir):
         'recipients': [{'address': 'foobar_a@testing.com'}],
     }
     r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 400, r.text
+    assert r.status_code == 422
     assert {
-        'message': 'Invalid Data',
-        'details': [{'loc': ['uid'], 'msg': 'value is not a valid uuid', 'type': 'type_error.uuid'}],
+        'detail': [{'loc': ['body', 'uid'], 'msg': 'value is not a valid uuid', 'type': 'type_error.uuid'}]
     } == r.json()

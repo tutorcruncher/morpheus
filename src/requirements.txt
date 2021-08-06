@@ -17,3 +17,4 @@ sentry-sdk==1.1.0
 tqdm==4.62.0
 ua-parser==0.10.0
 ujson==4.0.2
+python-pdf==0.38

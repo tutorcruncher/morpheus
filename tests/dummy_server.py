@@ -121,17 +121,6 @@ async def messagebird_pricing(request):
     )
 
 
-async def generate_pdf(request):
-    assert request.headers['pdf_zoom'] == '1.25'
-    data = await request.read()
-    if not data:
-        return Response(text='request was empty', status=400)
-    elif b'binary' in data:
-        return Response(body=b'binary-\xfe', content_type='application/pdf')
-    else:
-        return Response(body=data, content_type='application/pdf')
-
-
 routes = [
     web.post('/mandrill/messages/send.json', mandrill_send_view),
     web.post('/mandrill/subaccounts/add.json', mandrill_sub_account_add),
@@ -143,5 +132,4 @@ routes = [
     web.get('/messagebird/lookup/{number}', messagebird_lookup),
     web.post('/messagebird/messages', messagebird_send),
     web.get('/messagebird/pricing/sms/outbound', messagebird_pricing),
-    web.route('*', '/generate.pdf', generate_pdf),
 ]
