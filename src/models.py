@@ -1,9 +1,8 @@
 from datetime import date
-
-from sqlalchemy import TEXT, VARCHAR, Column, Enum, Float, ForeignKey, Index, Integer, func, select, DateTime, literal
+from sqlalchemy import TEXT, VARCHAR, Column, DateTime, Enum, Float, ForeignKey, Index, Integer, func, literal, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
-from sqlalchemy.orm import declarative_base, relationship, Session
+from sqlalchemy.orm import Session, declarative_base, relationship
 from typing import List, Tuple
 
 from src.crud import BaseManager

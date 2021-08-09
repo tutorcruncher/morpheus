@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Header
 from foxglove import glove
 from foxglove.route_class import KeepBodyAPIRoute
 from html import escape
-
 from sqlalchemy.exc import NoResultFound
 from starlette.requests import Request
 from starlette.responses import RedirectResponse

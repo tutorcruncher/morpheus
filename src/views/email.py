@@ -5,7 +5,7 @@ from foxglove.exceptions import HttpConflict
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.responses import JSONResponse
 
-from src.models import MessageGroup, Company
+from src.models import Company, MessageGroup
 from src.schema import EmailSendModel
 from src.utils import get_db
 

@@ -2,7 +2,6 @@ import base64
 import hashlib
 import hmac
 import json
-
 from fastapi import APIRouter, Header
 from foxglove import glove
 from foxglove.exceptions import HttpForbidden, HttpUnprocessableEntity
@@ -10,7 +9,7 @@ from foxglove.route_class import KeepBodyAPIRoute
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from src.schema import MandrillSingleWebhook, MessageBirdWebHook, SendMethod, MandrillWebhook
+from src.schema import MandrillSingleWebhook, MandrillWebhook, MessageBirdWebHook, SendMethod
 from src.views.common import index
 
 app = APIRouter(route_class=KeepBodyAPIRoute)

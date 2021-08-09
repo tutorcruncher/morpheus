@@ -2,7 +2,7 @@ from dataclasses import asdict
 
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Body, Depends
 from foxglove import glove
 from foxglove.exceptions import HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
@@ -10,9 +10,9 @@ from sqlalchemy.exc import NoResultFound
 from starlette.responses import JSONResponse
 from typing import Tuple
 
-from src.models import MessageGroup, Company, Message
+from src.models import Company, Message, MessageGroup
 from src.schema import SmsNumbersModel, SmsSendMethod, SmsSendModel
-from src.utils import get_db, AdminAuth
+from src.utils import AdminAuth, get_db
 from src.worker import validate_number
 
 logger = logging.getLogger('views.sms')

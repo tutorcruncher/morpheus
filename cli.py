@@ -1,5 +1,3 @@
-from pprint import pprint
-
 import click
 import hashlib
 import hmac
@@ -9,13 +7,12 @@ import requests
 import uuid
 from arq.utils import to_unix_ms
 from datetime import datetime
-from functools import partial
-
 from foxglove import glove
+from functools import partial
+from pprint import pprint
 from pydantic.datetime_parse import parse_datetime
 from time import time
 from urllib.parse import urlencode
-
 
 hostname = os.getenv('APP_HOST_NAME', 'morpheus.example.com')
 root_url = os.getenv('MORPHEUS_URL', f'https://{hostname}')

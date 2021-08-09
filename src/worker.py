@@ -15,11 +15,10 @@ from asyncio import TimeoutError
 from chevron import ChevronError
 from datetime import datetime, timezone
 from enum import Enum
-from itertools import chain
-from pathlib import Path
-
 from foxglove import glove
 from httpx import ConnectError
+from itertools import chain
+from pathlib import Path
 from phonenumbers import (
     NumberParseException,
     PhoneNumberFormat,
@@ -31,10 +30,9 @@ from phonenumbers import (
 )
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic.datetime_parse import parse_datetime
-from typing import Dict, List, Optional
-
 from pydf import AsyncPydf
 from sqlalchemy.exc import NoResultFound
+from typing import Dict, List, Optional
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from src.db import SessionLocal
@@ -534,7 +532,6 @@ class SendSMS:
                         break
                     await asyncio.sleep(1)
                 if not hlr or not network:
-                    debug('aclled')
                     main_logger.warning('No HLR result found for %s after 30 attempts', number.number, extra=data)
                     return
                 mcc = str(network)[:3]

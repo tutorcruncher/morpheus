@@ -1,22 +1,19 @@
-import asyncio
-from pathlib import Path
-
 import arq
+import asyncio
 import pytest
 import re
 import uuid
-
-from arq import create_pool, Worker
+from arq import Worker, create_pool
 from foxglove.test_server import create_dummy_server
-from httpx import AsyncClient, URL
+from foxglove.testing import Client as TestClient
+from httpx import URL, AsyncClient
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from foxglove.testing import Client as TestClient
-
 from src.db import prepare_database
 from src.main import app, glove
-from src.models import MessageGroup, Company
+from src.models import Company, MessageGroup
 from src.schema import EmailSendModel, SendMethod
 from src.settings import Settings
 from src.utils import get_db

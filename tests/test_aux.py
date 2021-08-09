@@ -1,14 +1,12 @@
 import base64
-
 import pytest
-
 from foxglove.test_server import DummyServer
 from foxglove.testing import Client
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
 from src.ext import ApiError, ApiSession
-from src.models import Company, MessageGroup, Message
+from src.models import Company, Message, MessageGroup
 from tests.test_user_display import modify_url
 
 

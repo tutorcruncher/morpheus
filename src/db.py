@@ -1,7 +1,6 @@
+import arq
 import asyncio
 import logging
-
-import arq
 from foxglove.db.main import prepare_database as fox_prepare_database
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

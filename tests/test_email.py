@@ -9,13 +9,12 @@ from arq import Retry
 from datetime import datetime, timezone
 from pathlib import Path
 from pytest_toolbox.comparison import AnyInt, RegexStr
-from uuid import uuid4
-
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
+from uuid import uuid4
 
 from src.ext import ApiError
-from src.models import Message, Event, Link
+from src.models import Event, Link, Message
 from src.schema import EmailRecipientModel
 from src.worker import email_retrying, send_email as worker_send_email
 

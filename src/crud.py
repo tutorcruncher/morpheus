@@ -1,7 +1,6 @@
-from typing import Union, List
-
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session
+from typing import List, Union
 
 Models = Union['Company', 'Event', 'Message', 'MessageGroup', 'Link']
 

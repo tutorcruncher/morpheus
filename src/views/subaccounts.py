@@ -1,7 +1,5 @@
 import json
 import logging
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from foxglove import glove
 from foxglove.exceptions import HttpBadRequest, HttpConflict, HttpNotFound
@@ -9,10 +7,11 @@ from foxglove.route_class import KeepBodyAPIRoute
 from httpx import Response
 from sqlalchemy.exc import NoResultFound
 from starlette.responses import JSONResponse
+from typing import Optional
 
 from src.models import Company, Message, MessageGroup
 from src.schema import SendMethod, SubaccountModel
-from src.utils import get_db, AdminAuth
+from src.utils import AdminAuth, get_db
 
 logger = logging.getLogger('views.subaccounts')
 app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])

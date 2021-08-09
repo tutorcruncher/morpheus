@@ -1,6 +1,5 @@
-import asyncio
-
 import arq
+import asyncio
 import logging
 import uvicorn as uvicorn
 from fastapi import FastAPI, Request

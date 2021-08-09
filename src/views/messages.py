@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from src import crud
 from src.models import Company, Message
-from src.schema import SendMethod, Session, UserSession, MessageListOutModel
+from src.schema import MessageListOutModel, SendMethod, Session, UserSession
 from src.utils import get_db
 from src.views.sms import month_interval
 

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from uuid import uuid4
 
-from src.models import Message, Link
+from src.models import Link, Message
 
 
 def test_send_message(cli, tmpdir, worker, loop):
