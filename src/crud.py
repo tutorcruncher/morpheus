@@ -1,10 +1,7 @@
-from typing import TYPE_CHECKING, Union, List
+from typing import Union, List
 
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session
-
-if TYPE_CHECKING:
-    from src.models import Company, Event, Message, MessageGroup, Link
 
 Models = Union['Company', 'Event', 'Message', 'MessageGroup', 'Link']
 
@@ -57,8 +54,8 @@ class BaseManager:
         if not self.model:
             self.model = model
 
-    def count(self, conn: Session) -> int:
-        return conn.query(self.model).count()
+    def count(self, conn: Session, **kwargs) -> int:
+        return conn.query(self.model).filter_by(**kwargs).count()
 
     def get(self, conn: Session, **kwargs) -> Union[Models]:
         return conn.query(self.model).filter_by(**kwargs).one()
@@ -76,8 +73,8 @@ class BaseManager:
         conn.refresh(instance)
         return instance
 
-    def create_many(self, conn: Session, *instances) -> None:
-        conn.execute(self.model.c.insert(), instances)
+    def create_many(self, conn: Session, *instances: List[Union[Models]]) -> None:
+        conn.add_all(instances)
         conn.commit()
 
     def get_or_create(self, conn: Session, **kwargs) -> Union[Models]:
@@ -85,6 +82,13 @@ class BaseManager:
             instance = self.get(conn, **kwargs)
         except NoResultFound:
             instance = self.create(conn, **kwargs)
+        return instance
+
+    def update(self, conn: Session, instance: Union[Models]):
+        assert instance.id
+        conn.add(instance)
+        conn.commit()
+        conn.refresh(instance)
         return instance
 
     def delete(self, conn: Session, **kwargs) -> int:

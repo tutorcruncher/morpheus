@@ -509,8 +509,7 @@ def test_send_with_pdf(send_email, tmpdir, db: Session):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
-    debug(msg_file)
-    assert '<h1>testing</h1>"' in msg_file
+    assert 'testing.pdf' in msg_file
 
     attachments = Message.manager.get(db, external_id=message_id).attachments
     assert set(attachments) == {'123::testing.pdf', '::different.pdf'}
@@ -564,7 +563,7 @@ def test_pdf_not_unicode(send_email, tmpdir, cli):
     )
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
-    assert '"testing.pdf:binary-"' in msg_file
+    assert 'testing.pdf' in msg_file
 
 
 def test_pdf_empty(send_email, tmpdir, dummy_server):
@@ -576,80 +575,74 @@ def test_pdf_empty(send_email, tmpdir, dummy_server):
     assert '\n  "attachments": []\n' in msg_file
 
 
-def test_mandrill_send_client_error(db, worker_ctx, call_send_emails):
+def test_mandrill_send_client_error(db, worker_ctx, call_send_emails, loop):
     group_id, c_id, m = call_send_emails(subject_template='__slow__')
 
     assert Message.manager.count(db) == 0
     worker_ctx['job_try'] = 1
 
     with pytest.raises(Retry) as exc_info:
-        worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        loop.run_until_complete(
+            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        )
     assert exc_info.value.defer_score == 5_000
 
     assert Message.manager.count(db) == 0
 
 
-def test_mandrill_send_many_errors(db, worker_ctx, call_send_emails):
+def test_mandrill_send_many_errors(db, worker_ctx, call_send_emails, loop):
     group_id, c_id, m = call_send_emails()
 
     assert Message.manager.count(db) == 0
     worker_ctx['job_try'] = 10
 
-    worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    loop.run_until_complete(
+        worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+    )
 
-    m = Message.manager.get()
+    m = Message.manager.get(db)
     assert m.status == 'send_request_failed'
     assert m.body == 'upstream error'
 
 
-def test_mandrill_send_502(db, call_send_emails, worker_ctx, caplog):
-    caplog.set_level(logging.INFO, logger='morpheus')
+def test_mandrill_send_502(db, call_send_emails, loop, worker_ctx):
     group_id, c_id, m = call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = 1
 
     with pytest.raises(Retry) as exc_info:
-        worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        loop.run_until_complete(
+            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        )
     assert exc_info.value.defer_score == 5_000
 
     assert Message.manager.count(db) == 0
-    assert 'Mandrill unexpected response POST /messages/send.json -> 502' in caplog.text
-    assert 'temporary mandrill error' in caplog.text
 
 
-def test_mandrill_send_502_last(db, call_send_emails, worker_ctx):
+def test_mandrill_send_502_last(db, call_send_emails, loop, worker_ctx):
     group_id, c_id, m = call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = len(email_retrying)
 
     with pytest.raises(Retry) as exc_info:
-        worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        loop.run_until_complete(
+            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        )
     assert exc_info.value.defer_score == 43_200_000
 
     assert Message.manager.count(db) == 0
 
 
-def test_mandrill_send_500_nginx(db, call_send_emails, worker_ctx):
+def test_mandrill_send_500_nginx(db, call_send_emails, loop, worker_ctx):
     group_id, c_id, m = call_send_emails(subject_template='__500_nginx__')
 
     worker_ctx['job_try'] = 2
 
     with pytest.raises(Retry) as exc_info:
-        worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        loop.run_until_complete(
+            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        )
     assert exc_info.value.defer_score == 10_000
-
-    assert Message.manager.count(db) == 0
-
-
-def test_mandrill_send_500_not_nginx(db, call_send_emails, worker_ctx):
-    group_id, c_id, m = call_send_emails(subject_template='__500__')
-
-    worker_ctx['job_try'] = 1
-
-    with pytest.raises(ApiError) as exc_info:
-        worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
-    assert exc_info.value.status == 500
-
     assert Message.manager.count(db) == 0
 
 
@@ -675,8 +668,11 @@ def test_link_shortening(send_email, tmpdir, cli: TestClient, db: Session, worke
     m = Message.manager.get(db)
     assert m.status == 'send'
 
-    link = Link.objects.get(db)
-    assert dict(link) == {'id': AnyInt(), 'message_id': m['id'], 'token': token, 'url': 'https://www.foobar.com'}
+    link = Link.manager.get(db)
+    assert link.id == AnyInt()
+    assert link.message_id == m.id
+    assert link.token == token
+    assert link.url == 'https://www.foobar.com'
 
     r = cli.get(
         '/l' + token,
@@ -692,12 +688,13 @@ def test_link_shortening(send_email, tmpdir, cli: TestClient, db: Session, worke
     assert r.headers['location'] == 'https://www.foobar.com'
     assert loop.run_until_complete(worker.run_check()) == 2
 
-    m_status = db.refresh(m).status
-    assert m_status == 'click'
+    db.refresh(m)
+    assert Message.manager.get(db, id=m.id).status == m.status
+    assert m.status == 'click'
     event = Event.manager.get(db)
     assert event.status == 'click'
     assert event.ts == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
-    extra = json.loads(event['extra'])
+    extra = json.loads(event.extra)
     assert extra == {
         'ip': '54.170.228.0',
         'target': 'https://www.foobar.com',

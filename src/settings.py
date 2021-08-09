@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     cookie_name = 'morpheus'
     auth_key = 'testing'
-    app: str = 'main:app'
+    app: str = 'src.main:app'
 
     locale = ''  # Required, don't delete
     host_name: NoneStr = 'localhost'

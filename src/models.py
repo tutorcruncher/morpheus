@@ -1,9 +1,10 @@
 from datetime import date
 
-from sqlalchemy import TEXT, VARCHAR, Column, Enum, Float, ForeignKey, Index, Integer, func, select, DateTime
+from sqlalchemy import TEXT, VARCHAR, Column, Enum, Float, ForeignKey, Index, Integer, func, select, DateTime, literal
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import declarative_base, relationship, Session
-from typing import List
+from typing import List, Tuple
 
 from src.crud import BaseManager
 from src.schema import MessageStatus, SendMethod, SmsSendMethod
@@ -30,7 +31,7 @@ class MessageGroup(Base):
     __tablename__ = 'message_groups'
 
     id = Column(Integer, primary_key=True, index=True)
-    uuid = Column(UUID, nullable=False)
+    uuid = Column(UUID(as_uuid=True), nullable=False)
     company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), index=True)
     message_method = Column(Enum(SendMethod), nullable=False, index=True)
     created_ts = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
@@ -84,6 +85,22 @@ class Message(Base):
     Index('message_company_method', 'method', 'company_id', 'id')
 
     @property
+    def list_details(self):
+        return {
+            'id': self.id,
+            'external_id': self.external_id,
+            'to_ext_link': self.to_user_link,
+            'to_address': self.to_address,
+            'to_dst': f'{self.to_first_name or ""} {self.to_last_name or ""} <{self.to_address}>'.strip(' '),
+            'to_name': f'{self.to_first_name or ""} {self.to_last_name or ""}',
+            'send_ts': self.send_ts,
+            'subject': self.subject,
+            'update_ts': self.update_ts,
+            'status': self.status,
+            'method': self.method,
+        }
+
+    @property
     def details(self):
         yield 'ID', self.external_id
         yield 'Status', self.status.title()
@@ -115,27 +132,31 @@ class Message(Base):
 class MessageManager(BaseManager):
     model = Message
 
-    def filter(self, conn: Session, tags: list = None, q: str = None, p_from: int = None, **kwargs) -> List[Message]:
-        # Limiting by 1000 here makes it MUCH faster
-        query = select(Message).filter_by(**kwargs).join(Message.message_group).limit(10000)
+    def filter(
+        self, conn: Session, tags: list = None, q: str = None, p_from: int = None, limit=10_000, **kwargs
+    ) -> List[Message]:
+        query = conn.query(Message).filter_by(**kwargs).join(Message.message_group).order_by(Message.id.desc())
         if tags:
             query = query.where(Message.tags.contains(tags))
         if q:
             query = query.where(Message.vector.match(q))
+        print(str(query.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})))
         if p_from:
             query = query.offset(p_from)
-        return conn.execute(query)
+        return query.limit(limit)
 
-    def get_events(self, conn: Session, **kwargs) -> List['Event']:
-        events = conn.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51)
+    def get_events(self, conn: Session, **kwargs) -> Tuple[int, List['Event']]:
+        events = conn.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51).all()
         extra_count = 0
         if len(events) == 51:
-            extra_count = 1 + (conn.query(Event).filter(**kwargs).count() - 50)
+            extra_count = 1 + (conn.query(Event).filter_by(**kwargs).count() - 50)
         return extra_count, events
 
     def get_sms_spend(self, conn: Session, company_id: int, start: date, end: date, method: SmsSendMethod) -> float:
-        return conn.query(func.sum(Message.cost)).filter(
-            Message.method == method, Message.company_id == company_id, Message.send_ts.between(start, end)
+        return (
+            conn.query(func.sum(Message.cost))
+            .filter(Message.method == method, Message.company_id == company_id, Message.send_ts.between(start, end))
+            .scalar()
         )
 
 
@@ -153,13 +174,21 @@ class Event(Base):
 
     message = relationship(Message, back_populates='events')
 
-    def to_dict(self):
-        e = self.__dict__
-        e.pop('_sa_instance_state')
-        return e
+
+class EventManager(BaseManager):
+    model = Event
+
+    def create(self, conn: Session, **kwargs) -> Event:
+        event = super().create(conn, **kwargs)
+        m = event.message
+        if event.ts > m.update_ts:
+            m.status = event.status
+            m.update_ts = event.ts
+            self.update(conn, m)
+        return event
 
 
-Event.manager = BaseManager(Event)
+Event.manager = EventManager(Event)
 
 
 class Link(Base):

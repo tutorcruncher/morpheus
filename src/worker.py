@@ -19,6 +19,7 @@ from itertools import chain
 from pathlib import Path
 
 from foxglove import glove
+from httpx import ConnectError
 from phonenumbers import (
     NumberParseException,
     PhoneNumberFormat,
@@ -249,7 +250,7 @@ class SendEmail:
         defer = email_retrying[job_try - 1]
         try:
             r = await self.ctx['mandrill'].post('messages/send.json', **data)
-        except (ClientConnectionError, TimeoutError) as e:
+        except (ConnectError, TimeoutError) as e:
             main_logger.info('client connection error group_id=%s job_try=%s defer=%ss', self.group_id, job_try, defer)
             raise Retry(defer=defer) from e
         except ApiError as e:
@@ -324,12 +325,13 @@ class SendEmail:
     async def _generate_base64_pdf(self, pdf_attachments):
         kwargs = dict(page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm')
         for a in pdf_attachments:
-            try:
-                pdf_content = await self.ctx['pydf'].generate_pdf(a.html, **kwargs)
-            except RuntimeError as e:
-                main_logger.warning('error generating pdf, data: %s', e)
-            else:
-                yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
+            if a.html:
+                try:
+                    pdf_content = await self.ctx['pydf'].generate_pdf(a.html, **kwargs)
+                except RuntimeError as e:
+                    main_logger.warning('error generating pdf, data: %s', e)
+                else:
+                    yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
 
     async def _generate_base64(self, attachments: List[AttachmentModel]):
         for attachment in attachments:
@@ -494,7 +496,7 @@ class SendSMS:
                     'error getting messagebird api', extra={'status': r.status_code, 'response': response}
                 )
                 raise MessageBirdExternalError((r.status_code, response))
-            data = await r.json()
+            data = r.json()
             prices = data['prices']
             if not next((1 for g in prices if g['mcc'] == '0'), None):
                 main_logger.error('no default messagebird pricing with mcc "0"', extra={'prices': prices})
@@ -518,7 +520,7 @@ class SendSMS:
                 network, hlr = None, None
                 for i in range(30):
                     r = await self.messagebird.get(f'lookup/{api_number}')
-                    data = await r.json()
+                    data = r.json()
                     hlr = data.get('hlr')
                     if not hlr:
                         continue
@@ -532,6 +534,7 @@ class SendSMS:
                         break
                     await asyncio.sleep(1)
                 if not hlr or not network:
+                    debug('aclled')
                     main_logger.warning('No HLR result found for %s after 30 attempts', number.number, extra=data)
                     return
                 mcc = str(network)[:3]
@@ -560,7 +563,7 @@ class SendSMS:
             reference='morpheus',  # required to prompt status updates to occur
             allowed_statuses=201,
         )
-        data = await r.json()
+        data = r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
         await self._store_sms(data['id'], send_ts, sms_data, cost)
@@ -584,7 +587,7 @@ class SendSMS:
             extra=json.dumps(asdict(sms_data.length)),
         )
         if sms_data.shortened_link:
-            links = [Link(message=message, token=token, url=url) for token, url in sms_data.shortened_link]
+            links = [Link(message=message, token=token, url=url) for url, token in sms_data.shortened_link]
             Link.manager.create_many(self.ctx['pg'], *links)
 
 
@@ -638,7 +641,7 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
             return 'recently_clicked'
         await redis.expire(cache_key, 60)
 
-    link = Link.get(ctx['pg'], id=link_id)
+    link = Link.manager.get(ctx['pg'], id=link_id)
     extra = {'target': link.url, 'ip': ip, 'user_agent': user_agent}
     if user_agent:
         ua_dict = ParseUserAgent(user_agent)

@@ -1,5 +1,7 @@
 import asyncio
 import logging
+
+import arq
 from foxglove.db.main import prepare_database as fox_prepare_database
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -10,27 +12,18 @@ from src.settings import Settings
 settings = Settings()
 logger = logging.getLogger('db')
 
-engine = create_engine(settings.pg_dsn)
-SessionLocal = sessionmaker(bind=engine)
 
-Base.metadata.create_all(bind=engine)
+def get_session():
+    engine = create_engine(settings.pg_dsn)
+    session = sessionmaker(bind=engine)
 
-UPDATE_MESSAGE_TRIGGER = """
-CREATE OR REPLACE FUNCTION update_message() RETURNS trigger AS $$
-  DECLARE
-    current_update_ts timestamptz;
-  BEGIN
-    select update_ts into current_update_ts from messages where id=new.message_id;
-    if new.ts > current_update_ts then
-      update messages set update_ts=new.ts, status=new.status where id=new.message_id;
-    end if;
-    return null;
-  END;
-$$ LANGUAGE plpgsql;
+    Base.metadata.create_all(bind=engine)
+    engine.dispose()
+    return session
 
-DROP TRIGGER IF EXISTS update_message ON events;
-CREATE TRIGGER update_message AFTER INSERT ON events FOR EACH ROW EXECUTE PROCEDURE update_message();
-"""
+
+SessionLocal = get_session()
+
 
 MESSAGE_VECTOR_TRIGGER = """
 CREATE OR REPLACE FUNCTION set_message_vector() RETURNS trigger AS $$
@@ -79,13 +72,15 @@ async def prepare_database(settings: Settings, delete_existing: bool):
     :return: whether or not a database as (re)created
     """
     await fox_prepare_database(settings, delete_existing)
+    if delete_existing:
+        redis = await arq.create_pool(settings.redis_settings)
+        await redis.flushdb()
 
-    engine = create_engine(settings.pg_dsn)
-    await populate_db(engine)
-    engine.execute(UPDATE_MESSAGE_TRIGGER)
-    engine.execute(MESSAGE_VECTOR_TRIGGER)
-    engine.execute(AGGREGATION_VIEW)
-    engine.dispose()
+    _engine = create_engine(settings.pg_dsn)
+    await populate_db(_engine)
+    _engine.execute(MESSAGE_VECTOR_TRIGGER)
+    _engine.execute(AGGREGATION_VIEW)
+    _engine.dispose()
 
 
 def reset_database(settings):

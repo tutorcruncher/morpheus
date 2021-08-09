@@ -5,8 +5,9 @@ import json
 
 from fastapi import APIRouter, Header
 from foxglove import glove
-from foxglove.exceptions import HttpForbidden
+from foxglove.exceptions import HttpForbidden, HttpUnprocessableEntity
 from foxglove.route_class import KeepBodyAPIRoute
+from pydantic import ValidationError
 from starlette.requests import Request
 
 from src.schema import MandrillSingleWebhook, MessageBirdWebHook, SendMethod, MandrillWebhook
@@ -44,9 +45,13 @@ async def mandrill_webhook_view(request: Request, events: MandrillWebhook, X_Man
 
 
 @app.get('/messagebird/')
-async def messagebird_webhook_view(m: MessageBirdWebHook):
+async def messagebird_webhook_view(request: Request):
     """
     Update messages sent with message bird
     """
-    await glove.redis.enqueue_job('update_message_status', SendMethod.sms_messagebird, m)
+    try:
+        event = MessageBirdWebHook(**request.query_params)
+    except ValidationError as e:
+        raise HttpUnprocessableEntity(e.args[0])
+    await glove.redis.enqueue_job('update_message_status', SendMethod.sms_messagebird, event)
     return 'message status updated\n'

@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from foxglove import exceptions, glove
 from foxglove.middleware import ErrorMiddleware
 from foxglove.route_class import KeepBodyAPIRoute
+from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
 from src.db import SessionLocal, prepare_database
@@ -55,6 +56,7 @@ app = FastAPI(
     openapi_url=None,
 )
 app.add_middleware(ErrorMiddleware)
+app.add_middleware(CORSMiddleware, allow_origins=['*'])
 app.router.route_class = KeepBodyAPIRoute
 
 
@@ -67,7 +69,7 @@ app.include_router(common.app, tags=['common'])
 app.include_router(email.app, tags=['email'])
 app.include_router(sms.app, tags=['sms'])
 app.include_router(subaccounts.app, tags=['subaccounts'])
-app.include_router(messages.app, prefix='/user', tags=['messages'])
+app.include_router(messages.app, prefix='/messages', tags=['messages'])
 app.include_router(webhooks.app, prefix='/webhook', tags=['webhooks'])
 # This has to come last
 app.mount('/', StaticFiles(directory='src/static'), name='static')

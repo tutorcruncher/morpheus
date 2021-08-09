@@ -2,7 +2,7 @@ from dataclasses import asdict
 
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Body
 from foxglove import glove
 from foxglove.exceptions import HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
@@ -10,27 +10,26 @@ from sqlalchemy.exc import NoResultFound
 from starlette.responses import JSONResponse
 from typing import Tuple
 
-from src import crud
 from src.models import MessageGroup, Company, Message
-from src.schema import Session, SmsNumbersModel, SmsSendMethod, SmsSendModel
-from src.utils import get_db
+from src.schema import SmsNumbersModel, SmsSendMethod, SmsSendModel
+from src.utils import get_db, AdminAuth
 from src.worker import validate_number
 
 logger = logging.getLogger('views.sms')
-app = APIRouter(route_class=KeepBodyAPIRoute)
+app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
 
 
 @app.get('/billing/{method}/{company_code}/')
-async def sms_billing_view(
-    session: Session, method: SmsSendMethod, start: datetime, end: datetime, conn=Depends(get_db)
-):
+async def sms_billing_view(company_code: str, method: SmsSendMethod, data: dict = Body(None), conn=Depends(get_db)):
     try:
-        company = Company.manager.get(conn, code=session.company)
+        company = Company.manager.get(conn, code=company_code)
     except NoResultFound:
         raise HttpNotFound('company not found')
+    start = datetime.strptime(data['start'], '%Y-%m-%d')
+    end = datetime.strptime(data['end'], '%Y-%m-%d')
     total_spend = Message.manager.get_sms_spend(conn, company.id, start, end, method)
     return {
-        'company': session.company,
+        'company': company.code,
         'start': start.strftime('%Y-%m-%d'),
         'end': end.strftime('%Y-%m-%d'),
         'spend': total_spend,
@@ -54,7 +53,7 @@ async def send_sms(m: SmsSendModel, conn=Depends(get_db)):
     company = Company.manager.get_or_create(conn, code=m.company_code)
     if m.cost_limit is not None:
         start, end = month_interval()
-        month_spend = Message.manager.get_sms_spend(conn, company.id, start, end, m.method)
+        month_spend = Message.manager.get_sms_spend(conn, company.id, start, end, m.method) or 0
         if month_spend >= m.cost_limit:
             return JSONResponse(
                 content={'status': 'send limit exceeded', 'cost_limit': m.cost_limit, 'spend': month_spend},

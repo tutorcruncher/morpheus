@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import arq
 import pytest
@@ -7,7 +8,7 @@ import uuid
 
 from arq import create_pool, Worker
 from foxglove.test_server import create_dummy_server
-from httpx import AsyncClient
+from httpx import AsyncClient, URL
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -36,16 +37,16 @@ def fix_loop(settings):
 
 DB_DSN = 'postgresql://postgres@localhost:5432/morpheus_test'
 
-engine = create_engine(DB_DSN)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 
 def override_get_db():
+    engine = create_engine(DB_DSN)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     try:
         db = TestingSessionLocal()
         yield db
     finally:
         db.close()
+        engine.dispose()
 
 
 app.dependency_overrides[get_db] = override_get_db
@@ -57,10 +58,12 @@ def fix_settings(tmpdir):
         dev_mode=False,
         test_mode=True,
         pg_dsn=DB_DSN,
-        test_output=str(tmpdir),
+        test_output=Path(tmpdir),
         mandrill_url='http://localhost:8000/mandrill/',
+        messagebird_url='http://localhost:8000/messagebird/',
         mandrill_key='good-mandrill-testing-key',
         mandrill_webhook_key='testing-mandrill-api-key',
+        messagebird_key='good-messagebird-testing-key',
         auth_key='testing-key',
         secret_key='testkey',
         origin='https://example.com',
@@ -69,11 +72,10 @@ def fix_settings(tmpdir):
     glove._settings = settings
 
     yield settings
-    glove.pg = TestingSessionLocal()
     glove._settings = None
 
 
-@pytest.fixture(name='db')
+@pytest.fixture(name='db', scope='function')
 def clean_db(settings, loop):
     loop.run_until_complete(prepare_database(settings, True))
     yield from override_get_db()
@@ -88,12 +90,6 @@ def client(loop):
         yield cli
 
 
-@pytest.fixture
-def redis(loop, settings):
-    redis = loop.run_until_complete(create_pool(settings.redis_settings))
-    yield redis
-
-
 class CustomAsyncClient(AsyncClient):
     def __init__(self, *args, settings, local_server, **kwargs):
         super().__init__(*args, **kwargs)
@@ -103,8 +99,8 @@ class CustomAsyncClient(AsyncClient):
         self.port = int(port)
 
     def request(self, method, url, **kwargs):
-        url = url.replace('8000', str(self.port))
-        return super().request(method, url, **kwargs)
+        new_url = URL(url).copy_with(scheme=self.scheme, host=self.host, port=self.port)
+        return super().request(method, new_url, **kwargs)
 
 
 @pytest.fixture(name='dummy_server')
@@ -120,8 +116,8 @@ def _fix_dummy_server(loop, settings):
 
 
 @pytest.fixture(name='worker_ctx')
-def _fix_worker_ctx(loop, settings):
-    ctx = dict(settings=settings, pg=TestingSessionLocal())
+def _fix_worker_ctx(loop, settings, db):
+    ctx = dict(settings=settings, pg=db)
     loop.run_until_complete(worker_startup(ctx))
     yield ctx
 

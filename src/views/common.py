@@ -34,7 +34,7 @@ async def click_redirect_view(
     request: Request,
     u: Optional[str] = None,
     X_Forwarded_For: Optional[str] = Header(None),
-    X_Request_Start: Optional[str] = Header(None),
+    X_Request_Start: Optional[str] = Header('.'),
     User_Agent: Optional[str] = Header(None),
     conn=Depends(get_db),
 ):
@@ -54,16 +54,14 @@ async def click_redirect_view(
             ip_address = ip_address.split(',', 1)[0]
 
         try:
-            ts = float(X_Request_Start, '.')
+            ts = float(X_Request_Start or '.')
         except ValueError:
             ts = time()
 
-        link_id, url = link
-
-        await glove.redis.enqueue_job('store_click', link_id=link_id, ip=ip_address, user_agent=User_Agent, ts=ts)
-        if arg_url and arg_url != url:
-            logger.warning('db url does not match arg url: %r != %r', url, arg_url)
-        return RedirectResponse(url=url)
+        await glove.redis.enqueue_job('store_click', link_id=link.id, ip=ip_address, user_agent=User_Agent, ts=ts)
+        if arg_url and arg_url != link.url:
+            logger.warning('db url does not match arg url: %r != %r', link.url, arg_url)
+        return RedirectResponse(url=link.url)
     elif arg_url:
         logger.warning('no url found, using arg url "%s"', arg_url)
         return RedirectResponse(url=arg_url)
