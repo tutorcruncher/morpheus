@@ -78,7 +78,7 @@ class BaseManager:
         return instance
 
     def create_many(self, conn: Session, *instances: List[Union[Models]]) -> None:
-        conn.add_all(*instances)
+        conn.add_all(*[instances])
         conn.commit()
 
     def get_or_create(self, conn: Session, **kwargs) -> Union[Models]:

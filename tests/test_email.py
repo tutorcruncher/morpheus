@@ -72,21 +72,11 @@ def test_webhook(cli: TestClient, send_email, db: Session, worker, loop):
     db.refresh(message)
     assert message.status == 'open'
     assert message.update_ts > first_update_ts
-    events = [e.to_dict() for e in Event.manager.filter(db, message_id=message.id)]
-    assert len(events) == 1
-    e = events[0]
-    assert e['ts'] == datetime(2033, 5, 18, 3, 33, 20, tzinfo=timezone.utc)
-    assert e['extra'] == RegexStr('{.*}')
-    assert events == [
-        {
-            'id': AnyInt(),
-            'message_id': message.id,
-            'status': 'open',
-            'ts': datetime(2033, 5, 18, 3, 33, 20, tzinfo=timezone.utc),
-            'extra': RegexStr('{.*}'),
-        }
-    ]
-    extra = json.loads(events[0]['extra'])
+    assert Event.manager.count(db, message_id=message.id) == 1
+    event = Event.manager.filter(db, message_id=message.id).first()
+    assert event.ts == datetime(2033, 5, 18, 3, 33, 20, tzinfo=timezone.utc)
+    assert event.extra == RegexStr('{.*}')
+    extra = json.loads(event.extra)
     assert extra['diag'] is None
     assert extra['opens'] is None
 
@@ -96,8 +86,7 @@ def test_webhook_old(cli: TestClient, send_email, db: Session, worker, loop):
     message = Message.manager.get(db, external_id=msg_id)
     assert message.status == 'send'
     first_update_ts = message.update_ts
-    events = Event.manager.filter(db, message_id=message.id)
-    assert len(events) == 0
+    assert Event.manager.count(db, message_id=message.id) == 0
     data = {'ts': int(1.4e9), 'event': 'open', '_id': msg_id}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
@@ -105,7 +94,7 @@ def test_webhook_old(cli: TestClient, send_email, db: Session, worker, loop):
 
     db.refresh(message)
     assert message.status == 'send'
-    events = Event.manager.filter(db, message_id=message.id)
+    events = Event.manager.filter(db, message_id=message.id).all()
     assert len(events) == 1
     assert message.update_ts == first_update_ts
 
@@ -114,8 +103,7 @@ def test_webhook_repeat(cli: TestClient, send_email, db: Session, worker, loop):
     msg_id = send_email()
     message = Message.manager.get(db, external_id=msg_id)
     assert message.status == 'send'
-    events = Event.manager.filter(db, message_id=message.id)
-    assert len(events) == 0
+    assert Event.manager.count(db, message_id=message.id) == 0
     data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id}
     for _ in range(3):
         r = cli.post('/webhook/test/', json=data)
@@ -125,10 +113,8 @@ def test_webhook_repeat(cli: TestClient, send_email, db: Session, worker, loop):
     assert r.status_code == 200, r.text
     assert loop.run_until_complete(worker.run_check()) == 5
 
-    db.refresh(message)
     assert message.status == 'open'
-    events = Event.manager.filter(db, message_id=message.id)
-    assert len(events) == 2
+    assert Event.manager.count(db, message_id=message.id) == 2
 
 
 def test_webhook_missing(cli: TestClient, send_email, db: Session):
@@ -139,8 +125,7 @@ def test_webhook_missing(cli: TestClient, send_email, db: Session):
     assert r.status_code == 200, r.text
     message = Message.manager.get(db, external_id=msg_id)
     assert message.status == 'send'
-    events = Event.manager.filter(db, message_id=message.id)
-    assert len(events) == 0
+    assert Event.manager.count(db, message_id=message.id) == 0
 
 
 def test_mandrill_send(send_email, db: Session, dummy_server):

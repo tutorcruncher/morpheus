@@ -352,7 +352,7 @@ def test_no_event_data(cli, settings, send_email, db):
         )
         for i in range(3)
     ]
-    Event.manager.create_many(db, events)
+    Event.manager.create_many(db, *events)
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.json()['events'] == [
         {'status': 'Send', 'datetime': '2032-06-01T00:00:00+00:00'},
@@ -387,7 +387,7 @@ def test_many_events(cli, settings, send_email, db):
         )
         for i in range(55)
     ]
-    Event.manager.create_many(db, events)
+    Event.manager.create_many(db, *events)
 
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text

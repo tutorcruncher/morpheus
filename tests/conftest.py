@@ -179,8 +179,8 @@ def send_sms(cli, worker, loop):
 
 
 @pytest.fixture(name='call_send_emails')
-def _fix_call_send_emails(db_conn):
-    async def run(**kwargs):
+def _fix_call_send_emails(db):
+    def run(**kwargs):
         base_kwargs = dict(
             uid=str(uuid.uuid4()),
             subject_template='hello',
@@ -190,9 +190,9 @@ def _fix_call_send_emails(db_conn):
             recipients=[],
         )
         m = EmailSendModel(**dict(base_kwargs, **kwargs))
-        company = Company.manager.create(db_conn, code=m.company_code)
+        company = Company.manager.create(db, code=m.company_code)
         group = MessageGroup.manager.create(
-            db_conn,
+            db,
             uuid=m.uid,
             company_id=company.id,
             message_method=m.method.value,
