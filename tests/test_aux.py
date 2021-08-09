@@ -228,7 +228,7 @@ def test_missing_link(cli: TestClient):
     r = cli.get('/lxxx')
     assert r.status_code == 404, r.text
     assert (
-        f'<p>404: No redirect could be found for "http://testserver/lxxx", ' f'this link may have expired.</p>'
+        '<p>404: No redirect could be found for "http://testserver/lxxx", this link may have expired.</p>'
     ) in r.text
 
 

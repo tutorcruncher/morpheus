@@ -3,7 +3,7 @@ import asyncio
 import pytest
 import re
 import uuid
-from arq import Worker, create_pool
+from arq import Worker
 from foxglove.test_server import create_dummy_server
 from foxglove.testing import Client as TestClient
 from httpx import URL, AsyncClient
@@ -37,7 +37,7 @@ DB_DSN = 'postgresql://postgres@localhost:5432/morpheus_test'
 
 def override_get_db():
     engine = create_engine(DB_DSN)
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    TestingSessionLocal = sessionmaker(autoflush=False, bind=engine)
     try:
         db = TestingSessionLocal()
         yield db

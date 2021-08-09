@@ -1,18 +1,17 @@
 import hashlib
 import hmac
 import json
-import re
 import uuid
 from arq.utils import to_unix_ms
-from buildpg import MultipleValues, Values
 from datetime import date, datetime, timedelta, timezone
+from foxglove import glove
 from operator import itemgetter
 from pytest_toolbox.comparison import RegexStr
+from pytz import utc
 from urllib.parse import urlencode
 
-from src.models import Message
+from src.models import Company, Event, Message
 from src.schema import MessageStatus
-from src.worker import update_aggregation_view
 
 
 def modify_url(url, settings, company='foobar'):
@@ -99,9 +98,20 @@ def test_user_search(cli, settings, send_email):
 
 
 def test_user_search_space(cli, settings, send_email):
-    uid = str(uuid.uuid4())
     send_email(
-        uid=uid, company_code='testing', recipients=[{'address': 'testing@example.com'}], subject_template='foobar'
+        company_code='testing',
+        recipients=[{'address': 'testing@example.com'}],
+        subject_template='foobar',
+    )
+    send_email(
+        company_code='testing',
+        recipients=[{'address': 'testing@example.com'}],
+        subject_template='bar',
+    )
+    send_email(
+        company_code='testing',
+        recipients=[{'address': 'testing@example.com'}],
+        subject_template='foo bar',
     )
 
     r = cli.get(modify_url('/messages/email-test/?q=foobar', settings, 'testing'))
@@ -112,10 +122,10 @@ def test_user_search_space(cli, settings, send_email):
     r = cli.get(modify_url('/messages/email-test/?q=foo%20bar', settings, 'testing'))
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data['count'] == 0
+    assert data['count'] == 1
 
 
-def test_user_list_lots_query_test(cli, settings, send_email):
+def test_pagination(cli, settings, send_email):
     for i in range(110):
         send_email(
             uid=str(uuid.uuid4()),
@@ -132,31 +142,22 @@ def test_user_list_lots_query_test(cli, settings, send_email):
             subject_template='barfoo',
         )
 
-    r = cli.get(modify_url('/messages/email-test/messages.html', settings, 'testing'))
+    r = cli.get(modify_url('/messages/email-test/', settings, 'testing'))
     assert r.status_code == 200, r.text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
-    text = r.text
+    data = r.json()
+    first_item = data['items'][0]
+    assert len(data['items']) == 100
+    assert data['count'] == 130
 
-    m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
-    results = int(m.groups()[0])
-    assert results == 130
-    assert '1 - 100' not in text
-    assert f'101 - {min(results, 150)}' in text
-    assert 'href="?from=100"' in text
-
-    url = modify_url('/messages/email-test/messages.html', settings, 'testing')
-    r = cli.get(url + '&q=foobar&from=100')
+    r = cli.get(modify_url('/messages/email-test/', settings, 'testing') + '&offset=100')
     assert r.status_code == 200, r.text
-    text = r.text
-    m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
-    results = int(m.groups()[0])
-    assert results == 10
-    assert '1 - 100' in text
-    assert f'101 - {min(results, 150)}' not in text
-    assert 'href="?q=foobar&amp;from=0"' in text
+    data = r.json()
+    assert first_item not in data['items']
+    assert len(data['items']) == 30
+    assert data['count'] == 130
 
 
-def test_user_aggregate(cli, settings, send_email, db):
+def test_user_aggregate(cli, settings, send_email, db, loop, worker):
     for i in range(4):
         send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
     msg_id = send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
@@ -165,12 +166,12 @@ def test_user_aggregate(cli, settings, send_email, db):
     cli.post('/webhook/test/', json=data)
 
     send_email(uid=str(uuid.uuid4()), company_code='different')
+    loop.run_until_complete(glove.redis.enqueue_job('update_aggregation_view'))
+    loop.run_until_complete(worker.run_check())
 
-    update_aggregation_view({'pg': db})
-
-    r = cli.get(modify_url('/messages/email-test/aggregation.json', settings, 'user-aggs'))
+    assert Message.manager.count(db) == 6
+    r = cli.get(modify_url('/messages/email-test/aggregation/', settings, 'user-aggs'))
     assert r.status_code == 200, r.text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
     data = r.json()
     histogram = data.pop('histogram')
     assert data == {
@@ -186,15 +187,10 @@ def test_user_aggregate(cli, settings, send_email, db):
         {'count': 4, 'day': f'{date.today():%Y-%m-%d}', 'status': 'send'},
     ]
 
-    r = cli.get(modify_url('/messages/email-test/aggregation.json', settings, '__all__'))
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert sum(v['count'] for v in data['histogram']) == 6
-
 
 def test_user_aggregate_no_data(cli, settings, db):
-    db.execute('insert into companies (code) values ($1)', 'testing')
-    r = cli.get(modify_url('/messages/email-test/aggregation.json', settings, 'testing'))
+    Company.manager.create(db, code='testing')
+    r = cli.get(modify_url('/messages/email-test/aggregation/', settings, 'testing'))
     assert r.status_code == 200, r.text
     data = r.json()
     assert data == {
@@ -233,52 +229,64 @@ def test_user_tags(cli, settings, send_email):
     send_email(uid=str(uuid.uuid4()), company_code='different1')
     send_email(uid=str(uuid.uuid4()), company_code='different2')
 
-    url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'broadcast:123')])
-    r = cli.get(modify_url(url, settings, 'tagtest'))
+    r = cli.get(modify_url('/messages/email-test/', settings, 'tagtest') + '&tags=broadcast:123')
     assert r.status_code == 200, r.text
     data = r.json()
     assert data['count'] == 2, json.dumps(data, indent=2)
     assert {h['external_id'] for h in data['items']} == {f'{uid1}-1tcom', f'{uid1}-2tcom'}
 
-    url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query([('tags', 'user:2')])
-    r = cli.get(modify_url(url, settings, 'tagtest'))
+    r = cli.get(modify_url('/messages/email-test/', settings, 'tagtest') + '&tags=user:2')
     assert r.status_code == 200, r.text
     data = r.json()
     assert data['count'] == 1, json.dumps(data, indent=2)
     assert data['items'][0]['external_id'] == f'{uid1}-2tcom'
 
-    query = [('tags', 'trigger:other'), ('tags', 'shoesize:8')]
-    url = cli.server.app.router['user-messages'].url_for(method='email-test').with_query(query)
-    r = cli.get(modify_url(url, settings, 'tagtest'))
+    r = cli.get(modify_url('/messages/email-test/', settings, 'tagtest') + '&tags=trigger:other&tags=shoesize:8')
     assert r.status_code == 200, r.text
     data = r.json()
     assert data['count'] == 1
     assert data['items'][0]['external_id'] == f'{uid2}-4tcom'
 
 
-def test_message_details(cli, settings, send_email, db, worker):
+def test_message_details(cli, settings, send_email, db, worker, loop):
     msg_ext_id = send_email(company_code='test-details')
 
     data = {'ts': int(1e10), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    assert worker.run_check() == 2
+    assert loop.run_until_complete(worker.run_check()) == 2
 
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    r = cli.get(modify_url(f'/messages/email-test/message/{message_id}.html', settings, 'test-details'))
-    text = r.text
-    assert r.status_code == 200, text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
-    spaceless = re.sub('\n +', '\n', text)
-    assert '<label>Subject:</label>\n<span>test message</span>' in spaceless
-    assert '<label>To:</label>\n<span>&lt;foobar@testing.com&gt;</span>' in spaceless
+    message = Message.manager.get(db, external_id=msg_ext_id)
+    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        'id': message.id,
+        'external_id': msg_ext_id,
+        'to_ext_link': None,
+        'to_address': 'foobar@testing.com',
+        'to_dst': '<foobar@testing.com>',
+        'to_name': ' ',
+        'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+        'subject': 'test message',
+        'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+        'status': 'open',
+        'method': 'email-test',
+        'events': [
+            {
+                'status': 'Open',
+                'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+                'details': (
+                    '{\n  "user_agent": "testincalls",\n  "location": null,\n  "bounce_description": null,\n  '
+                    '"clicks": null,\n  "diag": null,\n  "reject": null,\n  "opens": null,\n  "resends": null,\n  '
+                    '"smtp_events": null,\n  "state": null\n}'
+                ),
+            }
+        ],
+        'attachments': [],
+    }
 
-    assert 'Open &bull;' in text
-    assert '"user_agent": "testincalls",' in text
-    assert text.count('<span class="datetime">') == 3
 
-
-def test_message_details_link(cli, settings, send_email, db, worker):
+def test_message_details_links(cli, settings, send_email, db, worker, loop):
     msg_ext_id = send_email(
         company_code='test-details',
         recipients=[
@@ -294,240 +302,136 @@ def test_message_details_link(cli, settings, send_email, db, worker):
             }
         ],
     )
-
+    message = Message.manager.get(db, external_id=msg_ext_id)
     data = {'ts': int(2e12), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    assert worker.run_check() == 2
-
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    url = modify_url(f'/messages/email-test/message/{message_id}.html', settings, 'test-details')
-    r = cli.get(url)
+    assert loop.run_until_complete(worker.run_check()) == 2
+    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
-    text = r.text
-    assert '<span><a href="/whatever/123/">Foo Bar &lt;foobar@testing.com&gt;</a></span>' in text
-    assert '<a href="/attachment-doc/123/">testing.pdf</a>' in text
-    assert '<a href="#">different.pdf</a>' in text
-    d = re.search('Open &bull; .+', text).group()
-    assert 'Open &bull; <span class="datetime">2033-05-18T03:33:20+00</span>' == d, text
-    assert 'extra values not shown' not in text
-
-    r = cli.get(url + '&' + urlencode({'dttz': 'Europe/London'}))
-    assert r.status_code == 200, r.text
-    text = r.text
-    d = re.search('Open &bull; .+', text).group()
-    assert 'Open &bull; <span class="datetime">2033-05-18T04:33:20+01</span>' == d, text
-
-    r = cli.get(url + '&' + urlencode({'dttz': 'snap'}))
-    assert r.status_code == 400, r.text
-    assert r.headers.get('Access-Control-Allow-Origin') == '*'
-    assert {'message': 'unknown timezone: "snap"'} == r.json()
+    assert r.json() == {
+        'id': message.id,
+        'external_id': msg_ext_id,
+        'to_ext_link': '/whatever/123/',
+        'to_address': 'foobar@testing.com',
+        'to_dst': 'Foo Bar <foobar@testing.com>',
+        'to_name': 'Foo Bar',
+        'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+        'subject': 'test message',
+        'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+        'status': 'open',
+        'method': 'email-test',
+        'events': [
+            {
+                'status': 'Open',
+                'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+                'details': (
+                    '{\n  "user_agent": "testincalls",\n  "location": null,\n  "bounce_description": null,\n  '
+                    '"clicks": null,\n  "diag": null,\n  "reject": null,\n  "opens": null,\n  "resends": null,\n  '
+                    '"smtp_events": null,\n  "state": null\n}'
+                ),
+            }
+        ],
+        'attachments': [
+            ['/attachment-doc/123/', 'testing.pdf'],
+            ['#', 'different.pdf'],
+        ],
+    }
 
 
 def test_no_event_data(cli, settings, send_email, db):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    db.execute_b(
-        'insert into events (:values__names) values :values',
-        values=MultipleValues(
-            *[
-                Values(
-                    ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
-                    message_id=message_id,
-                    status=MessageStatus.send,
-                )
-                for i in range(3)
-            ]
-        ),
-    )
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    r = cli.get(modify_url(f'/messages/email-test/message/{message_id}.html', settings, 'test-details'))
-    assert '<div class="events" id="morpheus-accordion">\n' in r.text
-
-
-def test_single_item_events(cli, settings, send_email, db):
-    msg_ext_id = send_email(
-        company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
-    )
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    db.execute_b(
-        'insert into events (:values__names) values :values',
-        values=MultipleValues(
-            *[
-                Values(
-                    ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
-                    message_id=message_id,
-                    status=MessageStatus.send,
-                )
-                for i in range(3)
-            ]
-        ),
-    )
-
-    url = modify_url(f'/messages/email-test/?message_id={message_id}', settings, 'test-details')
-    r = cli.get(url)
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert data['events'] == [
-        {'status': 'send', 'ts': '2032-06-01T00:00:00+00', 'extra': None},
-        {'status': 'send', 'ts': '2032-06-02T02:00:00+00', 'extra': None},
-        {'status': 'send', 'ts': '2032-06-03T04:00:00+00', 'extra': None},
+    message = Message.manager.get(db, external_id=msg_ext_id)
+    events = [
+        Event(
+            ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+            message_id=message.id,
+            status=MessageStatus.send,
+        )
+        for i in range(3)
+    ]
+    Event.manager.create_many(db, events)
+    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
+    assert r.json()['events'] == [
+        {'status': 'Send', 'datetime': '2032-06-01T00:00:00+00:00'},
+        {'status': 'Send', 'datetime': '2032-06-02T02:00:00+00:00'},
+        {'status': 'Send', 'datetime': '2032-06-03T04:00:00+00:00'},
     ]
 
 
-def test_invalid_message_id(cli, settings):
-    url = modify_url('/messages/email-test/?message_id=foobar', settings, 'test-details')
-    r = cli.get(url)
-    assert r.status_code == 400, r.text
-    data = r.json()
-    assert data == {'message': "invalid get argument 'message_id': 'foobar'"}
+def test_invalid_message_id(cli, db, settings, send_email):
+    msg_ext_id = send_email(
+        company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
+    )
+    message = Message.manager.get(db, external_id=msg_ext_id)
+    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'not_real_company'))
+    assert r.status_code == 404
+
+    r = cli.get(modify_url(f'/messages/email-test/999{message.id}/', settings, 'test-details'))
+    assert r.status_code == 404
 
 
 def test_many_events(cli, settings, send_email, db):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    db.execute_b(
-        'insert into events (:values__names) values :values',
-        values=MultipleValues(
-            *[
-                Values(
-                    ts=(datetime(2032, 6, 1) + timedelta(days=i)).replace(tzinfo=timezone.utc),
-                    message_id=message_id,
-                    status=MessageStatus.send,
-                    extra=json.dumps({'foo': 'bar', 'v': i}),
-                )
-                for i in range(55)
-            ]
-        ),
-    )
+    message = Message.manager.get(db, external_id=msg_ext_id)
+    events = [
+        Event(
+            ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+            message_id=message.id,
+            status=MessageStatus.send,
+            extra=json.dumps({'foo': 'bar', 'v': i}),
+        )
+        for i in range(55)
+    ]
+    Event.manager.create_many(db, events)
 
-    url = modify_url(f'/messages/email-test/message/{message_id}.html', settings, 'test-details')
-    r = cli.get(url)
+    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
-    text = r.text
-    assert text.count('#morpheus-accordion') == 51
-    assert 'Send &bull; <span class="datetime">2032-06-16T00:00:00+00</span>\n' in text, text
-    assert '5 more &bull; ...' in text
+    events = r.json()['events']
+    assert len(events) == 51
+    assert Event.manager.count(db) == 55
+    assert events[-1]['status'] == '5 more'
 
 
-def test_message_details_missing(cli, settings):
-    r = cli.get(modify_url('/messages/email-test/message/123.html', settings, 'test-details'))
-    assert r.status_code == 404, r.text
-    assert {'message': 'message not found'} == r.json()
-
-
-def test_message_preview(cli, settings, send_email, db):
-    msg_ext_id = send_email(company_code='preview')
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    r = cli.get(modify_url(f'/messages/email-test/{message_id}/preview/', settings, 'preview'))
-    assert r.status_code == 200, r.text
-    assert '<body>\nthis is a test\n</body>' == r.text
-
-
-def test_message_preview_disable_links(cli, send_email, settings, db):
-    msg_ext_id = send_email(
-        company_code='preview',
-        context={
-            'message__render': (
-                'Hi, <a href="https://lp.example.com/">\n<span class="class">Look at '
-                'this link that needs removed</span></a>'
-            ),
-            'unsubscribe_link': 'http://example.org/unsub',
-        },
-        recipients=[{'address': '1@example.org'}],
-    )
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    r = cli.get(modify_url(f'/messages/email-test/{message_id}/preview/', settings, 'preview'))
-    assert r.status_code == 200, r.text
-    msg = r.text
-    assert '<p>Hi, <a href="#"><br>\n<span class="class">Look at this link that needs removed</span></a></p>' in msg
-
-
-def test_message_preview_disable_links_md(send_email, settings, cli, db):
-    msg_ext_id = send_email(
-        company_code='preview',
-        main_template='testing {{{ foobar }}}',
-        context={
-            'message__render': 'test email {{ unsubscribe_link }}.\n',
-            'foobar__md': '[hello](www.example.org/hello)',
-        },
-    )
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    r = cli.get(modify_url(f'/messages/email-test/{message_id}/preview/', settings, 'preview'))
-    assert r.status_code == 200, r.text
-    assert 'testing <p><a href="#">hello</a></p>\n' == r.text
-
-
-def test_user_sms(cli, settings, send_sms, db):
-    send_sms(company_code='snapcrap')
+def test_user_sms_list(cli, settings, send_sms, db):
+    ext_id = send_sms(company_code='snapcrap')
 
     send_sms(uid=str(uuid.uuid4()), company_code='flip')
     r = cli.get(modify_url('/messages/sms-test/', settings, 'snapcrap'))
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data['count'] == 1
-    item = data['items'][0]
-    assert item['method'] == 'sms-test'
-    assert item['company_id'] == db.fetchval('select id from companies where code=$1', 'snapcrap')
-    assert item['status'] == 'send'
-    assert item['from_name'] == 'FooBar'
-    assert item['cost'] == 0.012
-    assert 'events' not in item
-    assert json.loads(item['extra']) == {'length': 21, 'parts': 1}
-    assert data['spend'] == 0.012
-
-    r = cli.get(modify_url('/messages/sms-test/', settings, '__all__'))
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert data['count'] == 2
-
-
-def test_user_sms_preview(cli, settings, send_sms, db):
-    msg_ext_id = send_sms(company_code='smspreview', main_template='this is a test {{ variable }} ' * 10)
-
-    message_id = db.fetchval('select id from messages where external_id=$1', msg_ext_id)
-    send_sms(uid=str(uuid.uuid4()), company_code='flip')
-    r = cli.get(modify_url(f'/messages/sms-test/{message_id}/preview/', settings, 'smspreview'))
-    text = r.text
-    assert r.status_code == 200, text
-    assert '<span class="metadata">Length:</span>220' in text
-    assert '<span class="metadata">Multipart:</span>2 parts' in text
-
-
-def test_user_list_lots(cli, settings, send_email):
-    for i in range(110):
-        send_email(uid=str(uuid.uuid4()), company_code='list-lots', recipients=[{'address': f'{i}@t.com'}])
-
-    r = cli.get(modify_url('/messages/email-test/messages.html', settings, '__all__'))
-    assert r.status_code == 200, r.text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
-    text = r.text
-    m = re.search(r'<caption>Results: <b>(\d+)</b></caption>', text)
-    results = int(m.groups()[0])
-    assert results >= 110
-    assert '1 - 100' not in text
-    assert f'101 - {min(results, 150)}' in text
-
-    url = modify_url('/messages/email-test/messages.html', settings, '__all__')
-    r = cli.get(url + '&from=100')
-    assert r.status_code == 200, r.text
-    text = r.text
-    assert '1 - 100' in text
-    assert f'101 - {min(results, 150)}' not in text
+    assert data == {
+        'items': [
+            {
+                'id': 1,
+                'external_id': ext_id,
+                'to_ext_link': None,
+                'to_address': '+44 7896 541236',
+                'to_dst': '<+44 7896 541236>',
+                'to_name': ' ',
+                'subject': None,
+                'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+                'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+                'status': 'send',
+                'method': 'sms-test',
+            },
+        ],
+        'count': 1,
+        'spend': 0.012,
+    }
 
 
 def test_valid_signature(cli, settings, db):
-    db.execute('insert into companies (code) values ($1)', 'whatever')
+    Company.manager.create(db, code='whatever')
     args = dict(company='whatever', expires=to_unix_ms(datetime(2032, 1, 1)))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
     r = cli.get('/messages/email-test/?' + urlencode(args))
     assert r.status_code == 200, r.text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
 
 
 def test_invalid_signature(cli, settings):
@@ -536,7 +440,6 @@ def test_invalid_signature(cli, settings):
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest() + 'xxx'
     r = cli.get('/messages/email-test/?' + urlencode(args))
     assert r.status_code == 403, r.text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
     assert {'message': 'Invalid token'} == r.json()
 
 
@@ -545,19 +448,19 @@ def test_invalid_expiry(cli, settings):
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
     r = cli.get('/messages/email-test/?' + urlencode(args))
-    assert r.status_code == 400, r.text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
+    assert r.status_code == 422, r.text
     assert {
-        'message': 'Invalid Data',
-        'details': [{'loc': ['expires'], 'msg': 'invalid datetime format', 'type': 'value_error.datetime'}],
+        "detail": [
+            {"loc": ["query", "expires"], "msg": "invalid datetime format", "type": "value_error.datetime"},
+            {"loc": ["query", "expires"], "msg": "invalid datetime format", "type": "value_error.datetime"},
+        ]
     } == r.json()
 
 
 def test_sig_expired(cli, settings):
-    args = dict(company='whatever', expires=to_unix_ms(datetime(2000, 1, 1)))
+    args = dict(company='whatever', expires=to_unix_ms(datetime(2000, 1, 1, tzinfo=utc)))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
     r = cli.get('/messages/email-test/?' + urlencode(args))
     assert r.status_code == 403, r.text
-    assert r.headers['Access-Control-Allow-Origin'] == '*'
-    assert {'message': 'token expired'} == r.json()
+    assert {'message': 'Token expired'} == r.json()

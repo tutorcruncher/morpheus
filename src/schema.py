@@ -10,7 +10,8 @@ from foxglove.exceptions import HttpForbidden
 from pathlib import Path
 from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
-from typing import Dict, List, Optional, Tuple
+from pytz import utc
+from typing import Dict, List, Optional
 from uuid import UUID
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -268,51 +269,19 @@ class UserSession(BaseModel):
     expires: datetime
     signature: str
 
+    @validator('expires')
+    def expires_check(cls, v):
+        if v < datetime.now().replace(tzinfo=utc):
+            raise HttpForbidden('Token expired')
+        return v
+
     @validator('signature')
     def sig_check(cls, v, values):
-        expected_sig = hmac.new(
-            glove.settings.user_auth_key,
-            f'{values["company"]}:{to_unix_ms(values["expires"])}'.encode(),
-            hashlib.sha256,
-        ).hexdigest()
-        if v != expected_sig:
-            raise HttpForbidden('Invalid token')
-
-
-class MessageListOutModel(BaseModel):
-    id: str
-    to_user_link: str
-    to_address: str
-    to_name: str
-    to_dst: str
-    send_ts: datetime
-    update_ts: datetime
-    status = MessageStatus
-    method = SendMethod
-
-    @validator('to_name')
-    def _to_name(cls, v, values):
-        return v or f'{values.pop("to_first_name")} {values.pop("to_last_name")}'
-
-    @validator('to_dst')
-    def _to_dst(cls, v, values):
-        return v or f'{values["to_name"]} <{values["to_address"]}>'.strip(' ')
-
-    class Config:
-        fields = {'id': 'external_id', 'to_user_link': 'user_link'}
-
-
-# class MessageOutModel(BaseModel):
-#     external_id: str
-#     method: SendMethod
-#     send_ts: datetime
-#     status: MessageStatus
-#     to: str
-#     update_ts: datetime
-#     to_last_name: str
-#     to_first_name: str
-#     attachments: List[str]
-#     # events: List[Event]
-#
-#     class Config:
-#         orm_mode = True
+        if exp := values.get('expires'):
+            expected_sig = hmac.new(
+                glove.settings.user_auth_key,
+                f'{values["company"]}:{to_unix_ms(exp)}'.encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            if v != expected_sig:
+                raise HttpForbidden('Invalid token')

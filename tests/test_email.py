@@ -2,7 +2,6 @@ import base64
 import hashlib
 import hmac
 import json
-import logging
 import pytest
 import re
 from arq import Retry
@@ -13,7 +12,6 @@ from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 from uuid import uuid4
 
-from src.ext import ApiError
 from src.models import Event, Link, Message
 from src.schema import EmailRecipientModel
 from src.worker import email_retrying, send_email as worker_send_email

@@ -1,6 +1,6 @@
+import re
 from datetime import date
-from sqlalchemy import TEXT, VARCHAR, Column, DateTime, Enum, Float, ForeignKey, Index, Integer, func, literal, select
-from sqlalchemy.dialects import postgresql
+from sqlalchemy import TEXT, VARCHAR, Column, DateTime, Enum, Float, ForeignKey, Index, Integer, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Session, declarative_base, relationship
 from typing import List, Tuple
@@ -99,22 +99,6 @@ class Message(Base):
             'method': self.method,
         }
 
-    @property
-    def details(self):
-        yield 'ID', self.external_id
-        yield 'Status', self.status.title()
-
-        dst = f'{self.to_first_name or ""} {self.to_last_name or ""} <{self.to_address}>'.strip(' ')
-        if self.to_user_link:
-            yield 'To', dict(href=self.to_user_link, value=dst)
-        else:
-            yield 'To', dst
-
-        yield 'Subject', self.subject
-        # could do with using prettier timezones here
-        yield 'Send Time', {'class': 'datetime', 'value': self.send_ts}
-        yield 'Last Updated', {'class': 'datetime', 'value': self.update_ts}
-
     def get_attachments(self):
         if self.attachments:
             for a in self.attachments:
@@ -128,27 +112,30 @@ class Message(Base):
                     yield f'/attachment-doc/{doc_id}/', name
 
 
+normalise_re = re.compile(r'[^a-zA-Z0-9 ]')
+
+
 class MessageManager(BaseManager):
     model = Message
 
     def filter(
-        self, conn: Session, tags: list = None, q: str = None, p_from: int = None, limit=10_000, **kwargs
+        self, conn: Session, tags: list = None, q: str = None, offset: int = None, limit=10_000, **kwargs
     ) -> List[Message]:
-        query = conn.query(Message).filter_by(**kwargs).join(Message.message_group).order_by(Message.id.desc())
+        query = super().filter(conn, **kwargs).join(Message.message_group).order_by(Message.id.desc())
         if tags:
-            query = query.where(Message.tags.contains(tags))
+            query = query.filter(Message.tags.contains(tags))
         if q:
-            query = query.where(Message.vector.match(q))
-        print(str(query.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})))
-        if p_from:
-            query = query.offset(p_from)
+            # TODO: Changing the string like this isn't the best, we should find a way to use PG's plain_tsvquery(q)
+            query = query.filter(Message.vector.match(normalise_re.sub('', q).replace(' ', '&')))
+        if offset:
+            query = query.offset(offset)
         return query.limit(limit)
 
     def get_events(self, conn: Session, **kwargs) -> Tuple[int, List['Event']]:
         events = conn.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51).all()
         extra_count = 0
         if len(events) == 51:
-            extra_count = 1 + (conn.query(Event).filter_by(**kwargs).count() - 50)
+            extra_count = conn.query(Event).filter_by(**kwargs).count() - 50
         return extra_count, events
 
     def get_sms_spend(self, conn: Session, company_id: int, start: date, end: date, method: SmsSendMethod) -> float:

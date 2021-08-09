@@ -683,8 +683,11 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     return UpdateStatus.added
 
 
+@worker_function
 async def update_aggregation_view(ctx):
-    await ctx['pg'].execute('refresh materialized view message_aggregation')
+    ctx['pg'].commit()  # TODO: This is not good! I don't know where we have an uncommitted transaction from :(
+    with ctx['pg'].begin():
+        ctx['pg'].execute('refresh materialized view message_aggregation')
 
 
 def utcnow():

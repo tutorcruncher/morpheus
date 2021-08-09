@@ -1,6 +1,11 @@
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import Session
-from typing import List, Union
+from sqlalchemy.orm import Query, Session
+from typing import TYPE_CHECKING, List, Union
+
+from src.schema import SendMethod
+
+if TYPE_CHECKING:
+    from src.models import Company, Event, Link, Message, MessageGroup
 
 Models = Union['Company', 'Event', 'Message', 'MessageGroup', 'Link']
 
@@ -19,7 +24,7 @@ from (
   select coalesce(json_agg(t), '[]') AS histogram from (
     select coalesce(sum(count), 0) as count, date as day, status
     from message_aggregation
-    where %(where)s and date > current_timestamp::date - '28 days'::interval
+    where company_id = %(company_id)s and method = '%(method)s' and date > current_timestamp::date - '28 days'::interval
     group by date, status
   ) as t
 ) as histogram,
@@ -32,14 +37,14 @@ from (
     sum(count) filter (where date > current_timestamp::date - '7 days'::interval) as all_7,
     sum(count) filter (where date > current_timestamp::date - '7 days'::interval and status = 'open') as open_7
   from message_aggregation
-  where %(where)s
+  where company_id = %(company_id)s and method = '%(method)s'
 ) as agg
 """
 
 
-def get_messages_aggregated(conn, company_id, method):
-    where = f'company_id = {company_id} and method = {method}'
-    return conn.execute(agg_sql % {'where': where})
+def get_messages_aggregated(conn, company_id, method: SendMethod):
+    data = conn.execute(agg_sql % {'company_id': company_id, 'method': method.name})
+    return data.scalar()
 
 
 class BaseManager:
@@ -59,8 +64,8 @@ class BaseManager:
     def get(self, conn: Session, **kwargs) -> Union[Models]:
         return conn.query(self.model).filter_by(**kwargs).one()
 
-    def filter(self, conn: Session, **kwargs) -> List[Union[Models]]:
-        return conn.query(self.model).filter_by(**kwargs).limit(10000).all()
+    def filter(self, conn: Session, **kwargs) -> Query:
+        return conn.query(self.model).filter_by(**kwargs)
 
     def all(self, conn: Session) -> List[Union[Models]]:
         return conn.query(self.model).all()
@@ -73,7 +78,7 @@ class BaseManager:
         return instance
 
     def create_many(self, conn: Session, *instances: List[Union[Models]]) -> None:
-        conn.add_all(instances)
+        conn.add_all(*instances)
         conn.commit()
 
     def get_or_create(self, conn: Session, **kwargs) -> Union[Models]:
