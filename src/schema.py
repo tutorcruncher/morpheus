@@ -10,7 +10,6 @@ from foxglove.exceptions import HttpForbidden
 from pathlib import Path
 from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
-from pytz import utc
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -271,7 +270,7 @@ class UserSession(BaseModel):
 
     @validator('expires')
     def expires_check(cls, v):
-        if v < datetime.now().replace(tzinfo=utc):
+        if v < datetime.now().replace(tzinfo=timezone.utc):
             raise HttpForbidden('Token expired')
         return v
 

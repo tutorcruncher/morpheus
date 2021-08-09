@@ -7,7 +7,6 @@ from datetime import date, datetime, timedelta, timezone
 from foxglove import glove
 from operator import itemgetter
 from pytest_toolbox.comparison import RegexStr
-from pytz import utc
 from urllib.parse import urlencode
 
 from src.models import Company, Event, Message
@@ -458,7 +457,7 @@ def test_invalid_expiry(cli, settings):
 
 
 def test_sig_expired(cli, settings):
-    args = dict(company='whatever', expires=to_unix_ms(datetime(2000, 1, 1, tzinfo=utc)))
+    args = dict(company='whatever', expires=to_unix_ms(datetime(2000, 1, 1, tzinfo=timezone.utc)))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
     r = cli.get('/messages/email-test/?' + urlencode(args))
