@@ -4,16 +4,4 @@ env/
 *.egg-info/
 build/
 dist/
-.pytest_cache/
-.cache/
-/test*.*
-/sandbox/
 .coverage
-htmlcov/
-nginx/keys/
-nginx/keys-old/
-activate.*
-nginx/htpasswd
-nginx/_build.nginx.conf
-src/es-license/license.json
-data_transfer/es_data/

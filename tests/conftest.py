@@ -1,5 +1,6 @@
 import arq
 import asyncio
+import os
 import pytest
 import re
 import uuid
@@ -32,7 +33,7 @@ def fix_loop(settings):
     return loop
 
 
-DB_DSN = 'postgresql://postgres@localhost:5432/morpheus_test'
+DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
 
 
 def override_get_db():
