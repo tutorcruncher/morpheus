@@ -53,7 +53,7 @@ async def click_redirect_view(
             ip_address = ip_address.split(',', 1)[0]
 
         try:
-            ts = float(X_Request_Start or '.')
+            ts = float(X_Request_Start)
         except ValueError:
             ts = time()
 
