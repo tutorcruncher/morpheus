@@ -1,6 +1,6 @@
 import pytest
 
-from morpheus.app.render.main import MessageTooLong, SmsLength, sms_length
+from src.render.main import MessageTooLong, SmsLength, sms_length
 
 
 def idfn(v):

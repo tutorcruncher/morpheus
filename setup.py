@@ -5,10 +5,10 @@ setup(
     version='0.1.0',
     description='Email rendering engine from morpheus',
     long_description="""
-Note: this only installs the rendering logic for `morpheus <https://github.com/tutorcruncher/morpheus>`_ 
+Note: this only installs the rendering logic for `morpheus <https://github.com/tutorcruncher/morpheus>` \
 for testing and email preview.
 
-Everything else is excluded to avoid installing unnecessary packages. 
+Everything else is excluded to avoid installing unnecessary packages.
 """,
     classifiers=[
         'Development Status :: 4 - Beta',
@@ -40,5 +40,5 @@ Everything else is excluded to avoid installing unnecessary packages.
         'libsass>=0.13.2',
         'misaka>=2.1.0',
         'python_version>"3"',
-    ]
+    ],
 )
