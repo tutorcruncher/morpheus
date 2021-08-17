@@ -22,4 +22,4 @@ RUN find /usr -name '*.dist-info'  | xargs rm -r
 
 ADD ../src /home/root/
 
-CMD ["foxglove", "web"]
+CMD ["foxglove", "auto"]
