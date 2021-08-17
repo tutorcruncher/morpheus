@@ -83,6 +83,19 @@ class Message(Base):
     Index('message_vector', 'vector', 'method', 'company_id', postgresql_using='gin')
     Index('message_company_method', 'method', 'company_id', 'id')
 
+    @staticmethod
+    def status_display(v):
+        return {
+            'send': 'Sent',
+            'open': 'Opened',
+            'click': 'Opened & clicked on',
+            'soft_bounce': 'Bounced (retried)',
+            'hard_bounce': 'Bounced',
+        }.get(v, v)
+
+    def get_status_display(self):
+        return self.status_display(self.status)
+
     @property
     def list_details(self):
         return {
@@ -95,7 +108,7 @@ class Message(Base):
             'send_ts': self.send_ts,
             'subject': self.subject,
             'update_ts': self.update_ts,
-            'status': self.status,
+            'status': self.get_status_display(),
             'method': self.method,
         }
 
@@ -159,6 +172,19 @@ class Event(Base):
     extra = Column(JSONB)
 
     message = relationship(Message, back_populates='events')
+
+    @staticmethod
+    def status_display(v):
+        return {
+            'send': 'Sent',
+            'open': 'Opened',
+            'click': 'Opened & clicked on',
+            'soft_bounce': 'Bounced (retried)',
+            'hard_bounce': 'Bounced',
+        }.get(v, v)
+
+    def get_status_display(self):
+        return self.status_display(self.status)
 
 
 class EventManager(BaseManager):

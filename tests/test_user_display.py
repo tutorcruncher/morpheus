@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import json
 import uuid
-from arq.utils import to_unix_ms
 from datetime import date, datetime, timedelta, timezone
 from foxglove import glove
 from operator import itemgetter
@@ -14,7 +13,7 @@ from src.schema import MessageStatus
 
 
 def modify_url(url, settings, company='foobar'):
-    args = dict(company=company, expires=to_unix_ms(datetime(2032, 1, 1)))
+    args = dict(company=company, expires=round(datetime(2032, 1, 1).timestamp()))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
     return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
@@ -45,7 +44,7 @@ def test_user_list(cli, settings, send_email, db):
         'to_name': ' ',
         'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
         'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-        'status': 'send',
+        'status': 'Sent',
         'method': 'email-test',
         'subject': 'test message',
     }
@@ -68,7 +67,7 @@ def test_user_list_sms(cli, settings, send_sms, db):
         'to_name': ' ',
         'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
         'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-        'status': 'send',
+        'status': 'Sent',
         'method': 'sms-test',
         'subject': None,
     }
@@ -182,8 +181,8 @@ def test_user_aggregate(cli, settings, send_email, db, loop, worker):
         'open_28_day': 1,
     }
     assert sorted(histogram, key=itemgetter('count')) == [
-        {'count': 1, 'day': f'{date.today():%Y-%m-%d}', 'status': 'open'},
-        {'count': 4, 'day': f'{date.today():%Y-%m-%d}', 'status': 'send'},
+        {'count': 1, 'day': f'{date.today():%Y-%m-%d}', 'status': 'Opened'},
+        {'count': 4, 'day': f'{date.today():%Y-%m-%d}', 'status': 'Sent'},
     ]
 
 
@@ -268,11 +267,12 @@ def test_message_details(cli, settings, send_email, db, worker, loop):
         'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
         'subject': 'test message',
         'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-        'status': 'open',
+        'status': 'Opened',
         'method': 'email-test',
+        'body': '<body>\nthis is a test\n</body>',
         'events': [
             {
-                'status': 'Open',
+                'status': 'Opened',
                 'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'details': (
                     '{\n  "user_agent": "testincalls",\n  "location": null,\n  "bounce_description": null,\n  '
@@ -318,11 +318,12 @@ def test_message_details_links(cli, settings, send_email, db, worker, loop):
         'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
         'subject': 'test message',
         'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-        'status': 'open',
+        'status': 'Opened',
+        'body': '<body>\nthis is a test\n</body>',
         'method': 'email-test',
         'events': [
             {
-                'status': 'Open',
+                'status': 'Opened',
                 'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'details': (
                     '{\n  "user_agent": "testincalls",\n  "location": null,\n  "bounce_description": null,\n  '
@@ -354,9 +355,9 @@ def test_no_event_data(cli, settings, send_email, db):
     Event.manager.create_many(db, *events)
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.json()['events'] == [
-        {'status': 'Send', 'datetime': '2032-06-01T00:00:00+00:00'},
-        {'status': 'Send', 'datetime': '2032-06-02T02:00:00+00:00'},
-        {'status': 'Send', 'datetime': '2032-06-03T04:00:00+00:00'},
+        {'status': 'Sent', 'datetime': '2032-06-01T00:00:00+00:00'},
+        {'status': 'Sent', 'datetime': '2032-06-02T02:00:00+00:00'},
+        {'status': 'Sent', 'datetime': '2032-06-03T04:00:00+00:00'},
     ]
 
 
@@ -415,7 +416,7 @@ def test_user_sms_list(cli, settings, send_sms, db):
                 'subject': None,
                 'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-                'status': 'send',
+                'status': 'Sent',
                 'method': 'sms-test',
             },
         ],
@@ -426,7 +427,7 @@ def test_user_sms_list(cli, settings, send_sms, db):
 
 def test_valid_signature(cli, settings, db):
     Company.manager.create(db, code='whatever')
-    args = dict(company='whatever', expires=to_unix_ms(datetime(2032, 1, 1)))
+    args = dict(company='whatever', expires=round(datetime(2032, 1, 1).timestamp()))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
     r = cli.get('/messages/email-test/?' + urlencode(args))
@@ -434,7 +435,7 @@ def test_valid_signature(cli, settings, db):
 
 
 def test_invalid_signature(cli, settings):
-    args = dict(company='whatever', expires=to_unix_ms(datetime(2032, 1, 1)))
+    args = dict(company='whatever', expires=round(datetime(2032, 1, 1).timestamp()))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest() + 'xxx'
     r = cli.get('/messages/email-test/?' + urlencode(args))
@@ -457,7 +458,7 @@ def test_invalid_expiry(cli, settings):
 
 
 def test_sig_expired(cli, settings):
-    args = dict(company='whatever', expires=to_unix_ms(datetime(2000, 1, 1, tzinfo=timezone.utc)))
+    args = dict(company='whatever', expires=round(datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()
     r = cli.get('/messages/email-test/?' + urlencode(args))

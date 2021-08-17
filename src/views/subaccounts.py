@@ -5,7 +5,6 @@ from foxglove import glove
 from foxglove.exceptions import HttpBadRequest, HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from httpx import Response
-from sqlalchemy.exc import NoResultFound
 from starlette.responses import JSONResponse
 from typing import Optional
 
@@ -48,33 +47,26 @@ async def create_subaccount(method: SendMethod, m: Optional[SubaccountModel] = N
 
 
 @app.post('/delete-subaccount/{method}/')
-async def delete_subaccount(method: SendMethod, m: Optional[SubaccountModel] = None, conn=Depends(get_db)):
+async def delete_subaccount(method: SendMethod, m: SubaccountModel, conn=Depends(get_db)):
     """
     Delete an existing subaccount with mandrill
     """
-    if method != SendMethod.email_mandrill:
-        return {'message': f'no subaccount deletion required for "{method}"'}
-    assert m
+    company_branches = Company.manager.filter(conn, Company.code.startswith(f'{m.company_code}'))
+    m_count, g_count = 0, 0
+    for branch in company_branches:
+        m_count += Message.manager.delete(conn, company_id=branch.id)
+        g_count += MessageGroup.manager.delete(conn, company_id=branch.id)
+        Company.manager.delete(conn, id=branch.id)
+    msg = f'deleted_messages={m_count} deleted_message_groups={g_count}'
+    logger.info('deleting company=%s %s', m.company_name, msg)
 
-    r = await glove.mandrill.post(
-        'subaccounts/delete.json', allowed_statuses=(200, 500), id=m.company_code, timeout_=12
-    )
-    data = r.json()
-    if r.status_code == 200:
-        m_count, g_count = 0, 0
-        try:
-            company = Company.manager.get(conn, code=m.company_code)
-        except NoResultFound:
-            pass
-        else:
-            m_count = Message.manager.delete(conn, company_id=company.id)
-            g_count = MessageGroup.manager.delete(conn, company_id=company.id)
-            Company.manager.delete(conn, id=company.id)
-        msg = f'deleted_messages={m_count} deleted_message_groups={g_count}'
-        logger.info('deleting company=%s %s', m.company_name, msg)
-        return {'message': msg}
-    if data.get('name') == 'Unknown_Subaccount':
-        raise HttpNotFound(data.get('message', 'sub-account not found'))
-
-    assert r.status_code == 500, r.status_code
-    raise HttpBadRequest(f'error from mandrill: {json.dumps(data, indent=2)}')
+    if method == SendMethod.email_mandrill:
+        r = await glove.mandrill.post(
+            'subaccounts/delete.json', allowed_statuses=(200, 500), id=m.company_code, timeout_=12
+        )
+        data = r.json()
+        if data.get('name') == 'Unknown_Subaccount':
+            raise HttpNotFound(data.get('message', 'sub-account not found'))
+        elif r.status_code != 200:
+            raise HttpBadRequest(f'error from mandrill: {json.dumps(data, indent=2)}')
+    return {'message': msg}

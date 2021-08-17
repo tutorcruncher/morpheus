@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     click_host_name = 'click.example.com'
     mandrill_key = ''
     mandrill_url = 'https://mandrillapp.com/api/1.0'
-    mandrill_timeout = 30.0
     mandrill_webhook_key: str = ''
     log_level = 'INFO'
     verbose_http_errors = True
@@ -28,14 +27,9 @@ class Settings(BaseSettings):
     # Used to sign Mandrill webhooks
     webhook_auth_key: bytes = b'insecure'
 
+    worker_func = 'src.worker:run_worker'
     admin_basic_auth_password = 'testing'
     test_output: Path = None
-    local_api_url = 'http://localhost:8000'
-    public_local_api_url = 'http://localhost:5000'
-
-    # WARNING without setting a token here the stats page will be publicly viewable
-    stats_token = ''
-    max_request_stats = int(1e5)
 
     # messagebird
     messagebird_key = ''

@@ -64,8 +64,13 @@ class BaseManager:
     def get(self, conn: Session, **kwargs) -> Union[Models]:
         return conn.query(self.model).filter_by(**kwargs).one()
 
-    def filter(self, conn: Session, **kwargs) -> Query:
-        return conn.query(self.model).filter_by(**kwargs)
+    def filter(self, conn: Session, *args, **kwargs) -> Query:
+        q = conn.query(self.model)
+        if args:
+            q = q.filter(*args)
+        if kwargs:
+            q = q.filter_by(**kwargs)
+        return q
 
     def all(self, conn: Session) -> List[Union[Models]]:
         return conn.query(self.model).all()

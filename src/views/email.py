@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from foxglove import glove
 from foxglove.exceptions import HttpConflict
 from foxglove.route_class import KeepBodyAPIRoute
@@ -14,7 +14,7 @@ app = APIRouter(route_class=KeepBodyAPIRoute)
 
 
 @app.post('/send/email/')
-async def email_send_view(m: EmailSendModel, conn=Depends(get_db)):
+async def email_send_view(m: EmailSendModel = Body(None), conn=Depends(get_db)):
     group_key = f'group:{m.uid}'
     v = await glove.redis.incr(group_key)
     if v > 1:

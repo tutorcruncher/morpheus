@@ -154,6 +154,18 @@ def test_delete_subaccount(cli: TestClient, db: Session, dummy_server: DummyServ
     ]
 
 
+def test_delete_subaccount_multiple_branches(cli: TestClient, db: Session, dummy_server: DummyServer):
+    data = {'company_code': 'foobar'}
+    Company.manager.create(db, code='foobar:1')
+    Company.manager.create(db, code='foobar:2')
+    Company.manager.create(db, code='notbar:1')
+
+    r = cli.post('/delete-subaccount/email-test/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
+    assert Company.manager.count(db) == 1
+
+
 def test_delete_subaccount_wrong_response(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'broken1'}
     _create_test_subaccount(cli, data)
@@ -167,9 +179,11 @@ def test_delete_subaccount_wrong_response(cli: TestClient, db: Session, dummy_se
 
 
 def test_delete_subaccount_other_method(cli: TestClient, db: Session, dummy_server: DummyServer):
-    r = cli.post('/delete-subaccount/email-test/', headers={'Authorization': 'testing-key'})
+    r = cli.post(
+        '/delete-subaccount/email-test/', json={'company_code': 'foobar'}, headers={'Authorization': 'testing-key'}
+    )
     assert r.status_code == 200, r.text
-    assert r.json() == {'message': 'no subaccount deletion required for "email-test"'}
+    assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
 
     assert dummy_server.log == []
 

@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import json
 import re
-from arq.utils import to_unix_ms
 from datetime import datetime, timezone
 from enum import Enum
 from foxglove import glove
@@ -10,7 +9,7 @@ from foxglove.exceptions import HttpForbidden
 from pathlib import Path
 from pydantic import BaseModel as _BaseModel, NameEmail, constr, validator
 from pydantic.validators import str_validator
-from typing import Dict, List, Optional
+from typing import Dict, List
 from uuid import UUID
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -264,7 +263,6 @@ class Session(BaseModel):
 
 class UserSession(BaseModel):
     company: str
-    dttz: Optional[datetime] = None
     expires: datetime
     signature: str
 
@@ -278,9 +276,7 @@ class UserSession(BaseModel):
     def sig_check(cls, v, values):
         if exp := values.get('expires'):
             expected_sig = hmac.new(
-                glove.settings.user_auth_key,
-                f'{values["company"]}:{to_unix_ms(exp)}'.encode(),
-                hashlib.sha256,
+                glove.settings.user_auth_key, f'{values["company"]}:{exp.timestamp():.0f}'.encode(), hashlib.sha256
             ).hexdigest()
             if v != expected_sig:
                 raise HttpForbidden('Invalid token')
