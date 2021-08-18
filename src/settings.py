@@ -1,6 +1,6 @@
 from foxglove import BaseSettings
 from pathlib import Path
-from pydantic import NoneStr
+from pydantic import NoneStr, validator
 from typing import List
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # https://support.messagebird.com/hc/en-us/articles/208747865-United-States
     us_send_number = '15744445663'
 
+    @validator('pg_dsn')
+    def heroku_ready_pg_dsn(cls, v):
+        return v.replace('gres://', 'gresql://')
+
     @property
     def mandrill_webhook_url(self):
         return f'https://{self.host_name}/webhook/mandrill/'
@@ -56,4 +60,5 @@ class Settings(BaseSettings):
             'click_host_name': {'env': 'CLICK_HOST_NAME'},
             'mandrill_webhook_key': {'env': 'MANDRILL_WEBHOOK_KEY'},
             'auth_key': {'env': 'AUTH_KEY'},
+            'user_auth_key': {'env': 'USER_AUTH_KEY'},
         }
