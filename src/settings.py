@@ -60,4 +60,5 @@ class Settings(BaseSettings):
             'click_host_name': {'env': 'CLICK_HOST_NAME'},
             'mandrill_webhook_key': {'env': 'MANDRILL_WEBHOOK_KEY'},
             'auth_key': {'env': 'AUTH_KEY'},
+            'user_auth_key': {'env': 'USER_AUTH_KEY'},
         }
