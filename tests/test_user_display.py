@@ -36,7 +36,7 @@ def test_user_list(cli, settings, send_email, db):
     assert msg_ids == list(reversed(expected_msg_ids))
     first_item = data['items'][0]
     assert first_item == {
-        'id': Message.manager.get(db, external_id=expected_msg_ids[3]).id,
+        'id': Message.manager(db).get(external_id=expected_msg_ids[3]).id,
         'external_id': expected_msg_ids[3],
         'to_ext_link': None,
         'to_address': '3@t.com',
@@ -59,8 +59,8 @@ def test_user_list_sms(cli, settings, send_sms, db):
     assert data['count'] == 1
     assert len(data['items']) == 1
     assert data['items'][0] == {
-        'id': Message.manager.get(db).id,
-        'external_id': Message.manager.get(db).external_id,
+        'id': Message.manager(db).get().id,
+        'external_id': Message.manager(db).get().external_id,
         'to_ext_link': None,
         'to_address': '+44 7896 541236',
         'to_dst': '<+44 7896 541236>',
@@ -167,7 +167,7 @@ def test_user_aggregate(cli, settings, send_email, db, loop, worker):
     loop.run_until_complete(glove.redis.enqueue_job('update_aggregation_view'))
     loop.run_until_complete(worker.run_check())
 
-    assert Message.manager.count(db) == 6
+    assert Message.manager(db).count() == 6
     r = cli.get(modify_url('/messages/email-test/aggregation/', settings, 'user-aggs'))
     assert r.status_code == 200, r.text
     data = r.json()
@@ -187,7 +187,7 @@ def test_user_aggregate(cli, settings, send_email, db, loop, worker):
 
 
 def test_user_aggregate_no_data(cli, settings, db):
-    Company.manager.create(db, code='testing')
+    Company.manager(db).create(code='testing')
     r = cli.get(modify_url('/messages/email-test/aggregation/', settings, 'testing'))
     assert r.status_code == 200, r.text
     data = r.json()
@@ -254,7 +254,7 @@ def test_message_details(cli, settings, send_email, db, worker, loop):
     assert r.status_code == 200, r.text
     assert loop.run_until_complete(worker.run_check()) == 2
 
-    message = Message.manager.get(db, external_id=msg_ext_id)
+    message = Message.manager(db).get(external_id=msg_ext_id)
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
     assert r.json() == {
@@ -301,7 +301,7 @@ def test_message_details_links(cli, settings, send_email, db, worker, loop):
             }
         ],
     )
-    message = Message.manager.get(db, external_id=msg_ext_id)
+    message = Message.manager(db).get(external_id=msg_ext_id)
     data = {'ts': int(2e12), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
@@ -343,7 +343,7 @@ def test_no_event_data(cli, settings, send_email, db):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager.get(db, external_id=msg_ext_id)
+    message = Message.manager(db).get(external_id=msg_ext_id)
     events = [
         Event(
             ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
@@ -352,7 +352,7 @@ def test_no_event_data(cli, settings, send_email, db):
         )
         for i in range(3)
     ]
-    Event.manager.create_many(db, *events)
+    Event.manager(db).create_many(*events)
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.json()['events'] == [
         {'status': 'Sent', 'datetime': '2032-06-01T00:00:00+00:00'},
@@ -365,7 +365,7 @@ def test_invalid_message_id(cli, db, settings, send_email):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager.get(db, external_id=msg_ext_id)
+    message = Message.manager(db).get(external_id=msg_ext_id)
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'not_real_company'))
     assert r.status_code == 404
 
@@ -377,7 +377,7 @@ def test_many_events(cli, settings, send_email, db):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager.get(db, external_id=msg_ext_id)
+    message = Message.manager(db).get(external_id=msg_ext_id)
     events = [
         Event(
             ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
@@ -387,13 +387,13 @@ def test_many_events(cli, settings, send_email, db):
         )
         for i in range(55)
     ]
-    Event.manager.create_many(db, *events)
+    Event.manager(db).create_many(*events)
 
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
     events = r.json()['events']
     assert len(events) == 51
-    assert Event.manager.count(db) == 55
+    assert Event.manager(db).count() == 55
     assert events[-1]['status'] == '5 more'
 
 
@@ -426,7 +426,7 @@ def test_user_sms_list(cli, settings, send_sms, db):
 
 
 def test_valid_signature(cli, settings, db):
-    Company.manager.create(db, code='whatever')
+    Company.manager(db).create(code='whatever')
     args = dict(company='whatever', expires=round(datetime(2032, 1, 1).timestamp()))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()

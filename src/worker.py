@@ -366,14 +366,13 @@ class SendEmail:
         ]
         if attachments:
             data['attachments'] = attachments
-        message = Message.manager.create(self.ctx['pg'], **data)
+        message = Message.manager(self.ctx['pg']).create(**data)
         if email_info.shortened_link:
             links = [Link(message=message, token=token, url=url) for url, token in email_info.shortened_link]
-            Link.manager.create_many(self.ctx['pg'], *links)
+            Link.manager(self.ctx['pg']).create_many(*links)
 
     async def _store_email_failed(self, status: MessageStatus, error_msg):
-        Message.manager.create(
-            self.ctx['pg'],
+        Message.manager(self.ctx['pg']).create(
             group_id=self.group_id,
             company_id=self.company_id,
             method=self.m.method,
@@ -441,8 +440,7 @@ class SendSMS:
                     error = str(e)
 
         if error:
-            Message.manager.create(
-                self.ctx['pg'],
+            Message.manager(self.ctx['pg']).create(
                 group_id=self.group_id,
                 company_id=self.company_id,
                 method=self.m.method,
@@ -566,8 +564,7 @@ class SendSMS:
         await self._store_sms(data['id'], send_ts, sms_data, cost)
 
     async def _store_sms(self, external_id, send_ts, sms_data: SmsData, cost: float):
-        message = Message.manager.create(
-            self.ctx['pg'],
+        message = Message.manager(self.ctx['pg']).create(
             external_id=external_id,
             group_id=self.group_id,
             company_id=self.company_id,
@@ -585,7 +582,7 @@ class SendSMS:
         )
         if sms_data.shortened_link:
             links = [Link(message=message, token=token, url=url) for url, token in sms_data.shortened_link]
-            Link.manager.create_many(self.ctx['pg'], *links)
+            Link.manager(self.ctx['pg']).create_many(*links)
 
 
 def validate_number(number, country, include_description=True) -> Optional[Number]:
@@ -638,7 +635,7 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
             return 'recently_clicked'
         await redis.expire(cache_key, 60)
 
-    link = Link.manager.get(ctx['pg'], id=link_id)
+    link = Link.manager(ctx['pg']).get(id=link_id)
     extra = {'target': link.url, 'ip': ip, 'user_agent': user_agent}
     if user_agent:
         ua_dict = ParseUserAgent(user_agent)
@@ -653,7 +650,7 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
         if not ts.tzinfo:
             ts = ts.replace(tzinfo=timezone.utc)
         status = 'click'
-        Event.manager.create(ctx['pg'], message=link.message, status=status, ts=ts, extra=json.dumps(extra))
+        Event.manager(ctx['pg']).create(message=link.message, status=status, ts=ts, extra=json.dumps(extra))
 
 
 @worker_function
@@ -669,7 +666,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
         await redis.expire(ref, 86400)
 
     try:
-        message = Message.manager.get(ctx['pg'], method=send_method, external_id=m.message_id)
+        message = Message.manager(ctx['pg']).get(method=send_method, external_id=m.message_id)
     except NoResultFound:
         return UpdateStatus.missing
 
@@ -679,7 +676,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     if log_each:
         main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
-    Event.manager.create(ctx['pg'], message_id=message.id, status=m.status, ts=m.ts, extra=m.extra_json())
+    Event.manager(ctx['pg']).create(message_id=message.id, status=m.status, ts=m.ts, extra=m.extra_json())
     return UpdateStatus.added
 
 

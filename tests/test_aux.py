@@ -104,10 +104,10 @@ def test_create_subaccount_on_send_email(cli: TestClient, db: Session, dummy_ser
     assert r.json() == {'message': 'subaccount created'}
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
 
-    assert Company.manager.count(db) == 0
+    assert Company.manager(db).count() == 0
 
     send_email(company_code='foobar')
-    assert Company.manager.count(db) == 1
+    assert Company.manager(db).count() == 1
 
 
 def test_create_subaccount_on_send_sms(cli: TestClient, db: Session, dummy_server, send_sms):
@@ -116,10 +116,10 @@ def test_create_subaccount_on_send_sms(cli: TestClient, db: Session, dummy_serve
     assert r.status_code == 201, r.text
     assert r.json() == {'message': 'subaccount created'}
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
-    assert Company.manager.count(db) == 0
+    assert Company.manager(db).count() == 0
 
     send_sms(company_code='foobar')
-    assert Company.manager.count(db) == 1
+    assert Company.manager(db).count() == 1
 
 
 def test_user_list_subaccount_doesnt_exist(cli, settings, db, dummy_server: DummyServer):
@@ -156,14 +156,14 @@ def test_delete_subaccount(cli: TestClient, db: Session, dummy_server: DummyServ
 
 def test_delete_subaccount_multiple_branches(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
-    Company.manager.create(db, code='foobar:1')
-    Company.manager.create(db, code='foobar:2')
-    Company.manager.create(db, code='notbar:1')
+    Company.manager(db).create(code='foobar:1')
+    Company.manager(db).create(code='foobar:2')
+    Company.manager(db).create(code='notbar:1')
 
     r = cli.post('/delete-subaccount/email-test/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
-    assert Company.manager.count(db) == 1
+    assert Company.manager(db).count() == 1
 
 
 def test_delete_subaccount_wrong_response(cli: TestClient, db: Session, dummy_server: DummyServer):
@@ -200,9 +200,9 @@ def test_delete_subaccount_and_saved_messages(
     send_email(company_code='foobar1')
     send_sms(company_code='foobar1')
     send_email(company_code='foobar2', recipients=[{'address': f'{i}@test.com'} for i in range(5)])
-    assert Company.manager.count(db) == 2
-    assert MessageGroup.manager.count(db) == 3
-    assert Message.manager.count(db) == 7
+    assert Company.manager(db).count() == 2
+    assert MessageGroup.manager(db).count() == 3
+    assert Message.manager(db).count() == 7
 
     fb1_data = {'company_code': 'foobar1'}
     _create_test_subaccount(cli, fb1_data)
@@ -213,19 +213,19 @@ def test_delete_subaccount_and_saved_messages(
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'deleted_messages=2 deleted_message_groups=2'}
 
-    assert MessageGroup.manager.count(db) == 1
-    assert Message.manager.count(db) == 5
+    assert MessageGroup.manager(db).count() == 1
+    assert Message.manager(db).count() == 5
 
     r = cli.post('/delete-subaccount/email-mandrill/', json=fb2_data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'deleted_messages=5 deleted_message_groups=1'}
 
-    assert MessageGroup.manager.count(db) == 0
-    assert Message.manager.count(db) == 0
+    assert MessageGroup.manager(db).count() == 0
+    assert Message.manager(db).count() == 0
 
     send_email(company_code='foobar3')
-    assert MessageGroup.manager.count(db) == 1
-    assert Message.manager.count(db) == 1
+    assert MessageGroup.manager(db).count() == 1
+    assert Message.manager(db).count() == 1
 
     _create_test_subaccount(cli, {'company_code': 'foobar3'})
     with pytest.raises(TypeError):
@@ -234,8 +234,8 @@ def test_delete_subaccount_and_saved_messages(
             json={'company_code': object()},
             headers={'Authorization': 'testing-key'},
         )
-    assert MessageGroup.manager.count(db) == 1
-    assert Message.manager.count(db) == 1
+    assert MessageGroup.manager(db).count() == 1
+    assert Message.manager(db).count() == 1
 
 
 def test_missing_link(cli: TestClient):

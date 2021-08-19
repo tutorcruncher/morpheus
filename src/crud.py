@@ -58,49 +58,54 @@ class BaseManager:
         if not self.model:
             self.model = model
 
-    def count(self, conn: Session, **kwargs) -> int:
-        return conn.query(self.model).filter_by(**kwargs).count()
+    def __call__(self, db: Session):
+        self.db = db
+        return self
 
-    def get(self, conn: Session, **kwargs) -> Union[Models]:
-        return conn.query(self.model).filter_by(**kwargs).one()
+    def count(self, **kwargs) -> int:
+        return self.db.query(self.model).filter_by(**kwargs).count()
 
-    def filter(self, conn: Session, *args, **kwargs) -> Query:
-        q = conn.query(self.model)
+    def get(self, **kwargs) -> Union[Models]:
+        return self.db.query(self.model).filter_by(**kwargs).one()
+
+    def filter(self, *args, **kwargs) -> Query:
+        q = self.db.query(self.model)
         if args:
             q = q.filter(*args)
         if kwargs:
             q = q.filter_by(**kwargs)
         return q
 
-    def all(self, conn: Session) -> List[Union[Models]]:
-        return conn.query(self.model).all()
+    def all(self) -> List[Union[Models]]:
+        return self.db.query(self.model).all()
 
-    def create(self, conn: Session, **kwargs) -> Union[Models]:
+    def create(self, **kwargs) -> Union[Models]:
         instance = self.model(**kwargs)
-        conn.add(instance)
-        conn.commit()
-        conn.refresh(instance)
+        self.db.add(instance)
+        self.db.commit()
+        self.db.flush()
         return instance
 
-    def create_many(self, conn: Session, *instances: List[Union[Models]]) -> None:
-        conn.add_all(*[instances])
-        conn.commit()
+    def create_many(self, *instances: List[Union[Models]]) -> None:
+        self.db.add_all(*[instances])
+        self.db.commit()
 
-    def get_or_create(self, conn: Session, **kwargs) -> Union[Models]:
+    def get_or_create(self, **kwargs) -> Union[Models]:
         try:
-            instance = self.get(conn, **kwargs)
+            instance = self.get(**kwargs)
         except NoResultFound:
-            instance = self.create(conn, **kwargs)
+            instance = self.create(**kwargs)
         return instance
 
-    def update(self, conn: Session, instance: Union[Models]):
+    def update(self, instance: Union[Models]):
         assert instance.id
-        conn.add(instance)
-        conn.commit()
-        conn.refresh(instance)
+        self.db.add(instance)
+        self.db.commit()
+        self.db.flush()
         return instance
 
-    def delete(self, conn: Session, **kwargs) -> int:
-        count = conn.query(self.model).filter_by(**kwargs).delete()
-        conn.commit()
+    def delete(self, **kwargs) -> int:
+        count = self.db.query(self.model).filter_by(**kwargs).delete()
+        self.db.commit()
+        self.db.flush()
         return count

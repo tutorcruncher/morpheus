@@ -266,7 +266,7 @@ def test_messagebird_webhook(cli, db, dummy_server, worker, loop):
     assert r.status_code == 201, r.text
     assert loop.run_until_complete(worker.run_check()) == 1
 
-    msg = Message.manager.get(db)
+    msg = Message.manager(db).get()
     assert msg.status == 'send'
     assert msg.to_first_name == 'John'
     assert msg.to_last_name == 'Doe'
@@ -306,7 +306,7 @@ def test_failed_render(cli, tmpdir, db, worker, loop):
     assert loop.run_until_complete(worker.run_check()) == 1
     assert len(tmpdir.listdir()) == 0
 
-    assert Message.manager.get(db).status == 'render_failed'
+    assert Message.manager(db).get().status == 'render_failed'
 
 
 def test_link_shortening(cli, tmpdir, db, worker, loop):
@@ -329,7 +329,7 @@ def test_link_shortening(cli, tmpdir, db, worker, loop):
     token = re.search('message click.example.com/l(.+?)\n', msg_file).groups()[0]
     assert len(token) == 12
 
-    link = Link.manager.get(db)
+    link = Link.manager(db).get()
     assert link.url == 'http://whatever.com/foo/bar'
     assert link.token == token
 

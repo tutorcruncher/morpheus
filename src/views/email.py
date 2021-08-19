@@ -22,10 +22,9 @@ async def email_send_view(m: EmailSendModel = Body(None), conn=Depends(get_db)):
     await glove.redis.expire(group_key, 86400)
 
     logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
-    company = Company.manager.get_or_create(conn, code=m.company_code)
+    company = Company.manager(conn).get_or_create(code=m.company_code)
 
-    message_group = MessageGroup.manager.create(
-        conn,
+    message_group = MessageGroup.manager(conn).create(
         uuid=str(m.uid),
         company_id=company.id,
         message_method=m.method,

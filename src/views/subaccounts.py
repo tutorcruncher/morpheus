@@ -51,12 +51,12 @@ async def delete_subaccount(method: SendMethod, m: SubaccountModel, conn=Depends
     """
     Delete an existing subaccount with mandrill
     """
-    company_branches = Company.manager.filter(conn, Company.code.startswith(f'{m.company_code}'))
+    company_branches = Company.manager(conn).filter(Company.code.startswith(f'{m.company_code}'))
     m_count, g_count = 0, 0
     for branch in company_branches:
-        m_count += Message.manager.delete(conn, company_id=branch.id)
-        g_count += MessageGroup.manager.delete(conn, company_id=branch.id)
-        Company.manager.delete(conn, id=branch.id)
+        m_count += Message.manager(conn).delete(company_id=branch.id)
+        g_count += MessageGroup.manager(conn).delete(company_id=branch.id)
+        Company.manager(conn).delete(id=branch.id)
     msg = f'deleted_messages={m_count} deleted_message_groups={g_count}'
     logger.info('deleting company=%s %s', m.company_name, msg)
 

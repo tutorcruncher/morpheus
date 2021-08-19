@@ -22,12 +22,12 @@ app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
 @app.get('/billing/{method}/{company_code}/')
 async def sms_billing_view(company_code: str, method: SmsSendMethod, data: dict = Body(None), conn=Depends(get_db)):
     try:
-        company = Company.manager.get(conn, code=company_code)
+        company = Company.manager(conn).get(code=company_code)
     except NoResultFound:
         raise HttpNotFound('company not found')
     start = datetime.strptime(data['start'], '%Y-%m-%d')
     end = datetime.strptime(data['end'], '%Y-%m-%d')
-    total_spend = Message.manager.get_sms_spend(conn, company.id, start, end, method)
+    total_spend = Message.manager(conn).get_sms_spend(company.id, start, end, method)
     return {
         'company': company.code,
         'start': start.strftime('%Y-%m-%d'),
@@ -50,17 +50,17 @@ async def send_sms(m: SmsSendModel, conn=Depends(get_db)):
     await glove.redis.expire(group_key, 86400)
 
     month_spend = None
-    company = Company.manager.get_or_create(conn, code=m.company_code)
+    company = Company.manager(conn).get_or_create(code=m.company_code)
     if m.cost_limit is not None:
         start, end = month_interval()
-        month_spend = Message.manager.get_sms_spend(conn, company.id, start, end, m.method) or 0
+        month_spend = Message.manager(conn).get_sms_spend(company.id, start, end, m.method) or 0
         if month_spend >= m.cost_limit:
             return JSONResponse(
                 content={'status': 'send limit exceeded', 'cost_limit': m.cost_limit, 'spend': month_spend},
                 status_code=402,
             )
-    message_group = MessageGroup.manager.create(
-        conn, uuid=m.uid, company_id=company.id, message_method=m.method, from_name=m.from_name
+    message_group = MessageGroup.manager(conn).create(
+        uuid=m.uid, company_id=company.id, message_method=m.method, from_name=m.from_name
     )
     logger.info('%s sending %d SMSs', company.id, len(m.recipients))
 

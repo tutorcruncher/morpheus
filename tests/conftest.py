@@ -191,9 +191,8 @@ def _fix_call_send_emails(db):
             recipients=[],
         )
         m = EmailSendModel(**dict(base_kwargs, **kwargs))
-        company = Company.manager.create(db, code=m.company_code)
-        group = MessageGroup.manager.create(
-            db,
+        company = Company.manager(db).create(code=m.company_code)
+        group = MessageGroup.manager(db).create(
             uuid=m.uid,
             company_id=company.id,
             message_method=m.method.value,

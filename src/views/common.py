@@ -39,7 +39,7 @@ async def click_redirect_view(
 ):
     token = token.rstrip('.')
     try:
-        link = Link.manager.get(conn, token=token)
+        link = Link.manager(conn).get(token=token)
     except NoResultFound:
         link = None
     if arg_url := u:

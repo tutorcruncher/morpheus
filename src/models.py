@@ -2,7 +2,7 @@ import re
 from datetime import date
 from sqlalchemy import TEXT, VARCHAR, Column, DateTime, Enum, Float, ForeignKey, Index, Integer, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
-from sqlalchemy.orm import Session, declarative_base, relationship
+from sqlalchemy.orm import declarative_base, relationship
 from typing import List, Tuple
 
 from src.crud import BaseManager
@@ -131,10 +131,8 @@ normalise_re = re.compile(r'[^a-zA-Z0-9 ]')
 class MessageManager(BaseManager):
     model = Message
 
-    def filter(
-        self, conn: Session, tags: list = None, q: str = None, offset: int = None, limit=10_000, **kwargs
-    ) -> List[Message]:
-        query = super().filter(conn, **kwargs).join(Message.message_group).order_by(Message.id.desc())
+    def filter(self, tags: list = None, q: str = None, offset: int = None, limit=10_000, **kwargs) -> List[Message]:
+        query = super().filter(**kwargs).join(Message.message_group).order_by(Message.id.desc())
         if tags:
             query = query.filter(Message.tags.contains(tags))
         if q:
@@ -144,16 +142,16 @@ class MessageManager(BaseManager):
             query = query.offset(offset)
         return query.limit(limit)
 
-    def get_events(self, conn: Session, **kwargs) -> Tuple[int, List['Event']]:
-        events = conn.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51).all()
+    def get_events(self, **kwargs) -> Tuple[int, List['Event']]:
+        events = self.db.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51).all()
         extra_count = 0
         if len(events) == 51:
-            extra_count = conn.query(Event).filter_by(**kwargs).count() - 50
+            extra_count = self.db.query(Event).filter_by(**kwargs).count() - 50
         return extra_count, events
 
-    def get_sms_spend(self, conn: Session, company_id: int, start: date, end: date, method: SmsSendMethod) -> float:
+    def get_sms_spend(self, company_id: int, start: date, end: date, method: SmsSendMethod) -> float:
         return (
-            conn.query(func.sum(Message.cost))
+            self.db.query(func.sum(Message.cost))
             .filter(Message.method == method, Message.company_id == company_id, Message.send_ts.between(start, end))
             .scalar()
         )
@@ -190,13 +188,13 @@ class Event(Base):
 class EventManager(BaseManager):
     model = Event
 
-    def create(self, conn: Session, **kwargs) -> Event:
-        event = super().create(conn, **kwargs)
+    def create(self, **kwargs) -> Event:
+        event = super().create(**kwargs)
         m = event.message
         if event.ts > m.update_ts:
             m.status = event.status
             m.update_ts = event.ts
-            self.update(conn, m)
+            self.update(m)
         return event
 
 
