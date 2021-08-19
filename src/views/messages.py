@@ -1,4 +1,5 @@
 import json
+import re
 from fastapi import APIRouter, Depends, Query
 from foxglove.exceptions import HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
@@ -31,7 +32,7 @@ async def messages_list(
 ):
     company = Company.manager.get_or_create(db, code=user_session.company)
     # We get the total count, and the list limited by pagination.
-    kwargs = dict(company_id=company.id, tags=tags, q=q, method=method)
+    kwargs = dict(company_id=company.id, tags=tags, q=q and q.strip(), method=method)
     full_count = Message.manager.filter(db, **kwargs).count()
     items = [m.list_details for m in Message.manager.filter(db, offset=offset, limit=LIST_PAGE_SIZE, **kwargs)]
     data = {'items': items, 'count': full_count}
@@ -59,7 +60,9 @@ async def message_aggregation(method: SendMethod, user_session=Depends(UserSessi
 
 
 @app.get('/{method}/{id}/')
-async def message_details(method: SendMethod, id: int, user_session=Depends(UserSession), db=Depends(get_db)):
+async def message_details(
+    method: SendMethod, id: int, user_session=Depends(UserSession), db=Depends(get_db), safe: bool = True
+):
     company = Company.manager.get_or_create(db, code=user_session.company)
     try:
         m = Message.manager.get(db, company_id=company.id, id=id, method=method)
@@ -81,9 +84,7 @@ async def message_details(method: SendMethod, id: int, user_session=Depends(User
                 details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2)),
             )
         )
-    return dict(
-        **m.list_details,
-        events=events_data,
-        body=m.body,
-        attachments=list(m.get_attachments()),
-    )
+    body = m.body
+    if safe:
+        body = re.sub('(href=").*?"', r'\1#"', body, flags=re.S | re.I)
+    return dict(**m.list_details, events=events_data, body=body, attachments=list(m.get_attachments()))
