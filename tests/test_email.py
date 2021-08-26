@@ -5,7 +5,7 @@ import json
 import pytest
 import re
 from arq import Retry
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from pytest_toolbox.comparison import AnyInt, RegexStr
 from sqlalchemy.orm import Session
@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from src.models import Event, Link, Message
 from src.schema import EmailRecipientModel
-from src.worker import email_retrying, send_email as worker_send_email
+from src.worker import delete_old_records, email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()
 
@@ -772,3 +772,21 @@ def test_invalid_json(cli: TestClient, tmpdir):
     assert {
         'detail': [{'loc': ['body', 'uid'], 'msg': 'value is not a valid uuid', 'type': 'type_error.uuid'}]
     } == r.json()
+
+
+def test_delete_old_messages(cli: TestClient, send_email, db: Session, worker, loop):
+    for i in range(3):
+        send_email()
+    m = Message.manager(db).all()[0]
+    m.send_ts = datetime.today() - timedelta(days=366)
+    Message.manager(db).update(m)
+    m = Message.manager(db).all()[1]
+    m.send_ts = datetime.today() - timedelta(days=200)
+    Message.manager(db).update(m)
+    m = Message.manager(db).all()[2]
+    m.send_ts = datetime.today() + timedelta(days=1)
+    Message.manager(db).update(m)
+
+    assert Message.manager(db).count() == 3
+    loop.run_until_complete(delete_old_records({'pg': db}))
+    assert Message.manager(db).count() == 2

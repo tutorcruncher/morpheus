@@ -104,8 +104,8 @@ class BaseManager:
         self.db.flush()
         return instance
 
-    def delete(self, **kwargs) -> int:
-        count = self.db.query(self.model).filter_by(**kwargs).delete()
+    def delete(self, *args, **kwargs) -> int:
+        count = self.db.query(self.model).filter(*args).filter_by(**kwargs).delete()
         self.db.commit()
         self.db.flush()
         return count

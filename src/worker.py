@@ -13,7 +13,7 @@ from arq.utils import to_unix_ms
 from arq.worker import run_worker as arq_run_worker
 from asyncio import TimeoutError
 from chevron import ChevronError
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from foxglove import glove
 from httpx import ConnectError
@@ -685,6 +685,13 @@ async def update_aggregation_view(ctx):
     ctx['pg'].commit()  # TODO: This is not good! I don't know where we have an uncommitted transaction from :(
     with ctx['pg'].begin():
         ctx['pg'].execute('refresh materialized view message_aggregation')
+
+
+@worker_function
+async def delete_old_records(ctx):
+    count = ctx['pg'].query(Message).filter(Message.send_ts <= datetime.today() - timedelta(days=366)).delete()
+    ctx['pg'].commit()
+    main_logger.info('deleted %s old messages', count)
 
 
 def utcnow():
