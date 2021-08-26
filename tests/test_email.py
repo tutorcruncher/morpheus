@@ -175,19 +175,15 @@ def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop
     assert Event.manager(db).count() == 0
 
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'mandrill-testingexampleorg', 'foobar': ['hello', 'world']}]
-    data = {'events': messages}
+    data = {'mandrill_events': messages}
 
+    msg = f'https://localhost/webhook/mandrill/mandrill_events{json.dumps(messages)}'
     sig = base64.b64encode(
-        hmac.new(
-            settings.mandrill_webhook_key.encode(),
-            msg=(
-                b'https://localhost/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
-                b'"event": "open", "_id": "mandrill-testingexampleorg", "foobar": ["hello", "world"]}]'
-            ),
-            digestmod=hashlib.sha1,
-        ).digest()
+        hmac.new(settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
     )
-    r = cli.post('/webhook/mandrill/', json=data, headers={'X-Mandrill-Signature': sig.decode()})
+    r = cli.post(
+        '/webhook/mandrill/', data={'mandrill_events': json.dumps(data)}, headers={'X-Mandrill-Signature': sig.decode()}
+    )
     assert r.status_code == 200, r.json()
     assert loop.run_until_complete(worker.run_check()) == 2
 
@@ -201,20 +197,17 @@ def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop
 def test_mandrill_webhook_invalid(cli: TestClient, send_email, db: Session, dummy_server, settings):
     send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
-    data = {'events': messages}
+    data = {'mandrill_events': messages}
 
-    sig = base64.b64encode(
-        hmac.new(
-            settings.mandrill_webhook_key.encode(),
-            msg=(
-                b'https://localhost/webhook/mandrill/mandrill_events[{"ts": 1969660800, '
-                b'"event": "open", "_id": "e587306</div></body><meta name=", "foobar": ["x"]}]'
-            ),
-            digestmod=hashlib.sha1,
-        ).digest()
+    msg = (
+        'https://localhost/webhook/mandrill/mandrill_events[{"ts": 1969660800, "event": "open", '
+        '"_id": "e587306</div></body><meta name=", "foobar": ["x"]}]'
     )
-    r = cli.post('/webhook/mandrill/', json=data, headers={'X-Mandrill-Signature': sig.decode()})
-    assert r.status_code == 200, r.text
+    sig = base64.b64encode(
+        hmac.new(settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
+    )
+    r = cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
+    assert r.status_code == 400, r.text
 
     events = Event.manager(db).all()
     assert len(events) == 0
