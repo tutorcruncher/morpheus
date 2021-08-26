@@ -35,7 +35,7 @@ async def mandrill_webhook_view(mandrill_events=Form(None), X_Mandrill_Signature
         events = json.loads(mandrill_events)
     except ValueError:
         raise HttpBadRequest('Invalid data')
-    msg = f'{glove.settings.mandrill_webhook_url}mandrill_events{json.dumps(events)}'
+    msg = f'{glove.settings.mandrill_webhook_url}mandrill_events{mandrill_events}'
     sig_generated = base64.b64encode(
         hmac.new(glove.settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
     )
