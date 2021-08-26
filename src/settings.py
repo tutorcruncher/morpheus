@@ -61,4 +61,5 @@ class Settings(BaseSettings):
             'mandrill_webhook_key': {'env': 'MANDRILL_WEBHOOK_KEY'},
             'auth_key': {'env': 'AUTH_KEY'},
             'user_auth_key': {'env': 'USER_AUTH_KEY'},
+            'host_name': {'env': 'HOST_NAME'},
         }

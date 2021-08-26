@@ -25,8 +25,8 @@ async def test_webhook_view(m: MandrillSingleWebhook):
 
 
 @app.head('/mandrill/')
-async def mandrill_head_view():
-    return await index()
+async def mandrill_head_view(request: Request):
+    return await index(request)
 
 
 @app.post('/mandrill/')
