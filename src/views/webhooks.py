@@ -32,7 +32,7 @@ async def mandrill_head_view():
 @app.post('/mandrill/')
 async def mandrill_webhook_view(mandrill_events=Form(None), X_Mandrill_Signature: bytes = Header(None)):
     try:
-        events = json.loads(mandrill_events)['mandrill_events']
+        events = json.loads(mandrill_events)
     except ValueError:
         raise HttpBadRequest('Invalid data')
     msg = f'{glove.settings.mandrill_webhook_url}mandrill_events{json.dumps(events)}'

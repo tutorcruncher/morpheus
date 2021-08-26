@@ -175,14 +175,15 @@ def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop
     assert Event.manager(db).count() == 0
 
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'mandrill-testingexampleorg', 'foobar': ['hello', 'world']}]
-    data = {'mandrill_events': messages}
 
     msg = f'https://localhost/webhook/mandrill/mandrill_events{json.dumps(messages)}'
     sig = base64.b64encode(
         hmac.new(settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
     )
     r = cli.post(
-        '/webhook/mandrill/', data={'mandrill_events': json.dumps(data)}, headers={'X-Mandrill-Signature': sig.decode()}
+        '/webhook/mandrill/',
+        data={'mandrill_events': json.dumps(messages)},
+        headers={'X-Mandrill-Signature': sig.decode()},
     )
     assert r.status_code == 200, r.json()
     assert loop.run_until_complete(worker.run_check()) == 2
