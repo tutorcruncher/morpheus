@@ -131,8 +131,10 @@ normalise_re = re.compile(r'[^a-zA-Z0-9 ]')
 class MessageManager(BaseManager):
     model = Message
 
-    def filter(self, tags: list = None, q: str = None, offset: int = None, limit=10_000, **kwargs) -> List[Message]:
-        query = super().filter(**kwargs).join(Message.message_group).order_by(Message.id.desc())
+    def filter(
+        self, *args, tags: list = None, q: str = None, offset: int = None, limit=10_000, **kwargs
+    ) -> List[Message]:
+        query = super().filter(*args, **kwargs).join(Message.message_group).order_by(Message.id.desc())
         if tags:
             query = query.filter(Message.tags.contains(tags))
         if q:
