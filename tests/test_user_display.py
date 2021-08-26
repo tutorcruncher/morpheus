@@ -50,29 +50,6 @@ def test_user_list(cli, settings, send_email, db):
     }
 
 
-def test_user_list_sms(cli, settings, send_sms, db):
-    send_sms(company_code='testing')
-
-    r = cli.get(modify_url('/messages/sms-test/', settings, 'testing'))
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert data['count'] == 1
-    assert len(data['items']) == 1
-    assert data['items'][0] == {
-        'id': Message.manager(db).get().id,
-        'external_id': Message.manager(db).get().external_id,
-        'to_ext_link': None,
-        'to_address': '+44 7896 541236',
-        'to_dst': '<+44 7896 541236>',
-        'to_name': ' ',
-        'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-        'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-        'status': 'Sent',
-        'method': 'sms-test',
-        'subject': None,
-    }
-
-
 def test_user_search(cli, settings, send_email):
     msgs = {}
     for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):
@@ -413,7 +390,7 @@ def test_user_sms_list(cli, settings, send_sms, db):
                 'to_address': '+44 7896 541236',
                 'to_dst': '<+44 7896 541236>',
                 'to_name': ' ',
-                'subject': None,
+                'subject': 'this is a test apples',
                 'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'status': 'Sent',

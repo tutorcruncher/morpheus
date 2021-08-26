@@ -6,7 +6,7 @@ from sqlalchemy.orm import declarative_base, relationship
 from typing import List, Tuple
 
 from src.crud import BaseManager
-from src.schema import MessageStatus, SendMethod, SmsSendMethod, EmailSendMethod
+from src.schema import MessageStatus, SendMethod, SmsSendMethod
 
 Base = declarative_base()
 
@@ -106,7 +106,7 @@ class Message(Base):
             'to_dst': f'{self.to_first_name or ""} {self.to_last_name or ""} <{self.to_address}>'.strip(' '),
             'to_name': f'{self.to_first_name or ""} {self.to_last_name or ""}',
             'send_ts': self.send_ts,
-            'subject': self.subject if self.method == EmailSendMethod else self.body,
+            'subject': self.subject if self.method.startswith('email') else self.body,
             'update_ts': self.update_ts,
             'status': self.get_status_display(),
             'method': self.method,
