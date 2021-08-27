@@ -59,7 +59,7 @@ async def message_aggregation(method: SendMethod, user_session=Depends(UserSessi
     return data
 
 
-@app.get('/{method}/{id}/')
+@app.get('/{method}/{id:int}/')
 async def message_details(
     method: SendMethod, id: int, user_session=Depends(UserSession), db=Depends(get_db), safe: bool = True
 ):
