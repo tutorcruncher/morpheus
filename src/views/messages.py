@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from foxglove.exceptions import HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from markupsafe import Markup
+from sqlalchemy import func
 from sqlalchemy.exc import NoResultFound
 from starlette.requests import Request
 from typing import List, Optional
@@ -32,9 +33,17 @@ async def messages_list(
 ):
     company = Company.manager(db).get_or_create(code=user_session.company)
     # We get the total count, and the list limited by pagination.
-    kwargs = dict(company_id=company.id, tags=tags, q=q and q.strip(), method=method)
-    full_count = Message.manager(db).filter(**kwargs).count()
-    items = [m.list_details for m in Message.manager(db).filter(offset=offset, limit=LIST_PAGE_SIZE, **kwargs)]
+    filter_kwargs = dict(company_id=company.id, method=method)
+    filter_args = []
+    if tags:
+        filter_args.append(Message.tags.contains(tags))
+    if q:
+        filter_args.append(Message.vector.op('@@')(func.plainto_tsquery(q.strip())))
+    full_count = Message.manager(db).count(*filter_args, **filter_kwargs)
+    query = Message.manager(db).filter(*filter_args, **filter_kwargs).order_by(Message.id.desc())
+    if offset:
+        query = query.offset(offset)
+    items = [m.list_details for m in query.limit(LIST_PAGE_SIZE)]
     data = {'items': items, 'count': full_count}
     this_url = request.url_for('messages_list', method=method.value)
     if (offset + len(items)) < full_count:

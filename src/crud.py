@@ -62,8 +62,8 @@ class BaseManager:
         self.db = db
         return self
 
-    def count(self, **kwargs) -> int:
-        return self.db.query(self.model).filter_by(**kwargs).count()
+    def count(self, *args, **kwargs) -> int:
+        return self.db.query(self.model).filter(*args).filter_by(**kwargs).count()
 
     def get(self, **kwargs) -> Union[Models]:
         return self.db.query(self.model).filter_by(**kwargs).one()

@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from foxglove import glove
 from operator import itemgetter
 from pytest_toolbox.comparison import RegexStr
+from starlette.testclient import TestClient
 from urllib.parse import urlencode
 
 from src.models import Company, Event, Message
@@ -221,6 +222,16 @@ def test_user_tags(cli, settings, send_email):
     data = r.json()
     assert data['count'] == 1
     assert data['items'][0]['external_id'] == f'{uid2}-4tcom'
+
+
+def test_search_emails(cli: TestClient, send_email, settings):
+    send_email(recipients=[{'address': 'bon@jovi.com'}, {'address': 'robbie@willams.co.uk'}])
+    r = cli.get(modify_url('/messages/email-test/', settings))
+    assert r.json()['count'] == 2
+    r = cli.get(modify_url(f'/messages/email-test/?{urlencode({"q": "bon@jovi.com"})}', settings))
+    assert r.json()['count'] == 1
+    r = cli.get(modify_url(f'/messages/email-test/?{urlencode({"q": "bon & jovi"})}', settings))
+    assert r.json()['count'] == 0
 
 
 def test_message_details(cli, settings, send_email, db, worker, loop):

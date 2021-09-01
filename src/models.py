@@ -131,19 +131,6 @@ normalise_re = re.compile(r'[^a-zA-Z0-9 ]')
 class MessageManager(BaseManager):
     model = Message
 
-    def filter(
-        self, *args, tags: list = None, q: str = None, offset: int = None, limit=10_000, **kwargs
-    ) -> List[Message]:
-        query = super().filter(*args, **kwargs).join(Message.message_group).order_by(Message.id.desc())
-        if tags:
-            query = query.filter(Message.tags.contains(tags))
-        if q:
-            # TODO: Changing the string like this isn't the best, we should find a way to use PG's plain_tsvquery(q)
-            query = query.filter(Message.vector.match(normalise_re.sub('', q).replace(' ', '&')))
-        if offset:
-            query = query.offset(offset)
-        return query.limit(limit)
-
     def get_events(self, **kwargs) -> Tuple[int, List['Event']]:
         events = self.db.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51).all()
         extra_count = 0
