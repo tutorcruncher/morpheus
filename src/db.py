@@ -71,11 +71,12 @@ async def prepare_database(settings: Settings, delete_existing: bool):
     :return: whether or not a database as (re)created
     """
     await fox_prepare_database(settings, delete_existing)
+    _engine = create_engine(settings.pg_dsn)
     if delete_existing:
         redis = await arq.create_pool(settings.redis_settings)
+        _engine.execute('create extension btree_gin;')
         await redis.flushdb()
 
-    _engine = create_engine(settings.pg_dsn)
     await populate_db(_engine)
     _engine.execute(MESSAGE_VECTOR_TRIGGER)
     _engine.execute(AGGREGATION_VIEW)
