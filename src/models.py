@@ -15,7 +15,7 @@ __all__ = ('Base', 'Company', 'MessageGroup', 'Message', 'Event', 'Link')
 class Company(Base):
     __tablename__ = 'companies'
 
-    id = Column(Integer, primary_key=True, index=False)
+    id = Column(Integer, primary_key=True)
     code = Column(VARCHAR(63), unique=True, nullable=False)
 
     message_groups = relationship('MessageGroup', back_populates='company')
@@ -28,7 +28,7 @@ Company.manager = BaseManager(Company)
 class MessageGroup(Base):
     __tablename__ = 'message_groups'
 
-    id = Column(Integer, primary_key=True, index=False)
+    id = Column(Integer, primary_key=True)
     uuid = Column(UUID(as_uuid=True), nullable=False)
     company_id = Column(Integer, ForeignKey('companies.id', ondelete='RESTRICT'), index=True, nullable=False)
     message_method = Column(Enum(SendMethod, name='send_methods'), nullable=False, index=True)
@@ -51,7 +51,7 @@ MessageGroup.manager = BaseManager(MessageGroup)
 class Message(Base):
     __tablename__ = 'messages'
 
-    id = Column(Integer, primary_key=True, index=False)
+    id = Column(Integer, primary_key=True)
     external_id = Column(VARCHAR(255), index=True, nullable=True)
     group_id = Column(Integer, ForeignKey('message_groups.id', ondelete='CASCADE'), nullable=False)
     company_id = Column(Integer, ForeignKey('companies.id', ondelete='RESTRICT'), index=True, nullable=False)
@@ -118,12 +118,13 @@ class Message(Base):
                 else:
                     yield f'/attachment-doc/{doc_id}/', name
 
-
-Index('message_tags', Message.tags, Message.method, Message.company_id, postgresql_using='gin')
-Index('message_vector', Message.vector, Message.method, Message.company_id, postgresql_using='gin')
-Index('message_group_id_send_ts', Message.group_id, Message.send_ts)
-Index('message_update_ts', Message.update_ts.desc())
-Index('message_company_method', Message.method, Message.company_id, Message.id)
+    __table_args__ = (
+        Index('message_tags', tags, method, company_id, postgresql_using='gin'),
+        Index('message_vector', vector, method, company_id, postgresql_using='gin'),
+        Index('message_group_id_send_ts', group_id, send_ts),
+        Index('message_update_ts', update_ts.desc()),
+        Index('message_company_method', method, company_id, id),
+    )
 
 
 class MessageManager(BaseManager):
@@ -150,7 +151,7 @@ Message.manager = MessageManager()
 class Event(Base):
     __tablename__ = 'events'
 
-    id = Column(Integer, primary_key=True, index=False)
+    id = Column(Integer, primary_key=True)
     message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), index=True, nullable=False)
     status = Column(Enum(MessageStatus), default=MessageStatus.send, nullable=False)
     ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
@@ -191,7 +192,7 @@ Event.manager = EventManager(Event)
 class Link(Base):
     __tablename__ = 'links'
 
-    id = Column(Integer, primary_key=True, index=False)
+    id = Column(Integer, primary_key=True)
     message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
     token = Column(VARCHAR(31), index=True)
     url = Column(TEXT)

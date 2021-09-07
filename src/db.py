@@ -85,6 +85,8 @@ async def prepare_database(settings: Settings, delete_existing: bool):
         await redis.flushdb()
 
     populate_db(_engine)
+    # Get rid of the old trigger
+    _engine.execute('DROP TRIGGER IF EXISTS update_message ON events')
     _engine.execute(MESSAGE_VECTOR_TRIGGER)
     _engine.execute(AGGREGATION_VIEW)
     _engine.dispose()
