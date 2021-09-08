@@ -688,8 +688,10 @@ async def update_aggregation_view(ctx):
 
 
 @worker_function
-async def delete_old_records(ctx):
-    count = ctx['pg'].query(Message).filter(Message.send_ts <= datetime.today() - timedelta(days=366)).delete()
+async def delete_old_emails(ctx):
+    today = datetime.today()
+    start, end = today - timedelta(days=368), today - timedelta(days=365)
+    count = ctx['pg'].query(Message).filter(Message.send_ts >= start, Message.send_ts <= end).delete()
     ctx['pg'].commit()
     main_logger.info('deleted %s old messages', count)
 
@@ -706,7 +708,10 @@ class WorkerSettings:
     functions = worker_functions
     on_startup = startup
     on_shutdown = shutdown
-    cron_jobs = [cron(update_aggregation_view, minute=12, timeout=1800)]
+    cron_jobs = [
+        cron(update_aggregation_view, minute=12, timeout=1800),
+        cron(delete_old_emails, minute={i * 5 for i in range(0, 12)}),
+    ]
 
 
 def run_worker(settings: Settings):  # pragma: no cover
