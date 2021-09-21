@@ -3,6 +3,7 @@ import asyncio
 import logging
 from foxglove.db.main import prepare_database as fox_prepare_database
 from sqlalchemy import create_engine
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import sessionmaker
 
 from src.models import Base
@@ -12,11 +13,22 @@ settings = Settings()
 logger = logging.getLogger('db')
 
 
+def populate_db(engine):
+    try:
+        Base.metadata.create_all(bind=engine)
+    except ProgrammingError as e:
+        if 'access method "gin"' in e.args[0]:
+            engine.execute('create extension btree_gin;')
+            Base.metadata.create_all(bind=engine)
+        else:
+            raise e
+
+
 def get_session():
     engine = create_engine(settings.pg_dsn)
     session = sessionmaker(bind=engine)
 
-    Base.metadata.create_all(bind=engine)
+    populate_db(engine)
     engine.dispose()
     return session
 
@@ -60,10 +72,6 @@ create index if not exists message_aggregation_method_company on message_aggrega
 """
 
 
-async def populate_db(engine):
-    Base.metadata.create_all(engine)
-
-
 async def prepare_database(settings: Settings, delete_existing: bool):
     """
     (Re)create a fresh database and run migrations.
@@ -71,12 +79,14 @@ async def prepare_database(settings: Settings, delete_existing: bool):
     :return: whether or not a database as (re)created
     """
     await fox_prepare_database(settings, delete_existing)
+    _engine = create_engine(settings.pg_dsn)
     if delete_existing:
         redis = await arq.create_pool(settings.redis_settings)
         await redis.flushdb()
 
-    _engine = create_engine(settings.pg_dsn)
-    await populate_db(_engine)
+    populate_db(_engine)
+    # Get rid of the old trigger
+    _engine.execute('DROP TRIGGER IF EXISTS update_message ON events')
     _engine.execute(MESSAGE_VECTOR_TRIGGER)
     _engine.execute(AGGREGATION_VIEW)
     _engine.dispose()

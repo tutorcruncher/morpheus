@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from src.models import Event, Link, Message
 from src.schema import EmailRecipientModel
-from src.worker import delete_old_records, email_retrying, send_email as worker_send_email
+from src.worker import delete_old_emails, email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()
 
@@ -788,5 +788,5 @@ def test_delete_old_messages(cli: TestClient, send_email, db: Session, worker, l
     Message.manager(db).update(m)
 
     assert Message.manager(db).count() == 3
-    loop.run_until_complete(delete_old_records({'pg': db}))
+    loop.run_until_complete(delete_old_emails({'pg': db}))
     assert Message.manager(db).count() == 2

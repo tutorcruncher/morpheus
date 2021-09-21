@@ -1,4 +1,3 @@
-import re
 from datetime import date
 from sqlalchemy import TEXT, VARCHAR, Column, DateTime, Enum, Float, ForeignKey, Index, Integer, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
@@ -16,7 +15,7 @@ __all__ = ('Base', 'Company', 'MessageGroup', 'Message', 'Event', 'Link')
 class Company(Base):
     __tablename__ = 'companies'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     code = Column(VARCHAR(63), unique=True, nullable=False)
 
     message_groups = relationship('MessageGroup', back_populates='company')
@@ -29,10 +28,10 @@ Company.manager = BaseManager(Company)
 class MessageGroup(Base):
     __tablename__ = 'message_groups'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     uuid = Column(UUID(as_uuid=True), nullable=False)
-    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), index=True)
-    message_method = Column(Enum(SendMethod), nullable=False, index=True)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='RESTRICT'), index=True, nullable=False)
+    message_method = Column(Enum(SendMethod, name='send_methods'), nullable=False, index=True)
     created_ts = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
     from_email = Column(VARCHAR(255))
     from_name = Column(VARCHAR(255))
@@ -40,8 +39,10 @@ class MessageGroup(Base):
     company = relationship('Company', back_populates='message_groups')
     messages = relationship('Message', back_populates='message_group')
 
-    Index('message_group_company_method', 'company_id', 'message_method')
-    Index('message_group_uuid', 'uuid', unique=True)
+    __table_args__ = (
+        Index('message_group_company_method', 'company_id', 'message_method'),
+        Index('message_group_uuid', 'uuid', unique=True),
+    )
 
 
 MessageGroup.manager = BaseManager(MessageGroup)
@@ -50,15 +51,15 @@ MessageGroup.manager = BaseManager(MessageGroup)
 class Message(Base):
     __tablename__ = 'messages'
 
-    id = Column(Integer, primary_key=True, index=True)
-    external_id = Column(VARCHAR(255), index=True)
+    id = Column(Integer, primary_key=True)
+    external_id = Column(VARCHAR(255), index=True, nullable=True)
     group_id = Column(Integer, ForeignKey('message_groups.id', ondelete='CASCADE'), nullable=False)
-    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), index=True, nullable=False)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='RESTRICT'), index=True, nullable=False)
 
-    method = Column(Enum(SendMethod), nullable=False)
-    send_ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    method = Column(Enum(SendMethod, name='send_methods'), nullable=False)
+    send_ts = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
     update_ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
-    status = Column(Enum(MessageStatus), default=MessageStatus.send, nullable=False)
+    status = Column(Enum(MessageStatus, name='message_statuses'), default=MessageStatus.send, nullable=False)
     to_first_name = Column(VARCHAR(255))
     to_last_name = Column(VARCHAR(255))
     to_user_link = Column(VARCHAR(255))
@@ -75,13 +76,6 @@ class Message(Base):
     message_group = relationship('MessageGroup', back_populates='messages')
     events = relationship('Event', back_populates='message')
     links = relationship('Link', back_populates='message')
-
-    Index('message_group_id_send_ts', 'group_id', 'send_ts')
-    Index('message_send_ts', 'send_ts desc', 'method', 'company_id')
-    Index('message_update_ts', 'update_ts desc')
-    Index('message_tags', 'tags', 'method', 'company_id', postgresql_using='gin')
-    Index('message_vector', 'vector', 'method', 'company_id', postgresql_using='gin')
-    Index('message_company_method', 'method', 'company_id', 'id')
 
     @staticmethod
     def status_display(v):
@@ -124,8 +118,13 @@ class Message(Base):
                 else:
                     yield f'/attachment-doc/{doc_id}/', name
 
-
-normalise_re = re.compile(r'[^a-zA-Z0-9 ]')
+    __table_args__ = (
+        Index('message_tags', tags, method, company_id, postgresql_using='gin'),
+        Index('message_vector', vector, method, company_id, postgresql_using='gin'),
+        Index('message_group_id_send_ts', group_id, send_ts),
+        Index('message_update_ts', update_ts.desc()),
+        Index('message_company_method', method, company_id, id),
+    )
 
 
 class MessageManager(BaseManager):
@@ -152,8 +151,8 @@ Message.manager = MessageManager()
 class Event(Base):
     __tablename__ = 'events'
 
-    id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), index=True)
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), index=True, nullable=False)
     status = Column(Enum(MessageStatus), default=MessageStatus.send, nullable=False)
     ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
     extra = Column(JSONB)
@@ -193,9 +192,9 @@ Event.manager = EventManager(Event)
 class Link(Base):
     __tablename__ = 'links'
 
-    id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'))
-    token = Column(VARCHAR(31))
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
+    token = Column(VARCHAR(31), index=True)
     url = Column(TEXT)
 
     message = relationship(Message, back_populates='links')
