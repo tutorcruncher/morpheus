@@ -1,5 +1,7 @@
+from sqlalchemy import select, func
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Query
 from typing import TYPE_CHECKING, List, Union
 
 from src.schema import SendMethod
@@ -42,8 +44,8 @@ from (
 """
 
 
-def get_messages_aggregated(conn, company_id, method: SendMethod):
-    data = conn.execute(agg_sql % {'company_id': company_id, 'method': method.name})
+async def get_messages_aggregated(conn: AsyncSession, company_id, method: SendMethod):
+    data = await conn.execute(agg_sql % {'company_id': company_id, 'method': method.name})
     return data.scalar()
 
 
@@ -58,54 +60,55 @@ class BaseManager:
         if not self.model:
             self.model = model
 
-    def __call__(self, db: Session):
-        self.db = db
+    def __call__(self, session: AsyncSession):
+        self.session: AsyncSession = session
         return self
 
-    def count(self, *args, **kwargs) -> int:
-        return self.db.query(self.model).filter(*args).filter_by(**kwargs).count()
+    async def count(self, *args) -> int:
+        result = await self.session.execute(select([func.count()]).select_from(self.model).where(*args))
+        return result.one()[0]
 
-    def get(self, **kwargs) -> Union[Models]:
-        return self.db.query(self.model).filter_by(**kwargs).one()
+    async def get(self, **kwargs) -> Union[Models]:
+        result = await self.session.execute(select(self.model).filter_by(**kwargs))
+        if obj := result.one():
+            return obj[0]
+        else:
+            raise NoResultFound
 
-    def filter(self, *args, **kwargs) -> Query:
-        q = self.db.query(self.model)
+    def filter(self, *args) -> Query:
+        q = select(self.model)
         if args:
             q = q.filter(*args)
-        if kwargs:
-            q = q.filter_by(**kwargs)
         return q
 
-    def all(self) -> List[Union[Models]]:
-        return self.db.query(self.model).all()
+    async def all(self) -> List[Union[Models]]:
+        result = await self.session.execute(select(self.model))
+        return result.all()
 
-    def create(self, **kwargs) -> Union[Models]:
+    async def create(self, **kwargs) -> Union[Models]:
         instance = self.model(**kwargs)
-        self.db.add(instance)
-        self.db.commit()
-        self.db.flush()
+        self.session.add(instance)
+        await self.session.commit()
         return instance
 
-    def create_many(self, *instances: List[Union[Models]]) -> None:
-        self.db.add_all(*[instances])
-        self.db.commit()
+    async def create_many(self, *instances: List[Union[Models]]) -> None:
+        self.session.add_all(*[instances])
+        await self.session.commit()
 
-    def get_or_create(self, **kwargs) -> Union[Models]:
+    async def get_or_create(self, **kwargs) -> Union[Models]:
         try:
-            instance = self.get(**kwargs)
+            instance = await self.get(**kwargs)
         except NoResultFound:
-            instance = self.create(**kwargs)
+            instance = await self.create(**kwargs)
         return instance
 
-    def update(self, instance: Union[Models]):
+    async def update(self, instance: Union[Models]):
         assert instance.id
-        self.db.add(instance)
-        self.db.commit()
-        self.db.flush()
+        self.session.add(instance)
+        await self.session.commit()
         return instance
 
-    def delete(self, *args, **kwargs) -> int:
-        count = self.db.query(self.model).filter(*args).filter_by(**kwargs).delete()
-        self.db.commit()
-        self.db.flush()
+    async def delete(self, *args, **kwargs) -> int:
+        count = await self.session.query(self.model).filter(*args).filter_by(**kwargs).delete()
+        await self.session.commit()
         return count

@@ -4,6 +4,7 @@ import logging
 from foxglove.db.main import prepare_database as fox_prepare_database
 from sqlalchemy import create_engine
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.models import Base
@@ -24,16 +25,13 @@ def populate_db(engine):
             raise e
 
 
-def get_session():
-    engine = create_engine(settings.pg_dsn)
-    session = sessionmaker(bind=engine)
-
+# The dependency
+async def get_session() -> AsyncSession:
+    engine = create_async_engine(settings.async_pg_dsn)
+    async_session = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     populate_db(engine)
-    engine.dispose()
-    return session
-
-
-SessionLocal = get_session()
+    async with async_session() as session:
+        yield session
 
 
 MESSAGE_VECTOR_TRIGGER = """
@@ -79,17 +77,17 @@ async def prepare_database(settings: Settings, delete_existing: bool):
     :return: whether or not a database as (re)created
     """
     await fox_prepare_database(settings, delete_existing)
-    _engine = create_engine(settings.pg_dsn)
+    engine = create_engine(settings.pg_dsn)
     if delete_existing:
         redis = await arq.create_pool(settings.redis_settings)
         await redis.flushdb()
 
-    populate_db(_engine)
+    populate_db(engine)
     # Get rid of the old trigger
-    _engine.execute('DROP TRIGGER IF EXISTS update_message ON events')
-    _engine.execute(MESSAGE_VECTOR_TRIGGER)
-    _engine.execute(AGGREGATION_VIEW)
-    _engine.dispose()
+    engine.execute('DROP TRIGGER IF EXISTS update_message ON events')
+    engine.execute(MESSAGE_VECTOR_TRIGGER)
+    engine.execute(AGGREGATION_VIEW)
+    engine.dispose()
 
 
 def reset_database(settings):

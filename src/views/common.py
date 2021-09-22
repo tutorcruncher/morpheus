@@ -5,14 +5,15 @@ from foxglove import glove
 from foxglove.route_class import KeepBodyAPIRoute
 from html import escape
 from sqlalchemy.exc import NoResultFound
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from starlette.templating import Jinja2Templates
 from time import time
 from typing import Optional
 
+from src.db import get_session
 from src.models import Link
-from src.utils import get_db
 
 logger = logging.getLogger('views.common')
 app = APIRouter(route_class=KeepBodyAPIRoute)
@@ -35,11 +36,11 @@ async def click_redirect_view(
     X_Forwarded_For: Optional[str] = Header(None),
     X_Request_Start: Optional[str] = Header('.'),
     User_Agent: Optional[str] = Header(None),
-    conn=Depends(get_db),
+    conn: AsyncSession = Depends(get_session),
 ):
     token = token.rstrip('.')
     try:
-        link = Link.manager(conn).get(token=token)
+        link = await Link.manager(conn).get(token=token)
     except NoResultFound:
         link = None
     if arg_url := u:

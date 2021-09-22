@@ -9,15 +9,14 @@ from foxglove.test_server import create_dummy_server
 from foxglove.testing import Client as TestClient
 from httpx import URL, AsyncClient
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.db import prepare_database
+from src.db import get_session, prepare_database
 from src.main import app, glove
 from src.models import Company, MessageGroup
 from src.schema import EmailSendModel, SendMethod
 from src.settings import Settings
-from src.utils import get_db
 from src.worker import startup as worker_startup, worker_functions
 
 from . import dummy_server
@@ -36,18 +35,14 @@ def fix_loop(settings):
 DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
 
 
-def override_get_db():
-    engine = create_engine(DB_DSN)
-    TestingSessionLocal = sessionmaker(autoflush=False, bind=engine)
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-        engine.dispose()
+async def override_get_session():
+    engine = create_async_engine(DB_DSN.replace('://', '+asyncpg://'))
+    async_session = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as session:
+        yield session
 
 
-app.dependency_overrides[get_db] = override_get_db
+app.dependency_overrides[get_session] = override_get_session
 
 
 @pytest.fixture(name='settings')
@@ -76,7 +71,8 @@ def fix_settings(tmpdir):
 @pytest.fixture(name='db', scope='function')
 def clean_db(settings, loop):
     loop.run_until_complete(prepare_database(settings, True))
-    yield from override_get_db()
+    engine = create_async_engine(DB_DSN.replace('://', '+asyncpg://'))
+    return sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)()
 
 
 @pytest.fixture(name='cli')
@@ -115,7 +111,7 @@ def _fix_dummy_server(loop, settings):
 
 @pytest.fixture(name='worker_ctx')
 def _fix_worker_ctx(loop, settings, db):
-    ctx = dict(settings=settings, pg=db)
+    ctx = dict(settings=settings, conn=db)
     loop.run_until_complete(worker_startup(ctx))
     yield ctx
 

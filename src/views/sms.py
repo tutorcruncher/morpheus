@@ -7,12 +7,14 @@ from foxglove import glove
 from foxglove.exceptions import HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from sqlalchemy.exc import NoResultFound
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse
 from typing import Tuple
 
+from src.db import get_session
 from src.models import Company, Message, MessageGroup
 from src.schema import SmsNumbersModel, SmsSendMethod, SmsSendModel
-from src.utils import AdminAuth, get_db
+from src.utils import AdminAuth
 from src.worker import validate_number
 
 logger = logging.getLogger('views.sms')
@@ -20,9 +22,11 @@ app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
 
 
 @app.get('/billing/{method}/{company_code}/')
-async def sms_billing_view(company_code: str, method: SmsSendMethod, data: dict = Body(None), conn=Depends(get_db)):
+async def sms_billing_view(
+    company_code: str, method: SmsSendMethod, data: dict = Body(None), conn: AsyncSession = Depends(get_session)
+):
     try:
-        company = Company.manager(conn).get(code=company_code)
+        company = await Company.manager(conn).get(code=company_code)
     except NoResultFound:
         raise HttpNotFound('company not found')
     start = datetime.strptime(data['start'], '%Y-%m-%d')
@@ -42,7 +46,7 @@ def month_interval() -> Tuple[datetime, datetime]:
 
 
 @app.post('/send/sms/')
-async def send_sms(m: SmsSendModel, conn=Depends(get_db)):
+async def send_sms(m: SmsSendModel, conn: AsyncSession = Depends(get_session)):
     group_key = f'group:{m.uid}'
     v = await glove.redis.incr(group_key)
     if v > 1:
@@ -59,7 +63,7 @@ async def send_sms(m: SmsSendModel, conn=Depends(get_db)):
                 content={'status': 'send limit exceeded', 'cost_limit': m.cost_limit, 'spend': month_spend},
                 status_code=402,
             )
-    message_group = MessageGroup.manager(conn).create(
+    message_group = await MessageGroup.manager(conn).create(
         uuid=m.uid, company_id=company.id, message_method=m.method, from_name=m.from_name
     )
     logger.info('%s sending %d SMSs', company.id, len(m.recipients))

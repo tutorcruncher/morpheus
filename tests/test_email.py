@@ -57,7 +57,7 @@ def test_webhook(cli: TestClient, send_email, db: Session, worker, loop):
     uuid = str(uuid4())
     message_id = send_email(uid=uuid)
 
-    message = Message.manager(db).get(external_id=message_id)
+    message = await Message.manager(db).get(external_id=message_id)
     assert message.status == 'send'
     first_update_ts = message.update_ts
 
@@ -83,7 +83,7 @@ def test_webhook(cli: TestClient, send_email, db: Session, worker, loop):
 
 def test_webhook_old(cli: TestClient, send_email, db: Session, worker, loop):
     msg_id = send_email()
-    message = Message.manager(db).get(external_id=msg_id)
+    message = await Message.manager(db).get(external_id=msg_id)
     assert message.status == 'send'
     first_update_ts = message.update_ts
     assert Event.manager(db).count(message_id=message.id) == 0
@@ -101,7 +101,7 @@ def test_webhook_old(cli: TestClient, send_email, db: Session, worker, loop):
 
 def test_webhook_repeat(cli: TestClient, send_email, db: Session, worker, loop):
     msg_id = send_email()
-    message = Message.manager(db).get(external_id=msg_id)
+    message = await Message.manager(db).get(external_id=msg_id)
     assert message.status == 'send'
     assert Event.manager(db).count(message_id=message.id) == 0
     data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id}
@@ -123,7 +123,7 @@ def test_webhook_missing(cli: TestClient, send_email, db: Session):
     data = {'ts': int(1e10), 'event': 'open', '_id': 'missing', 'foobar': ['hello', 'world']}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    message = Message.manager(db).get(external_id=msg_id)
+    message = await Message.manager(db).get(external_id=msg_id)
     assert message.status == 'send'
     assert Event.manager(db).count(message_id=message.id) == 0
 
@@ -132,7 +132,7 @@ def test_mandrill_send(send_email, db: Session, dummy_server):
     assert Message.manager(db).count() == 0
     send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@testing.com'}])
 
-    m = Message.manager(db).get(external_id='mandrill-foobaratestingcom')
+    m = await Message.manager(db).get(external_id='mandrill-foobaratestingcom')
     assert m.to_address == 'foobar_a@testing.com'
     assert dummy_server.app['log'] == ['POST /mandrill/messages/send.json > 200']
 
@@ -154,7 +154,7 @@ def test_send_mandrill_with_other_attachments(send_email, db: Session, dummy_ser
             }
         ],
     )
-    m = Message.manager(db).get(external_id='mandrill-foobarctestingcom')
+    m = await Message.manager(db).get(external_id='mandrill-foobarctestingcom')
     assert m.to_address == 'foobar_c@testing.com'
     assert set(m.attachments) == {'::calendar.ics', '::testing.pdf'}
 
@@ -163,7 +163,7 @@ def test_example_email_address(send_email, db: Session, dummy_server):
     assert Message.manager(db).count() == 0
     send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@example.com'}])
 
-    m = Message.manager(db).get(external_id='mandrill-foobaraexamplecom')
+    m = await Message.manager(db).get(external_id='mandrill-foobaraexamplecom')
     assert m.to_address == 'foobar_a@example.com'
     assert m.status == 'send'
 
@@ -219,7 +219,7 @@ def test_mandrill_send_bad_template(cli: TestClient, send_email, db: Session, du
     send_email(
         method='email-mandrill', main_template='{{ foo } test message', recipients=[{'address': 'foobar_b@testing.com'}]
     )
-    message = Message.manager(db).get()
+    message = await Message.manager(db).get()
     assert message.status == 'render_failed'
 
 
@@ -456,7 +456,7 @@ def test_invalid_mustache_subject(send_email, tmpdir, db: Session):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert '\nsubject: {{ foo } test message\n' in msg_file
 
-    messages = Message.manager(db).get()
+    messages = await Message.manager(db).get()
     assert messages.status == 'send'
     assert messages.subject == '{{ foo } test message'
     assert messages.body == '<body>\n\n</body>'
@@ -465,7 +465,7 @@ def test_invalid_mustache_subject(send_email, tmpdir, db: Session):
 def test_invalid_mustache_body(send_email, db: Session):
     send_email(main_template='{{ foo } test message', context={'foo': 'FOO'}, company_code='test_invalid_mustache_body')
 
-    m = Message.manager(db).get()
+    m = await Message.manager(db).get()
     assert m.status == 'render_failed'
     assert m.subject is None
     assert m.body == 'Error rendering email: unclosed tag at line 1'
@@ -487,7 +487,7 @@ def test_send_with_pdf(send_email, tmpdir, db: Session):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert 'testing.pdf' in msg_file
 
-    attachments = Message.manager(db).get(external_id=message_id).attachments
+    attachments = await Message.manager(db).get(external_id=message_id).attachments
     assert set(attachments) == {'123::testing.pdf', '::different.pdf'}
 
 
@@ -505,7 +505,7 @@ def test_send_with_other_attachment(send_email, tmpdir, db: Session):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert 'Look this is some test data' in msg_file
-    attachments = Message.manager(db).get(external_id=message_id).attachments
+    attachments = await Message.manager(db).get(external_id=message_id).attachments
     assert set(attachments) == {'::calendar.ics'}
 
 
@@ -527,7 +527,7 @@ def test_send_with_other_attachment_pdf(send_email, tmpdir, db: Session):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert f'test_pdf.pdf:{msg}' in msg_file
     assert f'test_pdf_encoded.pdf:{msg}' in msg_file
-    attachments = Message.manager(db).get(external_id=message_id).attachments
+    attachments = await Message.manager(db).get(external_id=message_id).attachments
     assert set(attachments) == {'::test_pdf.pdf', '::test_pdf_encoded.pdf'}
 
 
@@ -576,7 +576,7 @@ def test_mandrill_send_many_errors(db, worker_ctx, call_send_emails, loop):
         worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
     )
 
-    m = Message.manager(db).get()
+    m = await Message.manager(db).get()
     assert m.status == 'send_request_failed'
     assert m.body == 'upstream error'
 
@@ -641,7 +641,7 @@ def send_with_link(send_email, tmpdir):
 def test_link_shortening(send_email, tmpdir, cli: TestClient, db: Session, worker, loop):
     token = send_with_link(send_email, tmpdir)
 
-    m = Message.manager(db).get()
+    m = await Message.manager(db).get()
     assert m.status == 'send'
 
     link = Link.manager(db).get()
@@ -665,7 +665,7 @@ def test_link_shortening(send_email, tmpdir, cli: TestClient, db: Session, worke
     assert loop.run_until_complete(worker.run_check()) == 2
 
     db.refresh(m)
-    assert Message.manager(db).get(id=m.id).status == m.status
+    assert await Message.manager(db).get(id=m.id).status == m.status
     assert m.status == 'click'
     event = Event.manager(db).get()
     assert event.status == 'click'
@@ -788,5 +788,5 @@ def test_delete_old_messages(cli: TestClient, send_email, db: Session, worker, l
     Message.manager(db).update(m)
 
     assert Message.manager(db).count() == 3
-    loop.run_until_complete(delete_old_emails({'pg': db}))
+    loop.run_until_complete(delete_old_emails({'conn': db}))
     assert Message.manager(db).count() == 2

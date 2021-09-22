@@ -20,7 +20,7 @@ def modify_url(url, settings, company='foobar'):
     return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
 
 
-def test_user_list(cli, settings, send_email, db):
+def test_user_list(cli, loop, settings, send_email, db):
     expected_msg_ids = []
     for i in range(4):
         uid = str(uuid.uuid4())
@@ -36,8 +36,9 @@ def test_user_list(cli, settings, send_email, db):
     msg_ids = [h['external_id'] for h in data['items']]
     assert msg_ids == list(reversed(expected_msg_ids))
     first_item = data['items'][0]
+    id = loop.run_until_complete(Message.manager(db).get(external_id=expected_msg_ids[3])).id
     assert first_item == {
-        'id': Message.manager(db).get(external_id=expected_msg_ids[3]).id,
+        'id': id,
         'external_id': expected_msg_ids[3],
         'to_ext_link': None,
         'to_address': '3@t.com',
@@ -242,7 +243,7 @@ def test_message_details(cli, settings, send_email, db, worker, loop):
     assert r.status_code == 200, r.text
     assert loop.run_until_complete(worker.run_check()) == 2
 
-    message = Message.manager(db).get(external_id=msg_ext_id)
+    message = loop.run_until_complete(Message.manager(db).get(external_id=msg_ext_id))
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
     assert r.json() == {
@@ -289,7 +290,7 @@ def test_message_details_links(cli, settings, send_email, db, worker, loop):
             }
         ],
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
+    message = loop.run_until_complete(Message.manager(db).get(external_id=msg_ext_id))
     data = {'ts': int(2e12), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
@@ -327,11 +328,11 @@ def test_message_details_links(cli, settings, send_email, db, worker, loop):
     }
 
 
-def test_no_event_data(cli, settings, send_email, db):
+def test_no_event_data(cli, settings, send_email, db, loop):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
+    message = loop.run_until_complete(Message.manager(db).get(external_id=msg_ext_id))
     events = [
         Event(
             ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
@@ -349,11 +350,11 @@ def test_no_event_data(cli, settings, send_email, db):
     ]
 
 
-def test_invalid_message_id(cli, db, settings, send_email):
+def test_invalid_message_id(cli, db, settings, send_email, loop):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
+    message = loop.run_until_complete(Message.manager(db).get(external_id=msg_ext_id))
     r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'not_real_company'))
     assert r.status_code == 404
 
@@ -361,11 +362,11 @@ def test_invalid_message_id(cli, db, settings, send_email):
     assert r.status_code == 404
 
 
-def test_many_events(cli, settings, send_email, db):
+def test_many_events(cli, settings, send_email, db, loop):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
+    message = loop.run_until_complete(Message.manager(db).get(external_id=msg_ext_id))
     events = [
         Event(
             ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),

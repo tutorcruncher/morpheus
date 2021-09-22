@@ -5,12 +5,14 @@ from foxglove import glove
 from foxglove.exceptions import HttpBadRequest, HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from httpx import Response
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse
 from typing import Optional
 
+from src.db import get_session
 from src.models import Company, Message, MessageGroup
 from src.schema import SendMethod, SubaccountModel
-from src.utils import AdminAuth, get_db
+from src.utils import AdminAuth
 
 logger = logging.getLogger('views.subaccounts')
 app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
@@ -47,7 +49,7 @@ async def create_subaccount(method: SendMethod, m: Optional[SubaccountModel] = N
 
 
 @app.post('/delete-subaccount/{method}/')
-async def delete_subaccount(method: SendMethod, m: SubaccountModel, conn=Depends(get_db)):
+async def delete_subaccount(method: SendMethod, m: SubaccountModel, conn: AsyncSession = Depends(get_session)):
     """
     Delete an existing subaccount with mandrill
     """

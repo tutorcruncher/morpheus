@@ -156,9 +156,9 @@ def test_delete_subaccount(cli: TestClient, db: Session, dummy_server: DummyServ
 
 def test_delete_subaccount_multiple_branches(cli: TestClient, db: Session, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
-    Company.manager(db).create(code='foobar:1')
-    Company.manager(db).create(code='foobar:2')
-    Company.manager(db).create(code='notbar:1')
+    await Company.manager(db).create(code='foobar:1')
+    await Company.manager(db).create(code='foobar:2')
+    await Company.manager(db).create(code='notbar:1')
 
     r = cli.post('/delete-subaccount/email-test/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text

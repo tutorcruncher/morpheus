@@ -9,7 +9,6 @@ from foxglove.route_class import KeepBodyAPIRoute
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
-from src.db import SessionLocal, prepare_database
 from src.ext import Mandrill
 from src.settings import Settings
 from src.views import common, email, messages, sms, subaccounts, webhooks
@@ -24,9 +23,6 @@ async def startup():
     from foxglove.logs import setup_sentry
 
     setup_sentry()
-    if not hasattr(glove, 'pg'):
-        await prepare_database(glove.settings, False)
-        glove.pg = SessionLocal()
     if not hasattr(glove, 'redis') and glove.settings.redis_settings:
         glove.redis = await arq.create_pool(glove.settings.redis_settings)
     if not hasattr(glove, 'mandrill'):
@@ -41,7 +37,7 @@ async def shutdown():
         redis.close()
         coros.append(redis.wait_closed())
     await asyncio.gather(*coros)
-    for prop in 'pg', '_http', 'redis', 'mandrill':
+    for prop in '_http', 'redis', 'mandrill':
         if hasattr(glove, prop):
             delattr(glove, prop)
 

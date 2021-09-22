@@ -33,9 +33,12 @@ from pydantic.datetime_parse import parse_datetime
 from pydf import AsyncPydf
 from sqlalchemy.exc import NoResultFound
 from typing import Dict, List, Optional
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
-from src.db import SessionLocal
+from src.db import get_session
 from src.ext import ApiError, Mandrill, MessageBird
 from src.models import Event, Link, Message
 from src.render import EmailInfo, render_email
@@ -143,11 +146,13 @@ class UpdateStatus(str, Enum):
 
 async def startup(ctx):
     settings = ctx.get('settings') or Settings()
+    if not ctx.get('conn'):
+        engine = create_async_engine(settings.async_pg_dsn)
+        ctx['conn'] = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     ctx.update(
         settings=settings,
         email_click_url=f'https://{settings.click_host_name}/l',
         sms_click_url=f'{settings.click_host_name}/l',
-        pg=ctx.get('pg') or SessionLocal(),
         mandrill=Mandrill(settings=settings),
         messagebird=MessageBird(settings=settings),
         pydf=AsyncPydf(),
@@ -155,7 +160,7 @@ async def startup(ctx):
 
 
 async def shutdown(ctx):
-    coros = []
+    coros = [ctx['pg'].close()]
     if http := getattr(glove, 'http', None):
         coros.append(http.aclose())
     if pg := getattr(glove, 'pg', None):
@@ -164,7 +169,7 @@ async def shutdown(ctx):
         redis.close()
         coros.append(redis.wait_closed())
     await asyncio.gather(*coros)
-    for prop in 'pg', '_http', 'redis', 'mandrill':
+    for prop in 'conn', '_http', 'redis', 'mandrill':
         if hasattr(glove, prop):
             delattr(glove, prop)
 
@@ -366,13 +371,13 @@ class SendEmail:
         ]
         if attachments:
             data['attachments'] = attachments
-        message = Message.manager(self.ctx['pg']).create(**data)
+        message = await Message.manager(self.ctx['conn']).create(**data)
         if email_info.shortened_link:
             links = [Link(message=message, token=token, url=url) for url, token in email_info.shortened_link]
-            Link.manager(self.ctx['pg']).create_many(*links)
+            await Link.manager(self.ctx['conn']).create_many(*links)
 
     async def _store_email_failed(self, status: MessageStatus, error_msg):
-        Message.manager(self.ctx['pg']).create(
+        await Message.manager(self.ctx['conn']).create(
             group_id=self.group_id,
             company_id=self.company_id,
             method=self.m.method,
@@ -440,7 +445,7 @@ class SendSMS:
                     error = str(e)
 
         if error:
-            Message.manager(self.ctx['pg']).create(
+            await Message.manager(self.ctx['conn']).create(
                 group_id=self.group_id,
                 company_id=self.company_id,
                 method=self.m.method,
@@ -564,7 +569,7 @@ class SendSMS:
         await self._store_sms(data['id'], send_ts, sms_data, cost)
 
     async def _store_sms(self, external_id, send_ts, sms_data: SmsData, cost: float):
-        message = Message.manager(self.ctx['pg']).create(
+        message = await Message.manager(self.ctx['conn']).create(
             external_id=external_id,
             group_id=self.group_id,
             company_id=self.company_id,
@@ -582,7 +587,7 @@ class SendSMS:
         )
         if sms_data.shortened_link:
             links = [Link(message=message, token=token, url=url) for url, token in sms_data.shortened_link]
-            Link.manager(self.ctx['pg']).create_many(*links)
+            await Link.manager(self.ctx['conn']).create_many(*links)
 
 
 def validate_number(number, country, include_description=True) -> Optional[Number]:
@@ -635,7 +640,7 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
             return 'recently_clicked'
         await redis.expire(cache_key, 60)
 
-    link = Link.manager(ctx['pg']).get(id=link_id)
+    link = await Link.manager(ctx['conn']).get(id=link_id)
     extra = {'target': link.url, 'ip': ip, 'user_agent': user_agent}
     if user_agent:
         ua_dict = ParseUserAgent(user_agent)
@@ -650,7 +655,7 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
         if not ts.tzinfo:
             ts = ts.replace(tzinfo=timezone.utc)
         status = 'click'
-        Event.manager(ctx['pg']).create(message=link.message, status=status, ts=ts, extra=json.dumps(extra))
+        await Event.manager(ctx['conn']).create(message=link.message, status=status, ts=ts, extra=json.dumps(extra))
 
 
 @worker_function
@@ -666,7 +671,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
         await redis.expire(ref, 86400)
 
     try:
-        message = Message.manager(ctx['pg']).get(method=send_method, external_id=m.message_id)
+        message = await Message.manager(ctx['conn']).get(method=send_method, external_id=m.message_id)
     except NoResultFound:
         return UpdateStatus.missing
 
@@ -676,23 +681,23 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     if log_each:
         main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
-    Event.manager(ctx['pg']).create(message_id=message.id, status=m.status, ts=m.ts, extra=m.extra_json())
+    await Event.manager(ctx['conn']).create(message_id=message.id, status=m.status, ts=m.ts, extra=m.extra_json())
     return UpdateStatus.added
 
 
 @worker_function
 async def update_aggregation_view(ctx):
-    ctx['pg'].commit()  # TODO: This is not good! I don't know where we have an uncommitted transaction from :(
-    with ctx['pg'].begin():
-        ctx['pg'].execute('refresh materialized view message_aggregation')
+    # ctx['conn'].commit()  # TODO: This is not good! I don't know where we have an uncommitted transaction from :(
+    with ctx['conn'].begin():
+        ctx['conn'].execute('refresh materialized view message_aggregation')
 
 
 @worker_function
 async def delete_old_emails(ctx):
     today = datetime.today()
     start, end = today - timedelta(days=368), today - timedelta(days=365)
-    count = ctx['pg'].query(Message).filter(Message.send_ts >= start, Message.send_ts <= end).delete()
-    ctx['pg'].commit()
+    count = ctx['conn'].query(Message).filter(Message.send_ts >= start, Message.send_ts <= end).delete()
+    ctx['conn'].commit()
     main_logger.info('deleted %s old messages', count)
 
 

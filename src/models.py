@@ -130,16 +130,16 @@ class Message(Base):
 class MessageManager(BaseManager):
     model = Message
 
-    def get_events(self, **kwargs) -> Tuple[int, List['Event']]:
-        events = self.db.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51).all()
+    async def get_events(self, **kwargs) -> Tuple[int, List['Event']]:
+        events = self.session.query(Event).filter_by(**kwargs).order_by(Event.message_id).limit(51).all()
         extra_count = 0
         if len(events) == 51:
-            extra_count = self.db.query(Event).filter_by(**kwargs).count() - 50
+            extra_count = self.session.query(Event).filter_by(**kwargs).count() - 50
         return extra_count, events
 
-    def get_sms_spend(self, company_id: int, start: date, end: date, method: SmsSendMethod) -> float:
+    async def get_sms_spend(self, company_id: int, start: date, end: date, method: SmsSendMethod) -> float:
         return (
-            self.db.query(func.sum(Message.cost))
+            self.session.query(func.sum(Message.cost))
             .filter(Message.method == method, Message.company_id == company_id, Message.send_ts.between(start, end))
             .scalar()
         )
@@ -176,13 +176,13 @@ class Event(Base):
 class EventManager(BaseManager):
     model = Event
 
-    def create(self, **kwargs) -> Event:
-        event = super().create(**kwargs)
+    async def create(self, **kwargs) -> Event:
+        event = await super().create(**kwargs)
         m = event.message
         if event.ts > m.update_ts:
             m.status = event.status
             m.update_ts = event.ts
-            self.update(m)
+            await self.update(m)
         return event
 
 

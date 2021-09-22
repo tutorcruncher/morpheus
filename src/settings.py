@@ -44,6 +44,10 @@ class Settings(BaseSettings):
         return v.replace('gres://', 'gresql://')
 
     @property
+    def async_pg_dsn(self):
+        return self.pg_dsn.replace('://', '+asyncpg://')
+
+    @property
     def mandrill_webhook_url(self):
         return f'https://{self.host_name}/webhook/mandrill/'
 

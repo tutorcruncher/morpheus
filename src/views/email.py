@@ -3,18 +3,19 @@ from fastapi import APIRouter, Body, Depends
 from foxglove import glove
 from foxglove.exceptions import HttpConflict
 from foxglove.route_class import KeepBodyAPIRoute
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse
 
+from src.db import get_session
 from src.models import Company, MessageGroup
 from src.schema import EmailSendModel
-from src.utils import get_db
 
 logger = logging.getLogger('views.email')
 app = APIRouter(route_class=KeepBodyAPIRoute)
 
 
 @app.post('/send/email/')
-async def email_send_view(m: EmailSendModel = Body(None), conn=Depends(get_db)):
+async def email_send_view(m: EmailSendModel = Body(None), conn: AsyncSession = Depends(get_session)):
     group_key = f'group:{m.uid}'
     v = await glove.redis.incr(group_key)
     if v > 1:
@@ -22,9 +23,9 @@ async def email_send_view(m: EmailSendModel = Body(None), conn=Depends(get_db)):
     await glove.redis.expire(group_key, 86400)
 
     logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
-    company = Company.manager(conn).get_or_create(code=m.company_code)
+    company = await Company.manager(conn).get_or_create(code=m.company_code)
 
-    message_group = MessageGroup.manager(conn).create(
+    message_group = await MessageGroup.manager(conn).create(
         uuid=str(m.uid),
         company_id=company.id,
         message_method=m.method,
