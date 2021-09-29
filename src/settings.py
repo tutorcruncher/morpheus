@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     patch_paths: List[str] = ['app.patches']
 
     cookie_name = 'morpheus'
-    auth_key = 'testing'
+    auth_key = 'insecure'
     app: str = 'src.main:app'
 
     locale = ''  # Required, don't delete
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Used to sign Mandrill webhooks
     webhook_auth_key: bytes = b'insecure'
 
-    worker_func = 'src.worker:run_worker'
+    worker_func = 'src.worker:main'
     admin_basic_auth_password = 'testing'
     test_output: Path = None
 

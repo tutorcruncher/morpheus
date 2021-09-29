@@ -9,7 +9,8 @@ from foxglove.route_class import KeepBodyAPIRoute
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from src.schema import MandrillSingleWebhook, MessageBirdWebHook, SendMethod
+from src.schemas.messages import SendMethod
+from src.schemas.webhooks import MandrillSingleWebhook, MessageBirdWebHook
 from src.views.common import index
 
 app = APIRouter(route_class=KeepBodyAPIRoute)

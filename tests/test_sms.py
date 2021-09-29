@@ -1,10 +1,9 @@
 import logging
 import re
 from datetime import datetime, timedelta
+from foxglove.db.helpers import SyncDb
 from urllib.parse import urlencode
 from uuid import uuid4
-
-from src.models import Link, Message
 
 
 def test_send_message(cli, tmpdir, worker, loop):
@@ -18,7 +17,7 @@ def test_send_message(cli, tmpdir, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d71-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
@@ -44,7 +43,7 @@ def test_send_message_usa(cli, settings, tmpdir, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d72-18183373095.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
@@ -109,7 +108,7 @@ def test_repeat_uuid(cli, tmpdir, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 1
     assert str(tmpdir.listdir()[0]).endswith('69eb85e8-1504-40aa-94ff-75bb65fd8d73-447891123856.txt')
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
@@ -134,7 +133,7 @@ def test_invalid_number(cli, tmpdir, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 4
+    assert worker.test_run() == 4
     assert len(tmpdir.listdir()) == 2
     files = {str(f).split('/')[-1] for f in tmpdir.listdir()}
     assert files == {
@@ -153,12 +152,12 @@ def test_exceed_cost_limit(cli, tmpdir, worker, loop):
     }
     r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 4
+    assert worker.test_run() == 4
     assert {'status': 'enqueued', 'spend': 0.0} == r.json()
     assert len(tmpdir.listdir()) == 4
     r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 8
+    assert worker.test_run() == 8
     assert {'status': 'enqueued', 'spend': 0.048} == r.json()
     assert len(tmpdir.listdir()) == 8
 
@@ -166,7 +165,7 @@ def test_exceed_cost_limit(cli, tmpdir, worker, loop):
     assert r.status_code == 201, r.text
     obj = r.json()
     assert 0.095 < obj['spend'] < 0.097
-    assert loop.run_until_complete(worker.run_check()) == 12
+    assert worker.test_run() == 12
     assert len(tmpdir.listdir()) == 12
 
     r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
@@ -187,7 +186,7 @@ def test_send_messagebird(cli, tmpdir, dummy_server, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert [
         'POST /messagebird/lookup/447801234567/hlr > 201',
         'GET /messagebird/lookup/447801234567 > 200',
@@ -199,7 +198,7 @@ def test_send_messagebird(cli, tmpdir, dummy_server, worker, loop):
     data = dict(data, uid=str(uuid4()))
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
     assert len(dummy_server.log) == 5
     assert dummy_server.log[4] == 'POST /messagebird/messages > 201'
 
@@ -214,7 +213,7 @@ def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert [
         'POST /messagebird/lookup/447888888888/hlr > 201',
         *['GET /messagebird/lookup/447888888888 > 200' for _ in range(30)],
@@ -234,7 +233,7 @@ def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog, loop)
     caplog.set_level(logging.INFO)
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert [
         'POST /messagebird/lookup/447777777777/hlr > 201',
         'GET /messagebird/lookup/447777777777 > 200',
@@ -254,7 +253,7 @@ def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog, loop)
     )
 
 
-def test_messagebird_webhook(cli, db, dummy_server, worker, loop):
+def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
     data = {
         'uid': str(uuid4()),
         'company_code': 'webhook-test',
@@ -264,21 +263,21 @@ def test_messagebird_webhook(cli, db, dummy_server, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
 
-    msg = Message.manager(db).get()
-    assert msg.status == 'send'
-    assert msg.to_first_name == 'John'
-    assert msg.to_last_name == 'Doe'
-    assert msg.to_user_link == '4321'
-    assert msg.to_address == '+44 7801 234567'
-    assert msg.message_group.from_name == 'Morpheus'
-    assert msg.body == 'this is a message'
-    assert msg.cost == 0.02
-    assert len(msg.tags) == 1  # just group_id
+    msg = sync_db.fetchrow_b('select * from messages join message_groups g on g.id = messages.id')
+    assert msg['status'] == 'send'
+    assert msg['to_first_name'] == 'John'
+    assert msg['to_last_name'] == 'Doe'
+    assert msg['to_user_link'] == '4321'
+    assert msg['to_address'] == '+44 7801 234567'
+    assert msg['from_name'] == 'Morpheus'
+    assert msg['body'] == 'this is a message'
+    assert msg['cost'] == 0.02
+    assert len(msg['tags']) == 1  # just group_id
 
     url_args = {
-        'id': msg.external_id,
+        'id': msg['external_id'],
         'reference': 'morpheus',
         'recipient': '447801234567',
         'status': 'delivered',
@@ -286,13 +285,13 @@ def test_messagebird_webhook(cli, db, dummy_server, worker, loop):
     }
     r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
     assert r.status_code == 200, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
 
-    db.refresh(msg)
-    assert msg.status == 'delivered'
+    msg = sync_db.fetchrow_b('select * from messages')
+    assert msg['status'] == 'delivered'
 
 
-def test_failed_render(cli, tmpdir, db, worker, loop):
+def test_failed_render(cli, tmpdir, sync_db: SyncDb, worker, loop):
     data = {
         'uid': str(uuid4()),
         'company_code': 'test_failed_render',
@@ -303,13 +302,13 @@ def test_failed_render(cli, tmpdir, db, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 0
 
-    assert Message.manager(db).get().status == 'render_failed'
+    assert sync_db.fetchrow_b('select * from messages')['status'] == 'render_failed'
 
 
-def test_link_shortening(cli, tmpdir, db, worker, loop):
+def test_link_shortening(cli, tmpdir, sync_db: SyncDb, worker, loop):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d75',
         'company_code': 'sms_test_link_shortening',
@@ -319,7 +318,7 @@ def test_link_shortening(cli, tmpdir, db, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d75-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
@@ -329,9 +328,9 @@ def test_link_shortening(cli, tmpdir, db, worker, loop):
     token = re.search('message click.example.com/l(.+?)\n', msg_file).groups()[0]
     assert len(token) == 12
 
-    link = Link.manager(db).get()
-    assert link.url == 'http://whatever.com/foo/bar'
-    assert link.token == token
+    link = sync_db.fetchrow_b('select * from links')
+    assert link['url'] == 'http://whatever.com/foo/bar'
+    assert link['token'] == token
 
     r = cli.get(f'/l{token}', allow_redirects=False)
     assert r.status_code == 307, r.text
@@ -352,7 +351,7 @@ def test_send_multi_part(cli, tmpdir, worker, loop):
     }
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 1
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d76-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
