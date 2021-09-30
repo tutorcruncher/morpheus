@@ -1,16 +1,17 @@
 import json
 import logging
+from buildpg.asyncpg import BuildPgConnection
 from fastapi import APIRouter, Depends
 from foxglove import glove
+from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpBadRequest, HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from httpx import Response
 from starlette.responses import JSONResponse
 from typing import Optional
 
-from src.models import Company, Message, MessageGroup
-from src.schema import SendMethod, SubaccountModel
-from src.utils import AdminAuth, get_db
+from src.schemas.messages import SendMethod, SubaccountModel
+from src.utils import AdminAuth
 
 logger = logging.getLogger('views.subaccounts')
 app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
@@ -47,17 +48,20 @@ async def create_subaccount(method: SendMethod, m: Optional[SubaccountModel] = N
 
 
 @app.post('/delete-subaccount/{method}/')
-async def delete_subaccount(method: SendMethod, m: SubaccountModel, conn=Depends(get_db)):
+async def delete_subaccount(method: SendMethod, m: SubaccountModel, conn: BuildPgConnection = Depends(get_db)):
     """
-    Delete an existing subaccount with mandrill
+    Delete an existing subaccount with Mandrill
     """
-    company_branches = Company.manager(conn).filter(Company.code.startswith(f'{m.company_code}'))
-    m_count, g_count = 0, 0
-    for branch in company_branches:
-        m_count += Message.manager(conn).delete(company_id=branch.id)
-        g_count += MessageGroup.manager(conn).delete(company_id=branch.id)
-        Company.manager(conn).delete(id=branch.id)
-    msg = f'deleted_messages={m_count} deleted_message_groups={g_count}'
+    result = await conn.fetch("select id from companies where code like $1 || '%'", m.company_code)
+    m_count, g_count = '0', '0'
+    company_branches = [str(r['id']) for r in result]
+    if company_branches:
+        m_count = await conn.execute_b('delete from messages where company_id in (%s)' % ','.join(company_branches))
+        g_count = await conn.execute_b(
+            'delete from message_groups where company_id in (%s)' % ','.join(company_branches)
+        )
+        await conn.execute_b('delete from companies import where id in (%s)' % ','.join(company_branches))
+    msg = f'deleted_messages={m_count.replace("DELETE ", "")} deleted_message_groups={g_count.replace("DELETE ", "")}'
     logger.info('deleting company=%s %s', m.company_name, msg)
 
     if method == SendMethod.email_mandrill:

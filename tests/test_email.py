@@ -5,15 +5,15 @@ import json
 import pytest
 import re
 from arq import Retry
+from buildpg import V
 from datetime import datetime, timedelta, timezone
+from foxglove.db.helpers import SyncDb
 from pathlib import Path
 from pytest_toolbox.comparison import AnyInt, RegexStr
-from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 from uuid import uuid4
 
-from src.models import Event, Link, Message
-from src.schema import EmailRecipientModel
+from src.schemas.messages import EmailRecipientModel
 from src.worker import delete_old_emails, email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -40,7 +40,7 @@ def test_send_email(cli: TestClient, worker, tmpdir, loop):
     }
     r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(uuid + '-foobarexampleorg.txt').read()
     assert '\nsubject: test email Apple\n' in msg_file
@@ -53,57 +53,55 @@ def test_send_email(cli: TestClient, worker, tmpdir, loop):
     assert set(data['tags']) == {uuid, 'foobar'}
 
 
-def test_webhook(cli: TestClient, send_email, db: Session, worker, loop):
+def test_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     uuid = str(uuid4())
     message_id = send_email(uid=uuid)
 
-    message = Message.manager(db).get(external_id=message_id)
-    assert message.status == 'send'
-    first_update_ts = message.update_ts
+    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)
+    assert message['status'] == 'send'
+    first_update_ts = message['update_ts']
 
-    events = Event.manager(db).count()
+    events = sync_db.fetchval('select count(*) from events')
     assert events == 0
 
     data = {'ts': int(2e9), 'event': 'open', '_id': message_id, 'foobar': ['hello', 'world']}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
 
-    db.refresh(message)
-    assert message.status == 'open'
-    assert message.update_ts > first_update_ts
-    assert Event.manager(db).count(message_id=message.id) == 1
-    event = Event.manager(db).filter(message_id=message.id).first()
-    assert event.ts == datetime(2033, 5, 18, 3, 33, 20, tzinfo=timezone.utc)
-    assert event.extra == RegexStr('{.*}')
-    extra = json.loads(event.extra)
+    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)
+    assert message['status'] == 'open'
+    assert message['update_ts'] > first_update_ts
+    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 1
+    event = sync_db.fetchrow_b('select * from events where :where', where=V('message_id') == message['id'])
+    assert event['ts'] == datetime(2033, 5, 18, 3, 33, 20, tzinfo=timezone.utc)
+    assert event['extra'] == RegexStr('{.*}')
+    extra = json.loads(event['extra'])
     assert extra['diag'] is None
     assert extra['opens'] is None
 
 
-def test_webhook_old(cli: TestClient, send_email, db: Session, worker, loop):
+def test_webhook_old(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     msg_id = send_email()
-    message = Message.manager(db).get(external_id=msg_id)
-    assert message.status == 'send'
-    first_update_ts = message.update_ts
-    assert Event.manager(db).count(message_id=message.id) == 0
+    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    assert message['status'] == 'send'
+    first_update_ts = message['update_ts']
+    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 0
     data = {'ts': int(1.4e9), 'event': 'open', '_id': msg_id}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
 
-    db.refresh(message)
-    assert message.status == 'send'
-    events = Event.manager(db).filter(message_id=message.id).all()
-    assert len(events) == 1
-    assert message.update_ts == first_update_ts
+    assert message['status'] == 'send'
+    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 1
+    assert message['update_ts'] == first_update_ts
 
 
-def test_webhook_repeat(cli: TestClient, send_email, db: Session, worker, loop):
+def test_webhook_repeat(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     msg_id = send_email()
-    message = Message.manager(db).get(external_id=msg_id)
-    assert message.status == 'send'
-    assert Event.manager(db).count(message_id=message.id) == 0
+    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    assert message['status'] == 'send'
+    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 0
     data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id}
     for _ in range(3):
         r = cli.post('/webhook/test/', json=data)
@@ -111,37 +109,40 @@ def test_webhook_repeat(cli: TestClient, send_email, db: Session, worker, loop):
     data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id, 'user_agent': 'xx'}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    assert loop.run_until_complete(worker.run_check()) == 5
+    assert worker.test_run() == 5
 
-    assert message.status == 'open'
-    assert Event.manager(db).count(message_id=message.id) == 2
+    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    assert message['status'] == 'open'
+    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 2
 
 
-def test_webhook_missing(cli: TestClient, send_email, db: Session):
+def test_webhook_missing(cli: TestClient, send_email, sync_db: SyncDb):
     msg_id = send_email()
 
     data = {'ts': int(1e10), 'event': 'open', '_id': 'missing', 'foobar': ['hello', 'world']}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    message = Message.manager(db).get(external_id=msg_id)
-    assert message.status == 'send'
-    assert Event.manager(db).count(message_id=message.id) == 0
+    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    assert message['status'] == 'send'
+    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 0
 
 
-def test_mandrill_send(send_email, db: Session, dummy_server):
-    assert Message.manager(db).count() == 0
+def test_mandrill_send(send_email, sync_db: SyncDb, dummy_server):
+    assert sync_db.fetchval('select count(*) from messages') == 0
     send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@testing.com'}])
 
-    m = Message.manager(db).get(external_id='mandrill-foobaratestingcom')
-    assert m.to_address == 'foobar_a@testing.com'
+    m = sync_db.fetchrow_b(
+        'select * from messages where :where', where=V('external_id') == 'mandrill-foobaratestingcom'
+    )
+    assert m['to_address'] == 'foobar_a@testing.com'
     assert dummy_server.app['log'] == ['POST /mandrill/messages/send.json > 200']
 
 
-def test_send_mandrill_with_other_attachments(send_email, db: Session, dummy_server):
+def test_send_mandrill_with_other_attachments(send_email, sync_db: SyncDb, dummy_server):
     with open(THIS_DIR / 'attachments/testing.pdf', 'rb') as f:
         content = f.read()
     sent_content = base64.b64encode(content).decode()
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
     send_email(
         method='email-mandrill',
         recipients=[
@@ -154,25 +155,29 @@ def test_send_mandrill_with_other_attachments(send_email, db: Session, dummy_ser
             }
         ],
     )
-    m = Message.manager(db).get(external_id='mandrill-foobarctestingcom')
-    assert m.to_address == 'foobar_c@testing.com'
-    assert set(m.attachments) == {'::calendar.ics', '::testing.pdf'}
+    m = sync_db.fetchrow_b(
+        'select * from messages where :where', where=V('external_id') == 'mandrill-foobarctestingcom'
+    )
+    assert m['to_address'] == 'foobar_c@testing.com'
+    assert set(m['attachments']) == {'::calendar.ics', '::testing.pdf'}
 
 
-def test_example_email_address(send_email, db: Session, dummy_server):
-    assert Message.manager(db).count() == 0
+def test_example_email_address(send_email, sync_db: SyncDb, dummy_server):
+    assert sync_db.fetchval('select count(*) from messages') == 0
     send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@example.com'}])
 
-    m = Message.manager(db).get(external_id='mandrill-foobaraexamplecom')
-    assert m.to_address == 'foobar_a@example.com'
-    assert m.status == 'send'
+    m = sync_db.fetchrow_b(
+        'select * from messages where :where', where=V('external_id') == 'mandrill-foobaraexamplecom'
+    )
+    assert m['to_address'] == 'foobar_a@example.com'
+    assert m['status'] == 'send'
 
 
-def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop, dummy_server, settings):
+def test_mandrill_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, loop, dummy_server, settings):
     send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
-    assert Message.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from messages') == 1
 
-    assert Event.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from events') == 0
 
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'mandrill-testingexampleorg', 'foobar': ['hello', 'world']}]
 
@@ -186,16 +191,16 @@ def test_mandrill_webhook(cli: TestClient, send_email, db: Session, worker, loop
         headers={'X-Mandrill-Signature': sig.decode()},
     )
     assert r.status_code == 200, r.json()
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
 
-    assert Event.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from events') == 1
 
-    events = Event.manager(db).all()
-    assert events[0].ts == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
-    assert events[0].status == 'open'
+    events = sync_db.fetch('select * from events')
+    assert events[0]['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
+    assert events[0]['status'] == 'open'
 
 
-def test_mandrill_webhook_invalid(cli: TestClient, send_email, db: Session, dummy_server, settings):
+def test_mandrill_webhook_invalid(cli: TestClient, send_email, sync_db: SyncDb, dummy_server, settings):
     send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
     data = {'mandrill_events': messages}
@@ -210,17 +215,16 @@ def test_mandrill_webhook_invalid(cli: TestClient, send_email, db: Session, dumm
     r = cli.post('/webhook/mandrill/', data=data, headers={'X-Mandrill-Signature': sig.decode()})
     assert r.status_code == 400, r.text
 
-    events = Event.manager(db).all()
-    assert len(events) == 0
+    assert sync_db.fetchval('select count(*) from events') == 0
 
 
-def test_mandrill_send_bad_template(cli: TestClient, send_email, db: Session, dummy_server):
-    assert Message.manager(db).count() == 0
+def test_mandrill_send_bad_template(cli: TestClient, send_email, sync_db: SyncDb, dummy_server):
+    assert sync_db.fetchval('select count(*) from messages') == 0
     send_email(
         method='email-mandrill', main_template='{{ foo } test message', recipients=[{'address': 'foobar_b@testing.com'}]
     )
-    message = Message.manager(db).get()
-    assert message.status == 'render_failed'
+    message = sync_db.fetchrow_b('select * from messages')
+    assert message['status'] == 'render_failed'
 
 
 def test_send_email_headers(cli: TestClient, tmpdir, worker, loop, dummy_server):
@@ -244,7 +248,7 @@ def test_send_email_headers(cli: TestClient, tmpdir, worker, loop, dummy_server)
     }
     r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
 
     assert len(tmpdir.listdir()) == 2
     msg_file = tmpdir.join(f'{uid}-foobarexampleorg.txt').read()
@@ -304,7 +308,7 @@ def test_markdown_context(send_email, tmpdir):
 
 def test_partials(send_email, tmpdir):
     message_id = send_email(
-        main_template=('message: |{{{ message }}}|\n' 'foo: {{ foo }}\n' 'partial: {{> test_p }}'),
+        main_template='message: |{{{ message }}}|\n' 'foo: {{ foo }}\n' 'partial: {{> test_p }}',
         context={'message__render': '{{foo}} {{> test_p }}', 'foo': 'FOO', 'bar': 'BAR'},
         mustache_partials={'test_p': 'foo ({{ foo }}) bar **{{ bar }}**'},
     )
@@ -386,7 +390,7 @@ def test_macro_in_message(send_email, tmpdir):
         context={
             'pay_link': '/pay/now/123/',
             'first_name': 'John',
-            'message__render': ('# hello {{ first_name }}\n' 'centered_button(Pay now | {{ pay_link }})\n'),
+            'message__render': '# hello {{ first_name }}\n' 'centered_button(Pay now | {{ pay_link }})\n',
         },
         macros={
             'centered_button(text | link)': (
@@ -430,7 +434,7 @@ def test_standard_sass(cli: TestClient, tmpdir, worker, loop):
     )
     r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201
-    assert loop.run_until_complete(worker.run_check()) == 1
+    assert worker.test_run() == 1
     message_id = data['uid'] + '-foobartestingcom'
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -448,7 +452,7 @@ def test_custom_sass(send_email, tmpdir):
     assert '#body{-webkit-font-smoothing' not in msg_file
 
 
-def test_invalid_mustache_subject(send_email, tmpdir, db: Session):
+def test_invalid_mustache_subject(send_email, tmpdir, sync_db: SyncDb):
     message_id = send_email(
         subject_template='{{ foo } test message', context={'foo': 'FOO'}, company_code='test_invalid_mustache_subject'
     )
@@ -456,22 +460,22 @@ def test_invalid_mustache_subject(send_email, tmpdir, db: Session):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert '\nsubject: {{ foo } test message\n' in msg_file
 
-    messages = Message.manager(db).get()
-    assert messages.status == 'send'
-    assert messages.subject == '{{ foo } test message'
-    assert messages.body == '<body>\n\n</body>'
+    message = sync_db.fetchrow_b('select * from messages')
+    assert message['status'] == 'send'
+    assert message['subject'] == '{{ foo } test message'
+    assert message['body'] == '<body>\n\n</body>'
 
 
-def test_invalid_mustache_body(send_email, db: Session):
+def test_invalid_mustache_body(send_email, sync_db: SyncDb):
     send_email(main_template='{{ foo } test message', context={'foo': 'FOO'}, company_code='test_invalid_mustache_body')
 
-    m = Message.manager(db).get()
-    assert m.status == 'render_failed'
-    assert m.subject is None
-    assert m.body == 'Error rendering email: unclosed tag at line 1'
+    m = sync_db.fetchrow_b('select * from messages')
+    assert m['status'] == 'render_failed'
+    assert m['subject'] is None
+    assert m['body'] == 'Error rendering email: unclosed tag at line 1'
 
 
-def test_send_with_pdf(send_email, tmpdir, db: Session):
+def test_send_with_pdf(send_email, tmpdir, sync_db: SyncDb):
     message_id = send_email(
         recipients=[
             {
@@ -487,11 +491,13 @@ def test_send_with_pdf(send_email, tmpdir, db: Session):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert 'testing.pdf' in msg_file
 
-    attachments = Message.manager(db).get(external_id=message_id).attachments
+    attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
+        'attachments'
+    ]
     assert set(attachments) == {'123::testing.pdf', '::different.pdf'}
 
 
-def test_send_with_other_attachment(send_email, tmpdir, db: Session):
+def test_send_with_other_attachment(send_email, tmpdir, sync_db: SyncDb):
     message_id = send_email(
         recipients=[
             {
@@ -505,11 +511,13 @@ def test_send_with_other_attachment(send_email, tmpdir, db: Session):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert 'Look this is some test data' in msg_file
-    attachments = Message.manager(db).get(external_id=message_id).attachments
+    attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
+        'attachments'
+    ]
     assert set(attachments) == {'::calendar.ics'}
 
 
-def test_send_with_other_attachment_pdf(send_email, tmpdir, db: Session):
+def test_send_with_other_attachment_pdf(send_email, tmpdir, sync_db: SyncDb):
     msg = 'Look this is some test data'
     encoded_content = base64.b64encode(b'Look this is some test data').decode()
     message_id = send_email(
@@ -527,7 +535,9 @@ def test_send_with_other_attachment_pdf(send_email, tmpdir, db: Session):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert f'test_pdf.pdf:{msg}' in msg_file
     assert f'test_pdf_encoded.pdf:{msg}' in msg_file
-    attachments = Message.manager(db).get(external_id=message_id).attachments
+    attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
+        'attachments'
+    ]
     assert set(attachments) == {'::test_pdf.pdf', '::test_pdf_encoded.pdf'}
 
 
@@ -551,10 +561,10 @@ def test_pdf_empty(send_email, tmpdir, dummy_server):
     assert '\n  "attachments": []\n' in msg_file
 
 
-def test_mandrill_send_client_error(db, worker_ctx, call_send_emails, loop):
+def test_mandrill_send_client_error(sync_db: SyncDb, worker_ctx, call_send_emails, loop):
     group_id, c_id, m = call_send_emails(subject_template='__slow__')
 
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
     worker_ctx['job_try'] = 1
 
     with pytest.raises(Retry) as exc_info:
@@ -563,25 +573,25 @@ def test_mandrill_send_client_error(db, worker_ctx, call_send_emails, loop):
         )
     assert exc_info.value.defer_score == 5_000
 
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
 
 
-def test_mandrill_send_many_errors(db, worker_ctx, call_send_emails, loop):
+def test_mandrill_send_many_errors(sync_db: SyncDb, worker_ctx, call_send_emails, loop):
     group_id, c_id, m = call_send_emails()
 
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
     worker_ctx['job_try'] = 10
 
     loop.run_until_complete(
         worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
     )
 
-    m = Message.manager(db).get()
-    assert m.status == 'send_request_failed'
-    assert m.body == 'upstream error'
+    m = sync_db.fetchrow_b('select * from messages')
+    assert m['status'] == 'send_request_failed'
+    assert m['body'] == 'upstream error'
 
 
-def test_mandrill_send_502(db, call_send_emails, loop, worker_ctx):
+def test_mandrill_send_502(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
     group_id, c_id, m = call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = 1
@@ -592,10 +602,10 @@ def test_mandrill_send_502(db, call_send_emails, loop, worker_ctx):
         )
     assert exc_info.value.defer_score == 5_000
 
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
 
 
-def test_mandrill_send_502_last(db, call_send_emails, loop, worker_ctx):
+def test_mandrill_send_502_last(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
     group_id, c_id, m = call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = len(email_retrying)
@@ -606,10 +616,10 @@ def test_mandrill_send_502_last(db, call_send_emails, loop, worker_ctx):
         )
     assert exc_info.value.defer_score == 43_200_000
 
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
 
 
-def test_mandrill_send_500_nginx(db, call_send_emails, loop, worker_ctx):
+def test_mandrill_send_500_nginx(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
     group_id, c_id, m = call_send_emails(subject_template='__500_nginx__')
 
     worker_ctx['job_try'] = 2
@@ -619,7 +629,7 @@ def test_mandrill_send_500_nginx(db, call_send_emails, loop, worker_ctx):
             worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
         )
     assert exc_info.value.defer_score == 10_000
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
 
 
 def send_with_link(send_email, tmpdir):
@@ -638,17 +648,17 @@ def send_with_link(send_email, tmpdir):
     return token
 
 
-def test_link_shortening(send_email, tmpdir, cli: TestClient, db: Session, worker, loop):
+def test_link_shortening(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop):
     token = send_with_link(send_email, tmpdir)
 
-    m = Message.manager(db).get()
-    assert m.status == 'send'
+    m = sync_db.fetchrow_b('select * from messages')
+    assert m['status'] == 'send'
 
-    link = Link.manager(db).get()
-    assert link.id == AnyInt()
-    assert link.message_id == m.id
-    assert link.token == token
-    assert link.url == 'https://www.foobar.com'
+    link = sync_db.fetchrow_b('select * from links')
+    assert link['id'] == AnyInt()
+    assert link['message_id'] == m['id']
+    assert link['token'] == token
+    assert link['url'] == 'https://www.foobar.com'
 
     r = cli.get(
         '/l' + token,
@@ -662,15 +672,14 @@ def test_link_shortening(send_email, tmpdir, cli: TestClient, db: Session, worke
     )
     assert r.status_code == 307, r.text
     assert r.headers['location'] == 'https://www.foobar.com'
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
 
-    db.refresh(m)
-    assert Message.manager(db).get(id=m.id).status == m.status
-    assert m.status == 'click'
-    event = Event.manager(db).get()
-    assert event.status == 'click'
-    assert event.ts == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
-    extra = json.loads(event.extra)
+    m = sync_db.fetchrow_b('select * from messages where :where', where=V('id') == m['id'])
+    assert m['status'] == 'click'
+    event = sync_db.fetchrow_b('select * from events')
+    assert event['status'] == 'click'
+    assert event['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
+    extra = json.loads(event['extra'])
     assert extra == {
         'ip': '54.170.228.0',
         'target': 'https://www.foobar.com',
@@ -697,21 +706,21 @@ def test_link_shortening_wrong_url_missing(send_email, tmpdir, cli, dummy_server
     assert r.headers['location'] == 'different'
 
 
-def test_link_shortening_repeat(send_email, tmpdir, cli: TestClient, db: Session, worker, loop, dummy_server):
+def test_link_shortening_repeat(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop, dummy_server):
     token = send_with_link(send_email, tmpdir)
     r = cli.get('/l' + token, allow_redirects=False)
     assert r.status_code == 307, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
     assert r.headers['location'] == 'https://www.foobar.com'
-    assert Event.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from events') == 1
 
     r = cli.get('/l' + token, allow_redirects=False)
     assert r.status_code == 307, r.text
     assert r.headers['location'] == 'https://www.foobar.com'
-    assert Event.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from events') == 1
 
 
-def test_link_shortening_in_render(send_email, tmpdir, db: Session):
+def test_link_shortening_in_render(send_email, tmpdir, sync_db: SyncDb):
     mid = send_email(
         context={'message__render': 'test email {{ xyz }}\n', 'xyz': 'http://example.com/foobar'},
         company_code='test_link_shortening_in_render',
@@ -722,9 +731,9 @@ def test_link_shortening_in_render(send_email, tmpdir, db: Session):
     assert m, msg_file
     token, enc_url = m.groups()
 
-    link = Link.manager(db).get()
-    assert link.url == 'http://example.com/foobar'
-    assert link.token == token
+    link = sync_db.fetchrow_b('select * from links')
+    assert link['url'] == 'http://example.com/foobar'
+    assert link['token'] == token
     assert base64.urlsafe_b64decode(enc_url).decode() == 'http://example.com/foobar'
 
 
@@ -774,19 +783,17 @@ def test_invalid_json(cli: TestClient, tmpdir):
     } == r.json()
 
 
-def test_delete_old_messages(cli: TestClient, send_email, db: Session, worker, loop):
+def test_delete_old_messages(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     for i in range(3):
         send_email()
-    m = Message.manager(db).all()[0]
-    m.send_ts = datetime.today() - timedelta(days=366)
-    Message.manager(db).update(m)
-    m = Message.manager(db).all()[1]
-    m.send_ts = datetime.today() - timedelta(days=200)
-    Message.manager(db).update(m)
-    m = Message.manager(db).all()[2]
-    m.send_ts = datetime.today() + timedelta(days=1)
-    Message.manager(db).update(m)
 
-    assert Message.manager(db).count() == 3
-    loop.run_until_complete(delete_old_emails({'pg': db}))
-    assert Message.manager(db).count() == 2
+    m = sync_db.fetch('select * from messages')[0]
+    sync_db.execute('update messages set send_ts = $1 where id = $2', datetime.today() - timedelta(days=366), m['id'])
+    m = sync_db.fetch('select * from messages')[1]
+    sync_db.execute('update messages set send_ts = $1 where id = $2', datetime.today() - timedelta(days=200), m['id'])
+    m = sync_db.fetch('select * from messages')[2]
+    sync_db.execute('update messages set send_ts = $1 where id = $2', datetime.today() + timedelta(days=1), m['id'])
+
+    assert sync_db.fetchval('select count(*) from messages') == 3
+    loop.run_until_complete(delete_old_emails({'pg': sync_db}))
+    assert sync_db.fetchval('select count(*) from messages') == 2

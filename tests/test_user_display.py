@@ -2,15 +2,16 @@ import hashlib
 import hmac
 import json
 import uuid
+from buildpg import V, Values
 from datetime import date, datetime, timedelta, timezone
 from foxglove import glove
+from foxglove.db.helpers import SyncDb
 from operator import itemgetter
 from pytest_toolbox.comparison import RegexStr
 from starlette.testclient import TestClient
 from urllib.parse import urlencode
 
-from src.models import Company, Event, Message
-from src.schema import MessageStatus
+from src.schemas.messages import MessageStatus
 
 
 def modify_url(url, settings, company='foobar'):
@@ -20,7 +21,7 @@ def modify_url(url, settings, company='foobar'):
     return str(url) + ('&' if '?' in str(url) else '?') + urlencode(args)
 
 
-def test_user_list(cli, settings, send_email, db):
+def test_user_list(cli, settings, send_email, sync_db: SyncDb):
     expected_msg_ids = []
     for i in range(4):
         uid = str(uuid.uuid4())
@@ -37,7 +38,9 @@ def test_user_list(cli, settings, send_email, db):
     assert msg_ids == list(reversed(expected_msg_ids))
     first_item = data['items'][0]
     assert first_item == {
-        'id': Message.manager(db).get(external_id=expected_msg_ids[3]).id,
+        'id': sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == expected_msg_ids[3])[
+            'id'
+        ],
         'external_id': expected_msg_ids[3],
         'to_ext_link': None,
         'to_address': '3@t.com',
@@ -133,7 +136,7 @@ def test_pagination(cli, settings, send_email):
     assert data['count'] == 130
 
 
-def test_user_aggregate(cli, settings, send_email, db, loop, worker):
+def test_user_aggregate(cli, settings, send_email, sync_db: SyncDb, loop, worker):
     for i in range(4):
         send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
     msg_id = send_email(uid=str(uuid.uuid4()), company_code='user-aggs', recipients=[{'address': f'{i}@t.com'}])
@@ -143,9 +146,9 @@ def test_user_aggregate(cli, settings, send_email, db, loop, worker):
 
     send_email(uid=str(uuid.uuid4()), company_code='different')
     loop.run_until_complete(glove.redis.enqueue_job('update_aggregation_view'))
-    loop.run_until_complete(worker.run_check())
+    worker.test_run()
 
-    assert Message.manager(db).count() == 6
+    assert sync_db.fetchval('select count(*) from messages') == 6
     r = cli.get(modify_url('/messages/email-test/aggregation/', settings, 'user-aggs'))
     assert r.status_code == 200, r.text
     data = r.json()
@@ -164,8 +167,8 @@ def test_user_aggregate(cli, settings, send_email, db, loop, worker):
     ]
 
 
-def test_user_aggregate_no_data(cli, settings, db):
-    Company.manager(db).create(code='testing')
+def test_user_aggregate_no_data(cli, settings, sync_db: SyncDb):
+    sync_db.execute('insert into companies (code) values ($1)', 'testing')
     r = cli.get(modify_url('/messages/email-test/aggregation/', settings, 'testing'))
     assert r.status_code == 200, r.text
     data = r.json()
@@ -234,19 +237,21 @@ def test_search_emails(cli: TestClient, send_email, settings):
     assert r.json()['count'] == 0
 
 
-def test_message_details(cli, settings, send_email, db, worker, loop):
+def test_message_details(cli, settings, send_email, sync_db: SyncDb, worker, loop):
     msg_ext_id = send_email(company_code='test-details')
 
     data = {'ts': int(1e10), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
+    assert worker.test_run() == 2
 
-    message = Message.manager(db).get(external_id=msg_ext_id)
-    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
+    message_id = sync_db.fetchval_b('select id from messages where :where', where=V('external_id') == msg_ext_id)
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
-    assert r.json() == {
-        'id': message.id,
+    data = r.json()
+    data['events'][0].pop('details')
+    assert data == {
+        'id': message_id,
         'external_id': msg_ext_id,
         'to_ext_link': None,
         'to_address': 'foobar@testing.com',
@@ -258,22 +263,12 @@ def test_message_details(cli, settings, send_email, db, worker, loop):
         'status': 'Opened',
         'method': 'email-test',
         'body': '<body>\nthis is a test\n</body>',
-        'events': [
-            {
-                'status': 'Opened',
-                'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-                'details': (
-                    '{\n  "user_agent": "testincalls",\n  "location": null,\n  "bounce_description": null,\n  '
-                    '"clicks": null,\n  "diag": null,\n  "reject": null,\n  "opens": null,\n  "resends": null,\n  '
-                    '"smtp_events": null,\n  "state": null\n}'
-                ),
-            }
-        ],
+        'events': [{'status': 'Opened', 'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*')}],
         'attachments': [],
     }
 
 
-def test_message_details_links(cli, settings, send_email, db, worker, loop):
+def test_message_details_links(cli, settings, send_email, sync_db: SyncDb, worker, loop):
     msg_ext_id = send_email(
         company_code='test-details',
         recipients=[
@@ -289,15 +284,17 @@ def test_message_details_links(cli, settings, send_email, db, worker, loop):
             }
         ],
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
+    message_id = sync_db.fetchval_b('select id from messages where :where', where=V('external_id') == msg_ext_id)
     data = {'ts': int(2e12), 'event': 'open', '_id': msg_ext_id, 'user_agent': 'testincalls'}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    assert loop.run_until_complete(worker.run_check()) == 2
-    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
+    assert worker.test_run() == 2
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
-    assert r.json() == {
-        'id': message.id,
+    data = r.json()
+    data['events'][0].pop('details')
+    assert data == {
+        'id': message_id,
         'external_id': msg_ext_id,
         'to_ext_link': '/whatever/123/',
         'to_address': 'foobar@testing.com',
@@ -309,39 +306,28 @@ def test_message_details_links(cli, settings, send_email, db, worker, loop):
         'status': 'Opened',
         'body': '<body>\nthis is a test\n</body>',
         'method': 'email-test',
-        'events': [
-            {
-                'status': 'Opened',
-                'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
-                'details': (
-                    '{\n  "user_agent": "testincalls",\n  "location": null,\n  "bounce_description": null,\n  '
-                    '"clicks": null,\n  "diag": null,\n  "reject": null,\n  "opens": null,\n  "resends": null,\n  '
-                    '"smtp_events": null,\n  "state": null\n}'
-                ),
-            }
-        ],
-        'attachments': [
-            ['/attachment-doc/123/', 'testing.pdf'],
-            ['#', 'different.pdf'],
-        ],
+        'events': [{'status': 'Opened', 'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*')}],
+        'attachments': [['/attachment-doc/123/', 'testing.pdf'], ['#', 'different.pdf']],
     }
 
 
-def test_no_event_data(cli, settings, send_email, db):
+def test_no_event_data(cli, settings, send_email, sync_db: SyncDb):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
-    events = [
-        Event(
-            ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
-            message_id=message.id,
-            status=MessageStatus.send,
-        )
-        for i in range(3)
-    ]
-    Event.manager(db).create_many(*events)
-    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
+    message_id = sync_db.fetchval_b('select id from messages where :where', where=V('external_id') == msg_ext_id)
+    sync_db.executemany_b(
+        'insert into events (:values__names) values :values',
+        [
+            Values(
+                ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+                message_id=message_id,
+                status=MessageStatus.send,
+            )
+            for i in range(3)
+        ],
+    )
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details'))
     assert r.json()['events'] == [
         {'status': 'Sent', 'datetime': '2032-06-01T00:00:00+00:00'},
         {'status': 'Sent', 'datetime': '2032-06-02T02:00:00+00:00'},
@@ -349,43 +335,45 @@ def test_no_event_data(cli, settings, send_email, db):
     ]
 
 
-def test_invalid_message_id(cli, db, settings, send_email):
+def test_invalid_message_id(cli, sync_db: SyncDb, settings, send_email):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
-    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'not_real_company'))
+    message_id = sync_db.fetchval_b('select id from messages where :where', where=V('external_id') == msg_ext_id)
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'not_real_company'))
     assert r.status_code == 404
 
-    r = cli.get(modify_url(f'/messages/email-test/999{message.id}/', settings, 'test-details'))
+    r = cli.get(modify_url(f'/messages/email-test/999{message_id}/', settings, 'test-details'))
     assert r.status_code == 404
 
 
-def test_many_events(cli, settings, send_email, db):
+def test_many_events(cli, settings, send_email, sync_db: SyncDb):
     msg_ext_id = send_email(
         company_code='test-details', recipients=[{'first_name': 'Foo', 'address': 'foobar@testing.com'}]
     )
-    message = Message.manager(db).get(external_id=msg_ext_id)
-    events = [
-        Event(
-            ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
-            message_id=message.id,
-            status=MessageStatus.send,
-            extra=json.dumps({'foo': 'bar', 'v': i}),
-        )
-        for i in range(55)
-    ]
-    Event.manager(db).create_many(*events)
+    message_id = sync_db.fetchval_b('select id from messages where :where', where=V('external_id') == msg_ext_id)
+    sync_db.executemany_b(
+        'insert into events (:values__names) values :values',
+        [
+            Values(
+                ts=(datetime(2032, 6, 1) + timedelta(days=i, hours=i * 2)).replace(tzinfo=timezone.utc),
+                message_id=message_id,
+                status=MessageStatus.send,
+                extra=json.dumps({'foo': 'bar', 'v': i}),
+            )
+            for i in range(55)
+        ],
+    )
 
-    r = cli.get(modify_url(f'/messages/email-test/{message.id}/', settings, 'test-details'))
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
     events = r.json()['events']
     assert len(events) == 51
-    assert Event.manager(db).count() == 55
+    assert sync_db.fetchval('select count(*) from events') == 55
     assert events[-1]['status'] == '5 more'
 
 
-def test_user_sms_list(cli, settings, send_sms, db):
+def test_user_sms_list(cli, settings, send_sms, sync_db: SyncDb):
     ext_id = send_sms(company_code='snapcrap')
 
     send_sms(uid=str(uuid.uuid4()), company_code='flip')
@@ -413,8 +401,8 @@ def test_user_sms_list(cli, settings, send_sms, db):
     }
 
 
-def test_valid_signature(cli, settings, db):
-    Company.manager(db).create(code='whatever')
+def test_valid_signature(cli, settings, sync_db: SyncDb):
+    sync_db.execute('insert into companies (code) values ($1)', 'whatever')
     args = dict(company='whatever', expires=round(datetime(2032, 1, 1).timestamp()))
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()

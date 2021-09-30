@@ -1,24 +1,23 @@
-import arq
 import asyncio
 import os
 import pytest
 import re
 import uuid
 from arq import Worker
+from buildpg import Values, asyncpg
+from buildpg.asyncpg import BuildPgConnection
+from foxglove import glove
+from foxglove.db import PgMiddleware, prepare_database
+from foxglove.db.helpers import DummyPgPool, SyncDb
 from foxglove.test_server import create_dummy_server
-from foxglove.testing import Client as TestClient
 from httpx import URL, AsyncClient
 from pathlib import Path
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from starlette.testclient import TestClient
+from typing import Any, Callable
 
-from src.db import prepare_database
-from src.main import app, glove
-from src.models import Company, MessageGroup
-from src.schema import EmailSendModel, SendMethod
+from src.schemas.messages import EmailSendModel, SendMethod
 from src.settings import Settings
-from src.utils import get_db
-from src.worker import startup as worker_startup, worker_functions
+from src.worker import shutdown, startup, worker_settings
 
 from . import dummy_server
 
@@ -34,20 +33,6 @@ def fix_loop(settings):
 
 
 DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
-
-
-def override_get_db():
-    engine = create_engine(DB_DSN)
-    TestingSessionLocal = sessionmaker(autoflush=False, bind=engine)
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-        engine.dispose()
-
-
-app.dependency_overrides[get_db] = override_get_db
 
 
 @pytest.fixture(name='settings')
@@ -73,19 +58,54 @@ def fix_settings(tmpdir):
     glove._settings = None
 
 
-@pytest.fixture(name='db', scope='function')
-def clean_db(settings, loop):
-    loop.run_until_complete(prepare_database(settings, True))
-    yield from override_get_db()
+@pytest.fixture(name='await_')
+def fix_await(loop):
+    return loop.run_until_complete
+
+
+@pytest.fixture(name='raw_conn')
+def fix_raw_conn(settings, await_: Callable):
+    await_(prepare_database(settings, overwrite_existing=True, run_migrations=False))
+
+    conn = await_(asyncpg.connect_b(dsn=settings.pg_dsn, server_settings={'jit': 'off'}))
+
+    yield conn
+
+    await_(conn.close())
+
+
+@pytest.fixture(name='db_conn')
+def fix_db_conn(settings, raw_conn: BuildPgConnection, await_: Callable):
+    async def start():
+        tr_ = raw_conn.transaction()
+        await tr_.start()
+        return tr_
+
+    tr = await_(start())
+    yield DummyPgPool(raw_conn)
+
+    async def end():
+        if not raw_conn.is_closed():
+            await tr.rollback()
+
+    await_(end())
+
+
+@pytest.fixture(name='sync_db')
+def fix_sync_db(db_conn, loop):
+    return SyncDb(db_conn, loop)
 
 
 @pytest.fixture(name='cli')
-def client(loop):
+def fix_client(glove, settings: Settings, sync_db, worker):
+    app = settings.create_app()
     app.user_middleware = []
+    app.add_middleware(PgMiddleware)
     app.middleware_stack = app.build_middleware_stack()
     app.state.webhook_auth_key = b'testing'
-    with TestClient(app) as cli:
-        yield cli
+    glove._settings = settings
+    with TestClient(app) as client:
+        yield client
 
 
 class CustomAsyncClient(AsyncClient):
@@ -113,24 +133,54 @@ def _fix_dummy_server(loop, settings):
     loop.run_until_complete(ds.stop())
 
 
+class Worker4Testing(Worker):
+    def test_run(self, max_jobs: int = None) -> int:
+        return self.loop.run_until_complete(self.run_check(max_burst_jobs=max_jobs))
+
+    def test_close(self) -> None:
+        # pool is closed by glove, so don't want to mess with it here
+        self._pool = None
+        self.loop.run_until_complete(self.close())
+
+
+@pytest.fixture(name='glove')
+def fix_glove(db_conn, await_: Callable[..., Any]):
+    glove.pg = db_conn
+
+    async def start():
+        await glove.startup(run_migrations=False)
+        await glove.redis.flushdb()
+
+    await_(start())
+
+    yield glove
+
+    await_(glove.shutdown())
+
+
 @pytest.fixture(name='worker_ctx')
-def _fix_worker_ctx(loop, settings, db):
-    ctx = dict(settings=settings, pg=db)
-    loop.run_until_complete(worker_startup(ctx))
+def _fix_worker_ctx(loop, settings):
+    ctx = dict(settings=settings)
+    loop.run_until_complete(startup(ctx))
     yield ctx
 
 
 @pytest.fixture(name='worker')
-def _fix_worker(loop, cli, worker_ctx):
-    worker = Worker(
-        functions=worker_functions,
-        redis_pool=loop.run_until_complete(arq.create_pool(glove.settings.redis_settings)),
+def fix_worker(db_conn, glove, worker_ctx):
+    functions = worker_settings['functions']
+    worker = Worker4Testing(
+        functions=functions,
+        redis_pool=glove.redis,
+        on_startup=startup,
+        on_shutdown=shutdown,
         burst=True,
-        poll_delay=0.01,
+        poll_delay=0.001,
         ctx=worker_ctx,
     )
+
     yield worker
-    loop.run_until_complete(worker.close())
+
+    worker.test_close()
 
 
 @pytest.fixture()
@@ -149,7 +199,7 @@ def send_email(cli, worker, loop):
         data.update(**extra)
         r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status_code == status_code
-        loop.run_until_complete(worker.run_check())
+        worker.test_run()
         if len(data['recipients']) != 1:
             return NotImplemented
         else:
@@ -173,14 +223,14 @@ def send_sms(cli, worker, loop):
         data.update(**extra)
         r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status_code == 201
-        loop.run_until_complete(worker.run_check())
+        worker.test_run()
         return data['uid'] + '-447896541236'
 
     return _send_message
 
 
 @pytest.fixture(name='call_send_emails')
-def _fix_call_send_emails(db):
+def _fix_call_send_emails(glove, sync_db):
     def run(**kwargs):
         base_kwargs = dict(
             uid=str(uuid.uuid4()),
@@ -191,14 +241,17 @@ def _fix_call_send_emails(db):
             recipients=[],
         )
         m = EmailSendModel(**dict(base_kwargs, **kwargs))
-        company = Company.manager(db).create(code=m.company_code)
-        group = MessageGroup.manager(db).create(
-            uuid=m.uid,
-            company_id=company.id,
-            message_method=m.method.value,
-            from_email=m.from_address.email,
-            from_name=m.from_address.name,
+        company_id = sync_db.fetchval('insert into companies (code) values ($1) returning id', m.company_code)
+        group_id = sync_db.fetchval_b(
+            'insert into message_groups (:values__names) values :values returning id',
+            values=Values(
+                uuid=m.uid,
+                company_id=company_id,
+                message_method=m.method.value,
+                from_email=m.from_address.email,
+                from_name=m.from_address.name,
+            ),
         )
-        return group.id, company.id, m
+        return group_id, company_id, m
 
     return run

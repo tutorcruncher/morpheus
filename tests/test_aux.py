@@ -1,12 +1,11 @@
 import base64
 import pytest
+from foxglove.db.helpers import SyncDb
 from foxglove.test_server import DummyServer
 from foxglove.testing import Client
-from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
 from src.ext import ApiError, ApiSession
-from src.models import Company, Message, MessageGroup
 from tests.test_user_display import modify_url
 
 
@@ -39,7 +38,7 @@ def test_405(cli: TestClient):
     assert r.status_code == 405, r.text
 
 
-def test_create_subaccount_new_few_sent(cli: Client, db: Session, dummy_server: DummyServer):
+def test_create_subaccount_new_few_sent(cli: Client, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
     r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
@@ -58,7 +57,7 @@ def test_create_subaccount_new_few_sent(cli: Client, db: Session, dummy_server: 
     ]
 
 
-def test_create_subaccount_lots(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_create_subaccount_lots(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'lots-sent'}
     r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
@@ -75,7 +74,7 @@ def test_create_subaccount_lots(cli: TestClient, db: Session, dummy_server: Dumm
     ]
 
 
-def test_create_subaccount_wrong_response(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_create_subaccount_wrong_response(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'broken'}
     r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 400, r.text
@@ -83,7 +82,7 @@ def test_create_subaccount_wrong_response(cli: TestClient, db: Session, dummy_se
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 500']
 
 
-def test_create_subaccount_other_method(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_create_subaccount_other_method(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     r = cli.post('/create-subaccount/email-test/', headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'no subaccount creation required for "email-test"'}
@@ -91,38 +90,38 @@ def test_create_subaccount_other_method(cli: TestClient, db: Session, dummy_serv
     assert dummy_server.log == []
 
 
-def test_create_subaccount_invalid_key(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_create_subaccount_invalid_key(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
     r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
     assert r.status_code == 403, r.text
 
 
-def test_create_subaccount_on_send_email(cli: TestClient, db: Session, dummy_server, send_email):
+def test_create_subaccount_on_send_email(cli: TestClient, sync_db: SyncDb, dummy_server, send_email):
     data = {'company_code': 'foobar'}
     r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert r.json() == {'message': 'subaccount created'}
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
 
-    assert Company.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from companies') == 0
 
     send_email(company_code='foobar')
-    assert Company.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from companies') == 1
 
 
-def test_create_subaccount_on_send_sms(cli: TestClient, db: Session, dummy_server, send_sms):
+def test_create_subaccount_on_send_sms(cli: TestClient, sync_db: SyncDb, dummy_server, send_sms):
     data = {'company_code': 'foobar'}
     r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert r.json() == {'message': 'subaccount created'}
     assert dummy_server.log == ['POST /mandrill/subaccounts/add.json > 200']
-    assert Company.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from companies') == 0
 
     send_sms(company_code='foobar')
-    assert Company.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from companies') == 1
 
 
-def test_user_list_subaccount_doesnt_exist(cli, settings, db, dummy_server: DummyServer):
+def test_user_list_subaccount_doesnt_exist(cli, settings, sync_db: SyncDb, dummy_server: DummyServer):
     r = cli.get(modify_url('/user/email-test/messages.json', settings))
     assert r.status_code == 404
 
@@ -132,7 +131,7 @@ def _create_test_subaccount(cli, data):
     assert r.status_code == 201, r.text
 
 
-def test_delete_subaccount(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_delete_subaccount(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
     _create_test_subaccount(cli, data)
 
@@ -154,19 +153,19 @@ def test_delete_subaccount(cli: TestClient, db: Session, dummy_server: DummyServ
     ]
 
 
-def test_delete_subaccount_multiple_branches(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_delete_subaccount_multiple_branches(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
-    Company.manager(db).create(code='foobar:1')
-    Company.manager(db).create(code='foobar:2')
-    Company.manager(db).create(code='notbar:1')
+    sync_db.execute('insert into companies (code) values ($1)', 'foobar:1')
+    sync_db.execute('insert into companies (code) values ($1)', 'foobar:2')
+    sync_db.execute('insert into companies (code) values ($1)', 'notbar:1')
 
     r = cli.post('/delete-subaccount/email-test/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
-    assert Company.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from companies') == 1
 
 
-def test_delete_subaccount_wrong_response(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_delete_subaccount_wrong_response(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'broken1'}
     _create_test_subaccount(cli, data)
 
@@ -178,7 +177,7 @@ def test_delete_subaccount_wrong_response(cli: TestClient, db: Session, dummy_se
     ]
 
 
-def test_delete_subaccount_other_method(cli: TestClient, db: Session, dummy_server: DummyServer):
+def test_delete_subaccount_other_method(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     r = cli.post(
         '/delete-subaccount/email-test/', json={'company_code': 'foobar'}, headers={'Authorization': 'testing-key'}
     )
@@ -188,21 +187,21 @@ def test_delete_subaccount_other_method(cli: TestClient, db: Session, dummy_serv
     assert dummy_server.log == []
 
 
-def test_delete_subaccount_invalid_key(cli: TestClient, db: Session):
+def test_delete_subaccount_invalid_key(cli: TestClient, sync_db: SyncDb):
     data = {'company_code': 'foobar'}
     r = cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-keyX'})
     assert r.status_code == 403, r.text
 
 
 def test_delete_subaccount_and_saved_messages(
-    cli: TestClient, db: Session, send_email, send_sms, dummy_server: DummyServer
+    cli: TestClient, sync_db: SyncDb, send_email, send_sms, dummy_server: DummyServer
 ):
     send_email(company_code='foobar1')
     send_sms(company_code='foobar1')
     send_email(company_code='foobar2', recipients=[{'address': f'{i}@test.com'} for i in range(5)])
-    assert Company.manager(db).count() == 2
-    assert MessageGroup.manager(db).count() == 3
-    assert Message.manager(db).count() == 7
+    assert sync_db.fetchval('select count(*) from companies') == 2
+    assert sync_db.fetchval('select count(*) from message_groups') == 3
+    assert sync_db.fetchval('select count(*) from messages') == 7
 
     fb1_data = {'company_code': 'foobar1'}
     _create_test_subaccount(cli, fb1_data)
@@ -213,19 +212,19 @@ def test_delete_subaccount_and_saved_messages(
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'deleted_messages=2 deleted_message_groups=2'}
 
-    assert MessageGroup.manager(db).count() == 1
-    assert Message.manager(db).count() == 5
+    assert sync_db.fetchval('select count(*) from message_groups') == 1
+    assert sync_db.fetchval('select count(*) from messages') == 5
 
     r = cli.post('/delete-subaccount/email-mandrill/', json=fb2_data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'deleted_messages=5 deleted_message_groups=1'}
 
-    assert MessageGroup.manager(db).count() == 0
-    assert Message.manager(db).count() == 0
+    assert sync_db.fetchval('select count(*) from message_groups') == 0
+    assert sync_db.fetchval('select count(*) from messages') == 0
 
     send_email(company_code='foobar3')
-    assert MessageGroup.manager(db).count() == 1
-    assert Message.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from message_groups') == 1
+    assert sync_db.fetchval('select count(*) from messages') == 1
 
     _create_test_subaccount(cli, {'company_code': 'foobar3'})
     with pytest.raises(TypeError):
@@ -234,8 +233,8 @@ def test_delete_subaccount_and_saved_messages(
             json={'company_code': object()},
             headers={'Authorization': 'testing-key'},
         )
-    assert MessageGroup.manager(db).count() == 1
-    assert Message.manager(db).count() == 1
+    assert sync_db.fetchval('select count(*) from message_groups') == 1
+    assert sync_db.fetchval('select count(*) from messages') == 1
 
 
 def test_missing_link(cli: TestClient):
