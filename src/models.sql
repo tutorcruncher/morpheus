@@ -81,7 +81,7 @@ CREATE TABLE links (
 );
 -- no index here to messages, wasn't used but be careful if we do a join
 CREATE INDEX link_token ON links USING btree (token);
-CREATE INDEX link_message_id ON links USING btree (token);
+CREATE INDEX link_message_id ON links USING btree (message_id);
 
 -- { logic
 CREATE OR REPLACE FUNCTION update_message() RETURNS trigger AS $$
