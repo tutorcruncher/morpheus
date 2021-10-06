@@ -1,4 +1,3 @@
-import asyncio
 import json
 import re
 from buildpg import V, logic
@@ -79,15 +78,15 @@ async def messages_list(
         where &= V('tags').contains(tags)
     if q:
         where &= V('vector').matches(logic.Func('plainto_tsquery', q.strip()))
-    full_count, items = await asyncio.gather(
-        conn.fetchval_b('select count(*) from (select 1 from messages where :where limit 10000) as t', where=where),
-        conn.fetch_b(
-            ':select from messages where :where order by id desc limit :limit offset :offset',
-            where=where,
-            select=MESSAGE_SELECT,
-            limit=LIST_PAGE_SIZE,
-            offset=offset or 0,
-        ),
+    full_count = await conn.fetchval_b(
+        'select count(*) from (select 1 from messages where :where limit 10000) as t', where=where
+    )
+    items = await conn.fetch_b(
+        ':select from messages where :where order by id desc limit :limit offset :offset',
+        where=where,
+        select=MESSAGE_SELECT,
+        limit=LIST_PAGE_SIZE,
+        offset=offset or 0,
     )
     data = {'items': [Message(**m).parsed_details for m in items], 'count': full_count}
     this_url = request.url_for('messages_list', method=method.value)
