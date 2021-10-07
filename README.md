@@ -12,10 +12,9 @@ Okay, chill. We're not normally that astronomically arrogant. Just the obvious m
 platform - "hermes" was already taken by a plethora of terrible nineties mail clients.
 
 What *morpheus* does:
-* sends emails and SMSs fast using mandrill, SES (TODO) and messagebird (SMS). One http request to send 5000 emails or SMSs.
+* sends emails and SMSs fast using [Mandrill](https://www.mandrillapp.com/docs/), SES (TODO) and [Messagebird](https://www.messagebird.com/en/) (SMS). One http request to send 5000 emails or SMSs.
 * generate PDFs for attachments given HTML using wkhtmltopdf.
 * provide a searchable history of sent messages and delivery analytics.
-* manage sending quotas as mandrill does when not using mandrill.
 
 Here's a picture to help explain:
 
@@ -23,101 +22,23 @@ Here's a picture to help explain:
 
 ## Usage
 
+Morpheus is built with [FastAPI](https://fastapi.tiangolo.com/), using [asyncpg](https://github.com/MagicStack/asyncpg) 
+to access a Postgres database and some really handy tools from [foxglove](https://github.com/samuelcolvin/foxglove).
+
 ### Running locally
 
-Set up your environment
+Set up your environment, run `make install`, create your database with `make reset-db` and you're ready to go.
 
-    source activate.sh
+You can run the web worker with
 
-then
+```
+foxglove web
+```
 
-    docker build morpheus -t morpheus && docker-compose up -d
-    
-`--build` makes sure to build any changes to the morpheus image, `-d` is detach
+and the worker in a different terminal with
 
-At the same time in another window
-
-    until $(curl -so /dev/null http://localhost:8001/logs -I && true); do printf .; sleep 0.1; done && curl -s http://localhost:8001/logs
-    
-To view the logs
-
-You can also run either the web or worker with
-
-    ./morpheus/run.py web
-    # OR
-    ./morpheus/run.py worker
+```
+foxglove worker
+```
 
 You'll need postgres and redis installed.
-
-### To prepare for deploy
-
-Get ssl `cert.pem` and `key.pem` and put them in `./nginx/keys`.
-
-Create `activate.prod.sh`:
-
-```shell
-#!/usr/bin/env bash
-. env/bin/activate
-export LOGSPOUT_ENDPOINT='...'
-export SENTRY_DSN='...'
-export APP_AUTH_KEY='...'
-export APP_MANDRILL_KEY='...'
-export APP_USER_AUTH_KEY='...'
-export APP_HOST_NAME='...'
-export APP_PUBLIC_LOCAL_API_URL='...'
-export APP_ADMIN_BASIC_AUTH_PASSWORD='...'
-
-export APP_MESSAGEBIRD_KEY='...'
-export APP_MESSAGEBIRD_PRICING_USERNAME='...'
-export APP_MESSAGEBIRD_PRICING_PASSWORD='...'
-
-echo "enabling docker machine..."
-eval $(docker-machine env morpheus)
-
-export MODE='PRODUCTION'
-export PS1="PROD $PS1"
-```
-
-### To deploy
-
-Set up your environment
-
-    source activate.prod.sh
-
-(this assumes you have a `prod` gnome profile setup to differentiate commands going to the production server)
-
-then
-
-    ./deploy/deploy
-
-That same command should also work to update the deployment after a change.
-
-
-### To test
-
-simply
-
-    make
-
-
-### to backup redis
-
-```
-docker exec -it morpheus_redis_1 redis-cli SAVE
-docker cp morpheus_redis_1:/data/dump.rdb dump.rdb
-```
-
-### to restore redis
-
-```
-./deploy/compose stop redis
-docker cp dump.rdb morpheus_redis_1:/data/dump.rdb
-./deploy/compose start redis
-```
-
-check with
-
-```
-docker exec -it morpheus_redis_1 redis-cli DBSIZE
-docker exec -it morpheus_redis_1 redis-cli INFO
-```
