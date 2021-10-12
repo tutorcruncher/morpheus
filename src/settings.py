@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         fields = {
             'port': {'env': 'PORT'},
             'pg_dsn': {'env': 'DATABASE_URL'},
-            'redis_settings': {'env': ['REDISCLOUD_URL', 'REDIS_URL']},
+            'redis_settings': {'env': 'REDISCLOUD_URL'},
             'sentry_dsn': {'env': 'SENTRY_DSN'},
             'delete_old_emails': {'env': 'DELETE_OLD_EMAILS'},
             'release': {'env': ['COMMIT', 'RELEASE', 'HEROKU_SLUG_COMMIT']},
