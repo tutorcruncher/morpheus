@@ -22,10 +22,12 @@ async def startup(ctx):
         messagebird=MessageBird(settings=settings),
         pydf=AsyncPydf(),
     )
+    await glove.startup(run_migrations=False)
 
 
 async def shutdown(ctx):
     glove.redis = None
+    await glove.shutdown()
     if hasattr(glove, 'mandrill'):
         delattr(glove, 'mandrill')
 
