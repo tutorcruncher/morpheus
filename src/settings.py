@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     test_output: Path = None
 
     delete_old_emails: bool = False
+    pg_server_settings: dict = {}
 
     # messagebird
     messagebird_key = ''
