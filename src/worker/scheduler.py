@@ -12,6 +12,9 @@ async def update_aggregation_view(ctx):
 
 
 async def delete_old_emails(ctx):
+    if not glove.settings.delete_old_emails:
+        logger.info('settings.delete_old_emails False, not running')
+        return
     today = datetime.today()
     start, end = today - timedelta(days=368), today - timedelta(days=365)
     async with glove.pg.acquire() as conn:

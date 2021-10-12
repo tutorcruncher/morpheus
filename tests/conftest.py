@@ -42,6 +42,7 @@ def fix_settings(tmpdir):
         test_mode=True,
         pg_dsn=DB_DSN,
         test_output=Path(tmpdir),
+        delete_old_emails=True,
         mandrill_url='http://localhost:8000/mandrill/',
         messagebird_url='http://localhost:8000/messagebird/',
         mandrill_key='good-mandrill-testing-key',

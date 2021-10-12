@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     admin_basic_auth_password = 'testing'
     test_output: Path = None
 
+    delete_old_emails: bool = False
+
     # messagebird
     messagebird_key = ''
     messagebird_url = 'https://rest.messagebird.com'
@@ -53,6 +55,7 @@ class Settings(BaseSettings):
             'pg_dsn': {'env': 'DATABASE_URL'},
             'redis_settings': {'env': ['REDISCLOUD_URL', 'REDIS_URL']},
             'sentry_dsn': {'env': 'SENTRY_DSN'},
+            'delete_old_emails': {'env': 'DELETE_OLD_EMAILS'},
             'release': {'env': ['COMMIT', 'RELEASE', 'HEROKU_SLUG_COMMIT']},
             'messagebird_key': {'env': 'MESSAGEBIRD_KEY'},
             'mandrill_key': {'env': 'MANDRILL_KEY'},
