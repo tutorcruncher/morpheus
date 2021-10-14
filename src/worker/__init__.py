@@ -50,7 +50,7 @@ worker_settings = dict(
     on_shutdown=shutdown,
     cron_jobs=[
         cron(update_aggregation_view, minute=12, timeout=1800),
-        cron(delete_old_emails, minute={i * 5 for i in range(0, 12)}),
+        cron(delete_old_emails, minute={45}),
     ],
 )
 

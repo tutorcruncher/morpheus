@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     test_output: Path = None
 
     delete_old_emails: bool = False
+    update_aggregation_view: bool = False
     pg_server_settings: dict = {}
 
     # messagebird
@@ -57,6 +58,7 @@ class Settings(BaseSettings):
             'redis_settings': {'env': ['REDISCLOUD_URL', 'REDIS_URL']},
             'sentry_dsn': {'env': 'SENTRY_DSN'},
             'delete_old_emails': {'env': 'DELETE_OLD_EMAILS'},
+            'update_aggregation_view': {'env': 'UPDATE_AGGREGATION_VIEW'},
             'release': {'env': ['COMMIT', 'RELEASE', 'HEROKU_SLUG_COMMIT']},
             'messagebird_key': {'env': 'MESSAGEBIRD_KEY'},
             'mandrill_key': {'env': 'MANDRILL_KEY'},

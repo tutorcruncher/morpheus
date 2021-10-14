@@ -788,11 +788,17 @@ def test_delete_old_messages(cli: TestClient, send_email, sync_db: SyncDb, worke
         send_email()
 
     m = sync_db.fetch('select * from messages')[0]
-    sync_db.execute('update messages set send_ts = $1 where id = $2', datetime.today() - timedelta(days=366), m['id'])
+    sync_db.execute(
+        'update message_groups set created_ts = $1 where id = $2', datetime.today() - timedelta(days=366), m['group_id']
+    )
     m = sync_db.fetch('select * from messages')[1]
-    sync_db.execute('update messages set send_ts = $1 where id = $2', datetime.today() - timedelta(days=200), m['id'])
+    sync_db.execute(
+        'update message_groups set created_ts = $1 where id = $2', datetime.today() - timedelta(days=200), m['group_id']
+    )
     m = sync_db.fetch('select * from messages')[2]
-    sync_db.execute('update messages set send_ts = $1 where id = $2', datetime.today() + timedelta(days=1), m['id'])
+    sync_db.execute(
+        'update message_groups set created_ts = $1 where id = $2', datetime.today() + timedelta(days=1), m['group_id']
+    )
 
     assert sync_db.fetchval('select count(*) from messages') == 3
     loop.run_until_complete(delete_old_emails({'pg': sync_db}))
