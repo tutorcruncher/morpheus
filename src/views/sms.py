@@ -30,11 +30,12 @@ async def sms_billing_view(
         raise HttpNotFound('company not found')
     start = datetime.strptime(data['start'], '%Y-%m-%d')
     end = datetime.strptime(data['end'], '%Y-%m-%d')
+    spend = await get_sms_spend(conn, company_id=company_id, method=method, start=start, end=end)
     return {
         'company': company_code,
         'start': start.strftime('%Y-%m-%d'),
         'end': end.strftime('%Y-%m-%d'),
-        'spend': await get_sms_spend(conn, company_id=company_id, method=method, start=start, end=end),
+        'spend': spend or 0,
     }
 
 
