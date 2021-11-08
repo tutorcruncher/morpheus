@@ -12,7 +12,6 @@ from src.worker.webhooks import store_click, update_mandrill_webhooks, update_me
 
 
 async def startup(ctx):
-    await glove.startup(run_migrations=False)
     settings = glove.settings
     glove.redis = ctx.get('redis') or await arq.create_pool(settings.redis_settings)
     ctx.update(
