@@ -54,6 +54,34 @@ def test_user_list(cli, settings, send_email, sync_db: SyncDb):
     }
 
 
+def test_user_list_no_ext(cli, settings, send_email, sync_db: SyncDb):
+    send_email(
+        uid=str(uuid.uuid4()),
+        company_code='testing',
+        recipients=[{'address': '3@t.com'}],
+        subject_template='test message',
+    )
+    sync_db.execute_b('update messages set external_id=null')
+    r = cli.get(modify_url('/messages/email-test/', settings, 'testing'))
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data['count'] == 1
+    first_item = data['items'][0]
+    assert first_item == {
+        'id': sync_db.fetchrow_b('select * from messages')['id'],
+        'external_id': None,
+        'to_ext_link': None,
+        'to_address': '3@t.com',
+        'to_dst': '<3@t.com>',
+        'to_name': ' ',
+        'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+        'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+        'status': 'Sent',
+        'method': 'email-test',
+        'subject': 'test message',
+    }
+
+
 def test_user_search(cli, settings, send_email):
     msgs = {}
     for i, subject in enumerate(['apple', 'banana', 'cherry', 'durian']):

@@ -24,7 +24,7 @@ class MessageGroup(BaseModel):
 
 class Message(BaseModel):
     id: PositiveInt
-    external_id: str
+    external_id: Optional[str] = ''
     group_id: Optional[PositiveInt]
     company_id: Optional[PositiveInt]
 
