@@ -62,12 +62,30 @@ class SendEmail:
 
         headers = dict(self.m.headers, **self.recipient.headers)
 
+        if self.ctx['job_try'] >= 2:
+            main_logger.info('%s: rending email', self.group_id)
         email_info = await self._render_email(context, headers)
+        if self.ctx['job_try'] >= 2:
+            main_logger.info('%s: finished rending email', self.group_id)
         if not email_info:
             return
 
+        if self.ctx['job_try'] >= 2:
+            main_logger.info(
+                '%s: generating %d PDF attachments and %d other attachments',
+                self.group_id,
+                len(self.recipient.pdf_attachments),
+                len(self.recipient.attachments),
+            )
         attachments = [a async for a in self._generate_base64_pdf(self.recipient.pdf_attachments)]
         attachments += [a async for a in self._generate_base64(self.recipient.attachments)]
+        if self.ctx['job_try'] >= 2:
+            main_logger.info(
+                '%s: finished generating all attachments',
+                self.group_id,
+                len(self.recipient.pdf_attachments),
+                len(self.recipient.attachments),
+            )
 
         if self.m.method == EmailSendMethod.email_mandrill:
             if self.recipient.address.endswith('@example.com'):
@@ -106,7 +124,11 @@ class SendEmail:
         job_try = self.ctx['job_try']
         defer = email_retrying[job_try - 1]
         try:
+            if job_try >= 2:
+                main_logger.info('%s: sending data to mandrill', self.group_id)
             r = await self.ctx['mandrill'].post('messages/send.json', **data)
+            if job_try >= 2:
+                main_logger.info('%s: finished sending data to mandrill', self.group_id)
         except (ConnectError, TimeoutError) as e:
             main_logger.info('client connection error group_id=%s job_try=%s defer=%ss', self.group_id, job_try, defer)
             raise Retry(defer=defer) from e
