@@ -1,7 +1,6 @@
 import arq
 from arq import cron, run_worker
 from foxglove import glove
-from pydf import AsyncPydf
 
 from src.ext import Mandrill, MessageBird
 from src.settings import Settings
@@ -19,7 +18,6 @@ async def startup(ctx):
         sms_click_url=f'{settings.click_host_name}/l',
         mandrill=Mandrill(settings=settings),
         messagebird=MessageBird(settings=settings),
-        pydf=AsyncPydf(),
     )
     await glove.startup(run_migrations=False)
 

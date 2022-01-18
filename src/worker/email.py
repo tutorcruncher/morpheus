@@ -12,6 +12,7 @@ from foxglove import glove
 from httpx import ConnectError
 from itertools import chain
 from pathlib import Path
+from pydf import generate_pdf
 from typing import List, Optional
 
 from src.ext import ApiError
@@ -206,7 +207,7 @@ class SendEmail:
         for a in pdf_attachments:
             if a.html:
                 try:
-                    pdf_content = await self.ctx['pydf'].generate_pdf(a.html, **kwargs)
+                    pdf_content = generate_pdf(a.html, **kwargs)
                 except RuntimeError as e:
                     main_logger.warning('error generating pdf, data: %s', e)
                 else:
