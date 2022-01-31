@@ -81,12 +81,7 @@ class SendEmail:
         attachments = [a async for a in self._generate_base64_pdf(self.recipient.pdf_attachments)]
         attachments += [a async for a in self._generate_base64(self.recipient.attachments)]
         if self.ctx['job_try'] >= 2:
-            main_logger.info(
-                '%s: finished generating all attachments',
-                self.group_id,
-                len(self.recipient.pdf_attachments),
-                len(self.recipient.attachments),
-            )
+            main_logger.info('%s: finished generating all attachments', self.group_id)
 
         if self.m.method == EmailSendMethod.email_mandrill:
             if self.recipient.address.endswith('@example.com'):
