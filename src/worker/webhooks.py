@@ -38,11 +38,11 @@ async def update_mandrill_webhooks(ctx, events):
 
 async def store_click(ctx, *, link_id, ip, ts, user_agent):
     cache_key = f'click-{link_id}-{ip}'
-    with await ctx['redis'] as redis:
-        v = await redis.incr(cache_key)
-        if v > 1:
-            return 'recently_clicked'
-        await redis.expire(cache_key, 60)
+    redis = ctx['redis']
+    v = await redis.incr(cache_key)
+    if v > 1:
+        return 'recently_clicked'
+    await redis.expire(cache_key, 60)
 
     url, message_id = await glove.pg.fetchrow_b(
         'select url, message_id from links where :where', where=V('id') == link_id
@@ -70,13 +70,13 @@ async def store_click(ctx, *, link_id, ip, ts, user_agent):
 async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, log_each=True) -> UpdateStatus:
     h = hashlib.md5(f'{m.message_id}-{to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
     ref = f'event-{h.hexdigest()}'
-    with await ctx['redis'] as redis:
-        v = await redis.incr(ref)
-        if v > 1:
-            if log_each:
-                main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
-            return UpdateStatus.duplicate
-        await redis.expire(ref, 86400)
+    redis = ctx['redis']
+    v = await redis.incr(ref)
+    if v > 1:
+        if log_each:
+            main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
+        return UpdateStatus.duplicate
+    await redis.expire(ref, 86400)
 
     message_id = await glove.pg.fetchval_b(
         'select id from messages where :where', where=(V('external_id') == m.message_id) & (V('method') == send_method)

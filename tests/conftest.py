@@ -12,8 +12,7 @@ from foxglove.db.helpers import DummyPgPool, SyncDb
 from foxglove.test_server import create_dummy_server
 from httpx import URL, AsyncClient
 from pathlib import Path
-from starlette.testclient import TestClient
-from typing import Any, Callable
+from foxglove.testing import TestClient
 
 from src.schemas.messages import EmailSendModel, SendMethod
 from src.settings import Settings
@@ -30,7 +29,6 @@ def anyio_backend():
 @pytest.fixture(name='loop')
 async def fix_loop():
     return asyncio.get_event_loop()
-    # return event_loop
 
 
 DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
@@ -59,12 +57,6 @@ async def fix_settings(tmpdir):
 
     yield settings
     glove._settings = None
-
-
-#
-# @pytest.fixture(name='await_')
-# def fix_await(loop):
-#     return loop.run_until_complete
 
 
 @pytest.fixture(name='raw_conn')
@@ -126,15 +118,15 @@ class CustomAsyncClient(AsyncClient):
 
 
 @pytest.fixture(name='dummy_server')
-def _fix_dummy_server(loop, settings):
+async def _fix_dummy_server(loop, settings):
     ctx = {'mandrill_subaccounts': {}}
-    ds = loop.run_until_complete(create_dummy_server(loop, extra_routes=dummy_server.routes, extra_context=ctx))
+    ds = await create_dummy_server(loop, extra_routes=dummy_server.routes, extra_context=ctx)
 
     custom_client = CustomAsyncClient(settings=settings, local_server=ds.server_name)
     glove._http = custom_client
     yield ds
 
-    loop.run_until_complete(ds.stop())
+    await ds.stop()
 
 
 class Worker4Testing(Worker):
@@ -151,11 +143,8 @@ class Worker4Testing(Worker):
 async def fix_glove(db_conn):
     glove.pg = db_conn
 
-    async def start():
-        await glove.startup(run_migrations=False)
-        await glove.redis.flushdb()
-
-    await start()
+    await glove.startup(run_migrations=False)
+    await glove.redis.flushdb()
 
     yield glove
 

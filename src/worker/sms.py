@@ -160,44 +160,46 @@ class SendSMS:
             if not next((1 for g in prices if g['mcc'] == '0'), None):
                 main_logger.error('no default messagebird pricing with mcc "0"', extra={'prices': prices})
             prices = {g['mcc']: f'{float(g["price"]):0.5f}' for g in prices}
-            await asyncio.gather(redis.hmset_dict(rates_key, prices), redis.expire(rates_key, ONE_DAY))
-        rate = await redis.hget(rates_key, mcc, encoding='utf8')
+            async with redis.pipeline() as pipe:
+                await pipe.hset(rates_key, mapping=prices).expire(rates_key, ONE_DAY).execute()
+
+        rate = await redis.hget(rates_key, mcc)
         if not rate:
             main_logger.warning('no rate found for mcc: "%s", using default', mcc)
-            rate = await redis.hget(rates_key, '0', encoding='utf8')
+            rate = await redis.hget(rates_key, '0')
         assert rate, f'no rate found for mcc: {mcc}'
         return float(rate)
 
     async def _messagebird_get_number_cost(self, number: Number):
         cc_mcc_key = f'messagebird-cc:{number.country_code}'
-        with await self.ctx['redis'] as redis:
-            mcc = await redis.get(cc_mcc_key)
-            if mcc is None:
-                main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
-                api_number = number.number.replace('+', '')
-                await self.messagebird.post(f'lookup/{api_number}/hlr')
-                network, hlr = None, None
-                for i in range(30):
-                    r = await self.messagebird.get(f'lookup/{api_number}')
-                    data = r.json()
-                    hlr = data.get('hlr')
-                    if not hlr:
-                        continue
-                    network = hlr.get('network')
-                    if not network:
-                        continue
-                    elif hlr['status'] == 'active':
-                        main_logger.info(
-                            'found result for %s after %d attempts %s', number.number, i, json.dumps(data, indent=2)
-                        )
-                        break
-                    await asyncio.sleep(1)
-                if not hlr or not network:
-                    main_logger.warning('No HLR result found for %s after 30 attempts', number.number, extra=data)
-                    return
-                mcc = str(network)[:3]
-                await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
-            return await self._messagebird_get_mcc_cost(redis, mcc)
+        redis = self.ctx['redis']
+        mcc = await redis.get(cc_mcc_key)
+        if mcc is None:
+            main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
+            api_number = number.number.replace('+', '')
+            await self.messagebird.post(f'lookup/{api_number}/hlr')
+            network, hlr = None, None
+            for i in range(30):
+                r = await self.messagebird.get(f'lookup/{api_number}')
+                data = r.json()
+                hlr = data.get('hlr')
+                if not hlr:
+                    continue
+                network = hlr.get('network')
+                if not network:
+                    continue
+                elif hlr['status'] == 'active':
+                    main_logger.info(
+                        'found result for %s after %d attempts %s', number.number, i, json.dumps(data, indent=2)
+                    )
+                    break
+                await asyncio.sleep(1)
+            if not hlr or not network:
+                main_logger.warning('No HLR result found for %s after 30 attempts', number.number, extra=data)
+                return
+            mcc = str(network)[:3]
+            await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
+        return await self._messagebird_get_mcc_cost(redis, mcc)
 
     async def _messagebird_send_sms(self, sms_data: SmsData):
         try:
