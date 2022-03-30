@@ -6,7 +6,7 @@ from buildpg.clauses import Select
 from fastapi import APIRouter, Depends, Query
 from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpNotFound
-from foxglove.route_class import KeepBodyAPIRoute
+from foxglove.route_class import SafeAPIRoute
 from markupsafe import Markup
 from starlette.requests import Request
 from typing import List, Optional
@@ -17,7 +17,7 @@ from src.schemas.session import UserSession
 from src.views.sms import month_interval
 from src.views.utils import get_or_create_company, get_sms_spend
 
-app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(UserSession)])
+app = APIRouter(route_class=SafeAPIRoute, dependencies=[Depends(UserSession)])
 
 
 LIST_PAGE_SIZE = 100

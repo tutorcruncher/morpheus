@@ -452,7 +452,7 @@ def test_invalid_signature(cli, settings):
     assert {'message': 'Invalid token'} == r.json()
 
 
-def test_invalid_expiry(cli, settings):
+async def test_invalid_expiry(cli, settings):
     args = dict(company='whatever', expires='xxx')
     body = '{company}:{expires}'.format(**args).encode()
     args['signature'] = hmac.new(settings.user_auth_key, body, hashlib.sha256).hexdigest()

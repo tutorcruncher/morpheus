@@ -4,7 +4,7 @@ from buildpg.asyncpg import BuildPgConnection
 from fastapi import APIRouter, Depends, Header
 from foxglove import glove
 from foxglove.db.middleware import get_db
-from foxglove.route_class import KeepBodyAPIRoute
+from foxglove.route_class import SafeAPIRoute
 from html import escape
 from jinja2 import Template
 from pathlib import Path
@@ -14,7 +14,7 @@ from time import time
 from typing import Optional
 
 logger = logging.getLogger('views.common')
-app = APIRouter(route_class=KeepBodyAPIRoute)
+app = APIRouter(route_class=SafeAPIRoute)
 templates_dir = Path('src/templates/')
 
 

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from foxglove import glove
 from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpBadRequest, HttpConflict, HttpNotFound
-from foxglove.route_class import KeepBodyAPIRoute
+from foxglove.route_class import SafeAPIRoute
 from httpx import Response
 from starlette.responses import JSONResponse
 from typing import Optional
@@ -14,7 +14,7 @@ from src.schemas.messages import SendMethod, SubaccountModel
 from src.utils import AdminAuth
 
 logger = logging.getLogger('views.subaccounts')
-app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
+app = APIRouter(route_class=SafeAPIRoute, dependencies=[Depends(AdminAuth)])
 
 
 @app.post('/create-subaccount/{method}/')

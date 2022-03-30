@@ -2,7 +2,6 @@ import base64
 import pytest
 from foxglove.db.helpers import SyncDb
 from foxglove.test_server import DummyServer
-from foxglove.testing import Client
 from starlette.testclient import TestClient
 
 from src.ext import ApiError, ApiSession
@@ -38,7 +37,7 @@ def test_405(cli: TestClient):
     assert r.status_code == 405, r.text
 
 
-def test_create_subaccount_new_few_sent(cli: Client, sync_db: SyncDb, dummy_server: DummyServer):
+def test_create_subaccount_new_few_sent(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'foobar'}
     r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text

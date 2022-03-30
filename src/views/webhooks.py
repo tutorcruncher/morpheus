@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Form, Header
 from foxglove import glove
 from foxglove.exceptions import HttpBadRequest, HttpForbidden, HttpUnprocessableEntity
-from foxglove.route_class import KeepBodyAPIRoute
+from foxglove.route_class import SafeAPIRoute
 from pydantic import ValidationError
 from starlette.requests import Request
 
@@ -13,7 +13,7 @@ from src.schemas.messages import SendMethod
 from src.schemas.webhooks import MandrillSingleWebhook, MessageBirdWebHook
 from src.views.common import index
 
-app = APIRouter(route_class=KeepBodyAPIRoute)
+app = APIRouter(route_class=SafeAPIRoute)
 
 
 @app.post('/test/')

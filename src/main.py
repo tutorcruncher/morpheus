@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from foxglove import exceptions, glove
 from foxglove.db import PgMiddleware
 from foxglove.middleware import ErrorMiddleware
-from foxglove.route_class import KeepBodyAPIRoute
+from foxglove.route_class import SafeAPIRoute
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
@@ -39,7 +39,7 @@ app = FastAPI(
 app.add_middleware(ErrorMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=['*'])
 app.add_middleware(PgMiddleware)
-app.router.route_class = KeepBodyAPIRoute
+app.router.route_class = SafeAPIRoute
 
 
 @app.exception_handler(exceptions.HttpMessageError)

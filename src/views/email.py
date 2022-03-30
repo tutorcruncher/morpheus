@@ -5,13 +5,13 @@ from fastapi import APIRouter, Body, Depends
 from foxglove import glove
 from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpConflict
-from foxglove.route_class import KeepBodyAPIRoute
+from foxglove.route_class import SafeAPIRoute
 from starlette.responses import JSONResponse
 
 from src.schemas.messages import EmailSendModel
 
 logger = logging.getLogger('views.email')
-app = APIRouter(route_class=KeepBodyAPIRoute)
+app = APIRouter(route_class=SafeAPIRoute)
 
 
 @app.post('/send/email/')

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends
 from foxglove import glove
 from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpConflict, HttpNotFound
-from foxglove.route_class import KeepBodyAPIRoute
+from foxglove.route_class import SafeAPIRoute
 from starlette.responses import JSONResponse
 from typing import Tuple
 
@@ -18,7 +18,7 @@ from src.views.utils import get_or_create_company, get_sms_spend
 from src.worker.sms import validate_number
 
 logger = logging.getLogger('views.sms')
-app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
+app = APIRouter(route_class=SafeAPIRoute, dependencies=[Depends(AdminAuth)])
 
 
 @app.get('/billing/{method}/{company_code}/')

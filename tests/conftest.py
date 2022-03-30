@@ -22,21 +22,22 @@ from src.worker import shutdown, startup, worker_settings
 from . import dummy_server
 
 
+@pytest.fixture(autouse=True)
+def anyio_backend():
+    return 'asyncio'
+
+
 @pytest.fixture(name='loop')
-def fix_loop(settings):
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop
+async def fix_loop():
+    return asyncio.get_event_loop()
+    # return event_loop
 
 
 DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
 
 
 @pytest.fixture(name='settings')
-def fix_settings(tmpdir):
+async def fix_settings(tmpdir):
     settings = Settings(
         dev_mode=False,
         test_mode=True,
@@ -60,37 +61,38 @@ def fix_settings(tmpdir):
     glove._settings = None
 
 
-@pytest.fixture(name='await_')
-def fix_await(loop):
-    return loop.run_until_complete
+#
+# @pytest.fixture(name='await_')
+# def fix_await(loop):
+#     return loop.run_until_complete
 
 
 @pytest.fixture(name='raw_conn')
-def fix_raw_conn(settings, await_: Callable):
-    await_(prepare_database(settings, overwrite_existing=True, run_migrations=False))
+async def fix_raw_conn(settings):
+    await prepare_database(settings, overwrite_existing=True, run_migrations=False)
 
-    conn = await_(asyncpg.connect_b(dsn=settings.pg_dsn, server_settings={'jit': 'off'}))
+    conn = await asyncpg.connect_b(dsn=settings.pg_dsn, server_settings={'jit': 'off'})
 
     yield conn
 
-    await_(conn.close())
+    await conn.close()
 
 
 @pytest.fixture(name='db_conn')
-def fix_db_conn(settings, raw_conn: BuildPgConnection, await_: Callable):
+async def fix_db_conn(settings, raw_conn: BuildPgConnection):
     async def start():
         tr_ = raw_conn.transaction()
         await tr_.start()
         return tr_
 
-    tr = await_(start())
+    tr = await start()
     yield DummyPgPool(raw_conn)
 
     async def end():
         if not raw_conn.is_closed():
             await tr.rollback()
 
-    await_(end())
+    await end()
 
 
 @pytest.fixture(name='sync_db')
@@ -146,24 +148,24 @@ class Worker4Testing(Worker):
 
 
 @pytest.fixture(name='glove')
-def fix_glove(db_conn, await_: Callable[..., Any]):
+async def fix_glove(db_conn):
     glove.pg = db_conn
 
     async def start():
         await glove.startup(run_migrations=False)
         await glove.redis.flushdb()
 
-    await_(start())
+    await start()
 
     yield glove
 
-    await_(glove.shutdown())
+    await glove.shutdown()
 
 
 @pytest.fixture(name='worker_ctx')
-def _fix_worker_ctx(loop, settings):
+async def _fix_worker_ctx(settings):
     ctx = dict(settings=settings)
-    loop.run_until_complete(startup(ctx))
+    await startup(ctx)
     yield ctx
 
 
