@@ -51,6 +51,7 @@ def test_user_list(cli, settings, send_email, sync_db: SyncDb):
         'status': 'Sent',
         'method': 'email-test',
         'subject': 'test message',
+        'cost': 0,
     }
 
 
@@ -79,6 +80,7 @@ def test_user_list_no_ext(cli, settings, send_email, sync_db: SyncDb):
         'status': 'Sent',
         'method': 'email-test',
         'subject': 'test message',
+        'cost': 0,
     }
 
 
@@ -293,6 +295,7 @@ def test_message_details(cli, settings, send_email, sync_db: SyncDb, worker, loo
         'body': '<body>\nthis is a test\n</body>',
         'events': [{'status': 'Opened', 'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*')}],
         'attachments': [],
+        'cost': 0,
     }
 
 
@@ -336,6 +339,7 @@ def test_message_details_links(cli, settings, send_email, sync_db: SyncDb, worke
         'method': 'email-test',
         'events': [{'status': 'Opened', 'datetime': RegexStr(r'\d{4}-\d{2}-\d{2}.*')}],
         'attachments': [['/attachment-doc/123/', 'testing.pdf'], ['#', 'different.pdf']],
+        'cost': 0,
     }
 
 
@@ -422,6 +426,7 @@ def test_user_sms_list(cli, settings, send_sms, sync_db: SyncDb):
                 'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'status': 'Sent',
                 'method': 'sms-test',
+                'cost': 0.012,
             },
         ],
         'count': 1,
