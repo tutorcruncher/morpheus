@@ -71,6 +71,7 @@ class Message(BaseModel):
             'update_ts': self.update_ts,
             'status': self.get_status_display(),
             'method': self.method,
+            'cost': self.cost,
         }
 
     def get_attachments(self):
