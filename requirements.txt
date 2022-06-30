@@ -18,5 +18,5 @@ requests==2.26.0
 starlette==0.14.2
 tqdm==4.62.0
 ua-parser==0.10.0
-uvicorn==0.14.0
+uvicorn==0.18.2
 ipython==8.4.0
