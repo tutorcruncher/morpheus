@@ -1,7 +1,7 @@
 aiohttp==3.7.4
 black==21.5b2
 coverage==5.5
-docutils==0.17.1
+docutils==0.18.1
 flake8==3.9.2
 isort==5.8.0
 pycodestyle==2.7.0
