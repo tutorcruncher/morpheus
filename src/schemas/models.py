@@ -40,7 +40,7 @@ class Message(BaseModel):
     subject: Optional[str] = ''
     body: Optional[str] = ''
     attachments: Optional[List[str]] = []
-    cost: float = 0
+    cost: Optional[float] = 0
     extra: Json
     vector: Optional[str] = ''
 
@@ -71,7 +71,7 @@ class Message(BaseModel):
             'update_ts': self.update_ts,
             'status': self.get_status_display(),
             'method': self.method,
-            'cost': self.cost,
+            'cost': self.cost or 0,
         }
 
     def get_attachments(self):

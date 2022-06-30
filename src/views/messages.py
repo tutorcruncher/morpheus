@@ -37,6 +37,7 @@ MESSAGE_SELECT = Select(
         V('status'),
         V('method'),
         V('attachments'),
+        V('cost'),
     ]
 )
 
