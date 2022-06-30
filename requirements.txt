@@ -11,7 +11,7 @@ libsass==0.21.0
 misaka==2.1.1
 MarkupSafe==2.0.1
 phonenumbers==8.12.28
-pydantic[email]==1.8.2
+pydantic[email]==1.9.1
 python-multipart==0.0.5
 python-pdf==0.39
 requests==2.26.0
