@@ -52,6 +52,10 @@ class Message(BaseModel):
             'click': 'Opened & clicked on',
             'soft_bounce': 'Bounced (retried)',
             'hard_bounce': 'Bounced',
+            'delivered': 'Delivered',
+            'delivery_failed': 'Delivery failed',
+            'sent': 'Sent',
+            'expired': 'Expired',
         }.get(v, v)
 
     def get_status_display(self):
