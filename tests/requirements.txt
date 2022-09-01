@@ -1,6 +1,6 @@
 aiohttp==3.8.1
 black==22.6.0
-coverage==6.4.2
+coverage==6.4.4
 docutils==0.19
 flake8==5.0.4
 isort==5.10.1
