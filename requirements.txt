@@ -15,7 +15,7 @@ pydantic[email]==1.10.1
 python-multipart==0.0.5
 python-pdf==0.39
 requests==2.28.1
-starlette==0.14.2
+starlette==0.20.4
 tqdm==4.64.0
 ua-parser==0.16.1
 uvicorn==0.18.3
