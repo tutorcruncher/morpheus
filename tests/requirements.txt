@@ -2,7 +2,7 @@ aiohttp==3.8.3
 black==22.10.0
 coverage==6.5.0
 docutils==0.19
-flake8==5.0.4
+flake8==6.0.0
 isort==5.10.1
 pycodestyle==2.9.1
 pyflakes==2.5.0
