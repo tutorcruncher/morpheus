@@ -1,8 +1,10 @@
 from setuptools import setup
 
+from src.version import VERSION
+
 setup(
     name='morpheus-mail',
-    version='0.1.0',
+    version=str(VERSION),
     description='Email rendering engine from morpheus',
     long_description="""
 Note: this only installs the rendering logic for `morpheus <https://github.com/tutorcruncher/morpheus>` \
