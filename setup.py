@@ -33,8 +33,8 @@ Everything else is excluded to avoid installing unnecessary packages.
     author_email='s@muelcolvin.com',
     url='https://github.com/tutorcruncher/morpheus',
     license='MIT',
-    packages=['morpheus.render'],
-    package_dir={'morpheus.render': 'morpheus/app/render'},
+    packages=['src.render'],
+    package_dir={'src.render': 'src/render'},
     python_requires='>=3.6',
     zip_safe=True,
     install_requires=[
