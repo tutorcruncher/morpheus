@@ -28,7 +28,7 @@ def test_send_message(cli, tmpdir, worker, loop):
         "to: Number(number='+447891123856', country_code='44', "
         "number_formatted='+44 7891 123856', descr=None, is_mobile=True)"
     ) in msg_file
-    assert f'\nfrom_name: {settings.tutorcruncher_number}\n' in msg_file
+    assert f'\nfrom_name: {settings.gb_send_number}\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
     assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
 
@@ -325,7 +325,7 @@ def test_link_shortening(cli, tmpdir, sync_db: SyncDb, worker, loop):
     f = '69eb85e8-1504-40aa-94ff-75bb65fd8d75-447891123856.txt'
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
-    assert f'\nfrom_name: {settings.tutorcruncher_number}\n' in msg_file
+    assert f'\nfrom_name: {settings.gb_send_number}\n' in msg_file
     assert '\nmessage:\nthis is a message click.example.com/l' in msg_file
     token = re.search('message click.example.com/l(.+?)\n', msg_file).groups()[0]
     assert len(token) == 12
