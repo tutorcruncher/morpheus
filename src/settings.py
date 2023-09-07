@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # https://support.messagebird.com/hc/en-us/articles/208747865-United-States
     us_send_number = '15744445663'
     canada_send_number = '12048170659'
-    tc_registered_originator = 'TC SMS'
+    tc_registered_originator = 'TtrCrnchr'
 
     @validator('pg_dsn')
     def heroku_ready_pg_dsn(cls, v):
