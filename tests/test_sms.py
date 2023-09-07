@@ -59,6 +59,32 @@ def test_send_message_usa(cli, settings, tmpdir, worker, loop):
     assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
 
 
+def test_send_message_canada(cli, settings, tmpdir, worker, loop):
+    data = {
+        'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d72',
+        'company_code': 'foobar',
+        'country_code': 'CA',
+        'from_name': 'foobar send',
+        'method': 'sms-test',
+        'main_template': 'this is a message {{ foo }}',
+        'recipients': [{'number': '+1 818 337 3095', 'context': {'foo': 'bar'}}],
+    }
+    r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == 1
+    assert len(tmpdir.listdir()) == 1
+    f = '69eb85e8-1504-40aa-94ff-75bb65fd8d72-18183373095.txt'
+    assert str(tmpdir.listdir()[0]).endswith(f)
+    msg_file = tmpdir.join(f).read()
+    assert (
+        "to: Number(number='+18183373095', country_code='1', "
+        "number_formatted='+1 818-337-3095', descr=None, is_mobile=True)"
+    ) in msg_file
+    assert f'\nfrom_name: {settings.canada_send_number}\n' in msg_file
+    assert '\nmessage:\nthis is a message bar\n' in msg_file
+    assert '\nlength: SmsLength(length=21, parts=1)\n' in msg_file
+
+
 def test_validate_number(cli, tmpdir):
     data = {
         'country_code': 'US',
