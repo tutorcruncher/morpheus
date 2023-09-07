@@ -64,7 +64,12 @@ class SendSMS:
         self.m: SmsSendModel = m
         self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
         self.messagebird: MessageBird = ctx['messagebird']
-        self.from_name = self.settings.gb_send_number if self.m.country_code != 'US' else self.settings.us_send_number
+        if self.m.country_code == 'US':
+            self.from_name = self.settings.us_send_number
+        elif self.m.country_code == 'CA':
+            self.from_name = self.settings.canada_send_number
+        else:
+            self.from_name = self.settings.inbox_send_number
 
     async def run(self):
         sms_data = await self._sms_prep()
