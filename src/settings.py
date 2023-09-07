@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # Have to use a US number as the originator to send to the US
     # https://support.messagebird.com/hc/en-us/articles/208747865-United-States
     us_send_number = '15744445663'
-    originator = 'TC SMS'
+    tc_registered_originator = 'TC SMS'
 
     @validator('pg_dsn')
     def heroku_ready_pg_dsn(cls, v):
