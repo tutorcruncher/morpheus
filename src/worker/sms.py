@@ -69,7 +69,7 @@ class SendSMS:
         elif self.m.country_code == 'CA':
             self.from_name = self.settings.canada_send_number
         else:
-            self.from_name = self.settings.inbox_send_number
+            self.from_name = self.settings.tc_registered_originator
 
     async def run(self):
         sms_data = await self._sms_prep()
