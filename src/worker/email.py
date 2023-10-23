@@ -114,8 +114,8 @@ class SendEmail:
                 inline_css=True,
                 important=self.m.important,
                 attachments=attachments,
-                timeout_=15,
             ),
+            'timeout_': 15,
         }
         send_ts = utcnow()
         job_try = self.ctx['job_try']
