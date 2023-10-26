@@ -4,12 +4,14 @@ import json
 import logging
 import re
 from arq import Retry
+from asyncio import CancelledError
 from buildpg import MultipleValues, Values
 from chevron import ChevronError
 from concurrent.futures import TimeoutError
 from datetime import datetime, timezone
 from foxglove import glove
-from httpx import ConnectError
+from httpcore import ReadTimeout as HttpReadTimeout
+from httpx import ConnectError, ReadTimeout
 from itertools import chain
 from pathlib import Path
 from pydf import generate_pdf
@@ -122,11 +124,11 @@ class SendEmail:
         defer = email_retrying[job_try - 1]
         try:
             if job_try >= 2:
-                main_logger.info('%s: sending data to mandrill', self.group_id)
+                main_logger.info('%s: ', self.group_id)
             r = await self.ctx['mandrill'].post('messages/send.json', **data)
             if job_try >= 2:
                 main_logger.info('%s: finished sending data to mandrill', self.group_id)
-        except (ConnectError, TimeoutError) as e:
+        except (ConnectError, TimeoutError, ReadTimeout, HttpReadTimeout, CancelledError) as e:
             main_logger.info('client connection error group_id=%s job_try=%s defer=%ss', self.group_id, job_try, defer)
             raise Retry(defer=defer) from e
         except ApiError as e:
