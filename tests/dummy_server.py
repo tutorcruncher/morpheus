@@ -86,7 +86,15 @@ async def mandrill_webhook_add(request):
 
 async def messagebird_hlr_post(request):
     assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    return Response(status=201)
+    data = await request.json()
+    return json_response(
+        status=201,
+        data={
+            'id': data['json']['msisdn'],
+            'href': 'https://example.com/messagebird/hlr/testing1234',
+            'msisdn': data['json']['msisdn'],
+        },
+    )
 
 
 async def messagebird_lookup(request):
@@ -96,9 +104,9 @@ async def messagebird_lookup(request):
     elif '447777777777' in request.path:
         request_number = len(request.app['log'])
         if request_number == 2:
-            return json_response({'hlr': {'status': 'active', 'network': 'o2'}})
+            return json_response({'status': 'active', 'network': 'o2'})
         return json_response({})
-    return json_response({'hlr': {'status': 'active', 'network': 23430}})
+    return json_response({'status': 'active', 'network': 23430})
 
 
 async def messagebird_send(request):
@@ -128,8 +136,8 @@ routes = [
     web.get('/mandrill/subaccounts/info.json', mandrill_sub_account_info),
     web.get('/mandrill/webhooks/list.json', mandrill_webhook_list),
     web.post('/mandrill/webhooks/add.json', mandrill_webhook_add),
-    web.post('/messagebird/lookup/{number}/hlr', messagebird_hlr_post),
-    web.get('/messagebird/lookup/{number}', messagebird_lookup),
+    web.post('/messagebird/hlr', messagebird_hlr_post),
+    web.get('/messagebird/hlr/{id}', messagebird_lookup),
     web.post('/messagebird/messages', messagebird_send),
     web.get('/messagebird/pricing/sms/outbound', messagebird_pricing),
 ]

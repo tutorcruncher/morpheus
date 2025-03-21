@@ -216,8 +216,8 @@ def test_send_messagebird(cli, tmpdir, dummy_server, worker, loop):
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
     assert [
-        'POST /messagebird/lookup/447801234567/hlr > 201',
-        'GET /messagebird/lookup/447801234567 > 200',
+        'POST /messagebird/hlr > 201',
+        'GET /messagebird/hlr/447801234567 > 200',
         'GET /messagebird/pricing/sms/outbound > 200',
         'POST /messagebird/messages > 201',
     ] == dummy_server.log
@@ -243,8 +243,8 @@ def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog, loop):
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
     assert [
-        'POST /messagebird/lookup/447888888888/hlr > 201',
-        *['GET /messagebird/lookup/447888888888 > 200' for _ in range(30)],
+        'POST /messagebird/hlr > 201',
+        *['GET /messagebird/hlr/447888888888 > 200' for _ in range(30)],
     ] == dummy_server.log
     dummy_server.log = []
     assert 'No HLR result found for +447888888888 after 30 attempts' in caplog.messages
@@ -263,20 +263,15 @@ def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog, loop)
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
     assert [
-        'POST /messagebird/lookup/447777777777/hlr > 201',
-        'GET /messagebird/lookup/447777777777 > 200',
-        'GET /messagebird/lookup/447777777777 > 200',
+        'POST /messagebird/hlr > 201',
+        'GET /messagebird/hlr/447777777777 > 200',
+        'GET /messagebird/hlr/447777777777 > 200',
         'GET /messagebird/pricing/sms/outbound > 200',
         'POST /messagebird/messages > 201',
     ] == dummy_server.log
     dummy_server.log = []
     assert (
-        """found result for +447777777777 after 1 attempts {
-  "hlr": {
-    "status": "active",
-    "network": "o2"
-  }
-}"""
+        """found result for +447777777777 after 1 attempts {\n  "status": "active",\n  "network": "o2"\n}"""
         in caplog.messages
     )
 

@@ -183,13 +183,13 @@ class SendSMS:
 
                 data = {'msisdn': api_number}
                 response = await self.messagebird.post('hlr', json=data)
-                hlr_data = await response.json()
+                hlr_data = response.json()
                 hlr_id = hlr_data.get('id')
 
                 network, hlr = None, None
                 for i in range(30):
                     r = await self.messagebird.get(f'hlr/{hlr_id}')
-                    hlr = await r.json()
+                    hlr = r.json()
                     if hlr.get('errors'):
                         continue
                     network = hlr.get('network')
@@ -197,12 +197,12 @@ class SendSMS:
                         continue
                     elif hlr['status'] == 'active':
                         main_logger.info(
-                            'found result for %s after %d attempts %s', number.number, i, json.dumps(data, indent=2)
+                            'found result for %s after %d attempts %s', number.number, i, json.dumps(hlr, indent=2)
                         )
                         break
                     await asyncio.sleep(1)
                 if not hlr or not network:
-                    main_logger.warning('No HLR result found for %s after 30 attempts', number.number, extra=data)
+                    main_logger.warning('No HLR result found for %s after 30 attempts', number.number, extra=hlr)
                     return
                 mcc = str(network)[:3]
                 await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
