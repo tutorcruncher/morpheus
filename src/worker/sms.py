@@ -180,13 +180,17 @@ class SendSMS:
             if mcc is None:
                 main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
                 api_number = number.number.replace('+', '')
-                await self.messagebird.post(f'lookup/{api_number}/hlr')
+
+                data = {'msisdn': api_number}
+                response = await self.messagebird.post('hlr', json=data)
+                hlr_data = await response.json()
+                hlr_id = hlr_data.get('id')
+
                 network, hlr = None, None
                 for i in range(30):
-                    r = await self.messagebird.get(f'lookup/{api_number}')
-                    data = r.json()
-                    hlr = data.get('hlr')
-                    if not hlr:
+                    r = await self.messagebird.get(f'hlr/{hlr_id}')
+                    hlr = await r.json()
+                    if hlr.get('errors'):
                         continue
                     network = hlr.get('network')
                     if not network:
