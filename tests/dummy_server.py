@@ -90,9 +90,9 @@ async def messagebird_hlr_post(request):
     return json_response(
         status=201,
         data={
-            'id': data['json']['msisdn'],
+            'id': data['msisdn'],
             'href': 'https://example.com/messagebird/hlr/testing1234',
-            'msisdn': data['json']['msisdn'],
+            'msisdn': data['msisdn'],
         },
     )
 
