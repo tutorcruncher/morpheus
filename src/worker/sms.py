@@ -182,7 +182,7 @@ class SendSMS:
                 api_number = number.number.replace('+', '')
 
                 data = {'msisdn': api_number}
-                response = await self.messagebird.post('hlr', json=data)
+                response = await self.messagebird.post('hlr', **data)
                 hlr_data = response.json()
                 hlr_id = hlr_data.get('id')
 

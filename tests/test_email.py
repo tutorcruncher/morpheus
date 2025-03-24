@@ -475,26 +475,26 @@ def test_invalid_mustache_body(send_email, sync_db: SyncDb):
     assert m['body'] == 'Error rendering email: unclosed tag at line 1'
 
 
-# def test_send_with_pdf(send_email, tmpdir, sync_db: SyncDb):
-#     message_id = send_email(
-#         recipients=[
-#             {
-#                 'address': 'foobar@testing.com',
-#                 'pdf_attachments': [
-#                     {'name': 'testing.pdf', 'html': '<h1>testing</h1>', 'id': 123},
-#                     {'name': 'different.pdf', 'html': '<h1>different</h1>'},
-#                 ],
-#             }
-#         ]
-#     )
-#     assert len(tmpdir.listdir()) == 1
-#     msg_file = tmpdir.join(f'{message_id}.txt').read()
-#     assert 'testing.pdf' in msg_file
-#
-#     attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
-#         'attachments'
-#     ]
-#     assert set(attachments) == {'123::testing.pdf', '::different.pdf'}
+def test_send_with_pdf(send_email, tmpdir, sync_db: SyncDb):
+    message_id = send_email(
+        recipients=[
+            {
+                'address': 'foobar@testing.com',
+                'pdf_attachments': [
+                    {'name': 'testing.pdf', 'html': '<h1>testing</h1>', 'id': 123},
+                    {'name': 'different.pdf', 'html': '<h1>different</h1>'},
+                ],
+            }
+        ]
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    assert 'testing.pdf' in msg_file
+
+    attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
+        'attachments'
+    ]
+    assert set(attachments) == {'123::testing.pdf', '::different.pdf'}
 
 
 def test_send_with_other_attachment(send_email, tmpdir, sync_db: SyncDb):
@@ -541,15 +541,15 @@ def test_send_with_other_attachment_pdf(send_email, tmpdir, sync_db: SyncDb):
     assert set(attachments) == {'::test_pdf.pdf', '::test_pdf_encoded.pdf'}
 
 
-# def test_pdf_not_unicode(send_email, tmpdir, cli):
-#     message_id = send_email(
-#         recipients=[
-#             {'address': 'foobar@testing.com', 'pdf_attachments': [{'name': 'testing.pdf', 'html': '<h1>binary</h1>'}]}
-#         ]
-#     )
-#     assert len(tmpdir.listdir()) == 1
-#     msg_file = tmpdir.join(f'{message_id}.txt').read()
-#     assert 'testing.pdf' in msg_file
+def test_pdf_not_unicode(send_email, tmpdir, cli):
+    message_id = send_email(
+        recipients=[
+            {'address': 'foobar@testing.com', 'pdf_attachments': [{'name': 'testing.pdf', 'html': '<h1>binary</h1>'}]}
+        ]
+    )
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(f'{message_id}.txt').read()
+    assert 'testing.pdf' in msg_file
 
 
 def test_pdf_empty(send_email, tmpdir, dummy_server):
