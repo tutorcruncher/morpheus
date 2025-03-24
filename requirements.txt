@@ -21,4 +21,3 @@ ua-parser==0.16.1
 uvicorn==0.20.0
 ipython==8.11.0
 py==1.11.0
-setuptools==77.0.3
