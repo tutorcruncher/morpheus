@@ -205,10 +205,6 @@ def send_email(cli, worker, loop):
         if len(data['recipients']) != 1:
             return NotImplemented
         else:
-            print('\n ----- HERE -----')
-            print(data["uid"], data["recipients"][0]["address"])
-            sub = re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
-            print(f'\n {sub}')
             return re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
 
     return _send_email
