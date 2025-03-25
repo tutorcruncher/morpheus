@@ -199,14 +199,16 @@ def send_email(cli, worker, loop):
             recipients=[{'address': 'foobar@testing.com'}],
         )
         data.update(**extra)
-        print(data)
         r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status_code == status_code
-        print(r.content.decode())
         worker.test_run()
         if len(data['recipients']) != 1:
             return NotImplemented
         else:
+            print('\n ----- HERE -----')
+            print(data["uid"], data["recipients"][0]["address"])
+            sub = re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
+            print(f'\n {sub}')
             return re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
 
     return _send_email
