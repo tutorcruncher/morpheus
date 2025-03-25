@@ -199,8 +199,10 @@ def send_email(cli, worker, loop):
             recipients=[{'address': 'foobar@testing.com'}],
         )
         data.update(**extra)
+        print(data)
         r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
         assert r.status_code == status_code
+        print(r.content.decode())
         worker.test_run()
         if len(data['recipients']) != 1:
             return NotImplemented
