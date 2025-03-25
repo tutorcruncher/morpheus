@@ -3,7 +3,6 @@ isort = isort -w 120
 
 PHONY: install
 install:
-	pip install -U setuptools pip
 	pip install -r requirements.txt
 	pip install -r tests/requirements.txt
 
