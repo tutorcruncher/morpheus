@@ -16,6 +16,7 @@ python-multipart==0.0.6
 python-pdf==0.39
 requests==2.28.2
 starlette==0.14.2
+sentry-sdk==1.16.0
 tqdm==4.64.1
 ua-parser==0.16.1
 uvicorn==0.20.0
