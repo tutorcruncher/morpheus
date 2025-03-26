@@ -20,7 +20,7 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from typing import Optional
 
-from src.ext import MessageBird
+from src.ext import ApiError, MessageBird
 from src.render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from src.schemas.messages import MessageStatus, SmsRecipientModel, SmsSendMethod, SmsSendModel
 from src.settings import Settings
@@ -188,7 +188,11 @@ class SendSMS:
 
                 network, hlr = None, None
                 for i in range(30):
-                    r = await self.messagebird.get(f'hlr/{hlr_id}')
+                    try:
+                        r = await self.messagebird.get(f'hlr/{hlr_id}')
+                    except ApiError:
+                        main_logger.info('Error retrieving HLR data for %s, attempt %d', number.number, i)
+                        continue
                     hlr = r.json()
                     if hlr.get('errors'):
                         continue
