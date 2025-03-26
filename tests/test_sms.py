@@ -250,6 +250,25 @@ def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog, loop):
     assert 'No HLR result found for +447888888888 after 30 attempts' in caplog.messages
 
 
+def test_messsagebird_no_hlr_found(cli, tmpdir, dummy_server, worker, caplog, loop):
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'method': 'sms-messagebird',
+        'main_template': 'this is a message',
+        'recipients': [{'number': '07877777777'}],
+    }
+    r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == 1
+    assert [
+        'POST /messagebird/hlr > 201',
+        *['GET /messagebird/hlr/447877777777 > 404' for _ in range(30)],
+    ] == dummy_server.log
+    dummy_server.log = []
+    assert 'No HLR result found for +447877777777 after 30 attempts' in caplog.messages
+
+
 def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog, loop):
     data = {
         'uid': str(uuid4()),

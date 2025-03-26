@@ -106,6 +106,8 @@ async def messagebird_lookup(request):
         if request_number == 2:
             return json_response({'status': 'active', 'network': 'o2'})
         return json_response({})
+    elif '447877777777' in request.path:
+        return web.Response(body="{'error': 'Test error', 'code': 20}", content_type='application/json', status=404)
     return json_response({'status': 'active', 'network': 23430})
 
 
