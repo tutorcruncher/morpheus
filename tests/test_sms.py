@@ -244,7 +244,7 @@ def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog, loop):
     assert worker.test_run() == 1
     assert [
         'POST /messagebird/hlr > 201',
-        *['GET /messagebird/hlr/447888888888 > 200' for _ in range(30)],
+        *['GET /messagebird/hlr/447888888888 > 200' for _ in range(60)],
     ] == dummy_server.log
     dummy_server.log = []
     assert 'No HLR result found for +447888888888 after 30 attempts' in caplog.messages
@@ -263,7 +263,7 @@ def test_messsagebird_no_hlr_found(cli, tmpdir, dummy_server, worker, caplog, lo
     assert worker.test_run() == 1
     assert [
         'POST /messagebird/hlr > 201',
-        *['GET /messagebird/hlr/447877777777 > 404' for _ in range(30)],
+        *['GET /messagebird/hlr/447877777777 > 404' for _ in range(60)],
     ] == dummy_server.log
     dummy_server.log = []
     assert 'No HLR result found for +447877777777 after 30 attempts' in caplog.messages
