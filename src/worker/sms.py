@@ -187,7 +187,7 @@ class SendSMS:
                 hlr_id = hlr_data.get('id')
 
                 network, hlr = None, None
-                for i in range(30):
+                for i in range(60):
                     try:
                         r = await self.messagebird.get(f'hlr/{hlr_id}')
                     except ApiError:
