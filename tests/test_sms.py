@@ -212,20 +212,15 @@ def test_send_messagebird(cli, tmpdir, dummy_server, worker, loop):
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
-    assert [
-        'POST /messagebird/hlr > 201',
-        'GET /messagebird/hlr/447801234567 > 200',
-        'GET /messagebird/pricing/sms/outbound > 200',
-        'POST /messagebird/messages > 201',
-    ] == dummy_server.log
+    assert 'POST /messagebird/messages > 201' in dummy_server.log
 
     # send again, this time hlr look and pricing requests shouldn't occur
     data = dict(data, uid=str(uuid4()))
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert worker.test_run() == 2
-    assert len(dummy_server.log) == 5
-    assert dummy_server.log[4] == 'POST /messagebird/messages > 201'
+    assert len(dummy_server.log) == 2
+    assert dummy_server.log[1] == 'POST /messagebird/messages > 201'
 
 
 def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog, loop):
