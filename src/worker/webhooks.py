@@ -11,7 +11,7 @@ from pydantic.datetime_parse import parse_datetime
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from src.schemas.messages import SendMethod
-from src.schemas.webhooks import BaseWebhook, MandrillWebhook
+from src.schemas.webhooks import BaseWebhook, MandrillWebhook, MessageBirdWebHook
 
 main_logger = logging.getLogger('worker.webhooks')
 
@@ -98,7 +98,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
             values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
         ),
     ]
-    if hasattr(m, 'price_amount'):
+    if isinstance(m, MessageBirdWebHook):
         cost = m.price_amount
         qs.append(
             glove.pg.execute_b('update messages set cost=:cost where id=:message_id', cost=cost, message_id=message_id)
