@@ -242,7 +242,7 @@ def send_webhook(cli, worker, loop):
             'status': 'delivered',
             'statusDatetime': '2032-06-06T12:00:00',
             'price[amount]': price,
-            'test': True
+            'test': True,
         }
 
         url_args.update(**extra)

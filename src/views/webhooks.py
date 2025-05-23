@@ -57,7 +57,7 @@ async def messagebird_webhook_view(request: Request):
     except ValidationError as e:
         raise HttpUnprocessableEntity(e.args[0])
     method = SendMethod.sms_messagebird
-    if (test:=request.query_params.get('test')) and bool(test) == True:
+    if (test := request.query_params.get('test')) and bool(test) == True:
         method = SendMethod.sms_test
     await glove.redis.enqueue_job('update_message_status', method, event)
     return 'message status updated\n'

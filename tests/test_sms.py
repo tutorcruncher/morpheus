@@ -172,28 +172,26 @@ def test_invalid_number(cli, tmpdir, worker, loop):
 
 
 def test_exceed_cost_limit(cli, tmpdir, worker, loop, sync_db, send_sms, send_webhook):
-    ext_id = send_sms(company_code='cost-test', cost_limit= 0.03)
-    send_webhook(ext_id, 0.012)
-
     ext_id = send_sms(company_code='cost-test', cost_limit=0.03)
     send_webhook(ext_id, 0.012)
 
     ext_id = send_sms(company_code='cost-test', cost_limit=0.03)
     send_webhook(ext_id, 0.012)
 
-    #Get the spend
+    ext_id = send_sms(company_code='cost-test', cost_limit=0.03)
+    send_webhook(ext_id, 0.012)
+
+    # Get the spend
     start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
     end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
     data = dict(start=start, end=end, company_code='billing-test')
     r = cli.get(
-        '/billing/sms-test/cost-test/', json=dict(uid=str(uuid4()), **data),
-        headers={'Authorization': 'testing-key'}
+        '/billing/sms-test/cost-test/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
     )
 
     response = r.json()
     assert r.status_code == 200, r.text
     assert 0.035 < response['spend'] < 0.037
-
 
     ext_id = send_sms(company_code='cost-test', cost_limit=0.03)
     send_webhook(ext_id, 0.012)
