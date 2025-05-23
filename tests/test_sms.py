@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from datetime import datetime, timedelta
 from foxglove.db.helpers import SyncDb
 from urllib.parse import urlencode
@@ -170,38 +171,34 @@ def test_invalid_number(cli, tmpdir, worker, loop):
     }
 
 
-def test_exceed_cost_limit(cli, tmpdir, worker, loop):
-    d = {
-        'company_code': 'cost-test',
-        'cost_limit': 0.1,
-        'method': 'sms-test',
-        'main_template': 'this is a message',
-        'recipients': [{'number': f'0789112385{i}'} for i in range(4)],
-    }
-    r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == 4
-    assert {'status': 'enqueued', 'spend': 0.0} == r.json()
-    assert len(tmpdir.listdir()) == 4
-    r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == 8
-    assert {'status': 'enqueued', 'spend': 0.048} == r.json()
-    assert len(tmpdir.listdir()) == 8
+def test_exceed_cost_limit(cli, tmpdir, worker, loop, sync_db, send_sms, send_webhook):
+    ext_id = send_sms(company_code='cost-test', cost_limit= 0.03)
+    send_webhook(ext_id, 0.012)
 
-    r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    obj = r.json()
-    assert 0.095 < obj['spend'] < 0.097
-    assert worker.test_run() == 12
-    assert len(tmpdir.listdir()) == 12
+    ext_id = send_sms(company_code='cost-test', cost_limit=0.03)
+    send_webhook(ext_id, 0.012)
 
-    r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status_code == 402, r.text
-    obj = r.json()
-    assert 0.143 < obj['spend'] < 0.145
-    assert obj['cost_limit'] == 0.1
-    assert len(tmpdir.listdir()) == 12
+    ext_id = send_sms(company_code='cost-test', cost_limit=0.03)
+    send_webhook(ext_id, 0.012)
+
+    #Get the spend
+    start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
+    end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
+    data = dict(start=start, end=end, company_code='billing-test')
+    r = cli.get(
+        '/billing/sms-test/cost-test/', json=dict(uid=str(uuid4()), **data),
+        headers={'Authorization': 'testing-key'}
+    )
+
+    response = r.json()
+    assert r.status_code == 200, r.text
+    assert 0.035 < response['spend'] < 0.037
+
+
+    ext_id = send_sms(company_code='cost-test', cost_limit=0.03)
+    send_webhook(ext_id, 0.012)
+
+    assert False
 
 
 def test_send_messagebird(cli, tmpdir, dummy_server, worker, loop):
@@ -460,9 +457,13 @@ def test_send_too_long(cli, tmpdir):
     assert len(tmpdir.listdir()) == 0
 
 
-def test_sms_billing(cli, send_sms, send_webhook):
+def test_sms_billing(cli, send_sms, send_webhook, sync_db):
+    ext_ids = []
     for i in range(4):
-        send_sms(uid=str(uuid4()), company_code='billing-test')
+        ext_id = send_sms(uid=str(uuid4()), company_code='billing-test')
+        ext_ids.append(ext_id)
+    for ext_id in ext_ids:
+        send_webhook(ext_id, 0.012)
 
     start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
     end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
@@ -471,4 +472,6 @@ def test_sms_billing(cli, send_sms, send_webhook):
         '/billing/sms-test/billing-test/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
     )
     assert r.status_code == 200, r.text
+
+    print(r.json())
     assert {'company': 'billing-test', 'start': start, 'end': end, 'spend': 0.048} == r.json()

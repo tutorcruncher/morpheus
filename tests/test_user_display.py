@@ -436,16 +436,10 @@ def test_user_sms_list(cli, settings, send_sms, sync_db: SyncDb):
 
 def test_user_sms_list_after_webhook(cli, settings, send_sms, worker, send_webhook, sync_db: SyncDb):
     ext_id = send_sms(company_code='snapcrap')
-
-    # Because send_sms updates method to sms-test, which fails the SELECT query in webhook worker
-    sync_db.execute_b(
-        'update messages set method=:method where external_id=:ext_id', method="sms-messagebird", ext_id=ext_id
-    )
-
     send_webhook(ext_id=ext_id, price=0.07)
     assert worker.test_run() == 2
 
-    r = cli.get(modify_url('/messages/sms-messagebird/', settings, 'snapcrap'))
+    r = cli.get(modify_url('/messages/sms-test/', settings, 'snapcrap'))
     assert r.status_code == 200, r.text
     data = r.json()
 
@@ -462,7 +456,7 @@ def test_user_sms_list_after_webhook(cli, settings, send_sms, worker, send_webho
                 'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'status': 'Delivered',
-                'method': 'sms-messagebird',
+                'method': 'sms-test',
                 'cost': 0.07,
             },
         ],
