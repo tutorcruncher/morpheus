@@ -1,6 +1,5 @@
 from dataclasses import asdict, dataclass
 
-import asyncio
 import chevron
 import json
 import logging
@@ -20,7 +19,7 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from typing import Optional
 
-from src.ext import ApiError, MessageBird
+from src.ext import MessageBird
 from src.render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from src.schemas.messages import MessageStatus, SmsRecipientModel, SmsSendMethod, SmsSendModel
 from src.settings import Settings

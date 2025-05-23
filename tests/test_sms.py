@@ -1,6 +1,5 @@
 import logging
 import re
-import time
 from buildpg import V
 from buildpg.clauses import Where
 from datetime import datetime, timedelta
