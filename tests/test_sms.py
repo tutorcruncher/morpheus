@@ -460,7 +460,7 @@ def test_send_too_long(cli, tmpdir):
     assert len(tmpdir.listdir()) == 0
 
 
-def test_sms_billing(cli, send_sms):
+def test_sms_billing(cli, send_sms, send_webhook):
     for i in range(4):
         send_sms(uid=str(uuid4()), company_code='billing-test')
 
