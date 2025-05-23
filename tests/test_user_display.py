@@ -426,11 +426,40 @@ def test_user_sms_list(cli, settings, send_sms, sync_db: SyncDb):
                 'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
                 'status': 'Sent',
                 'method': 'sms-test',
-                'cost': 0.012,
+                'cost': 0,
             },
         ],
         'count': 1,
-        'spend': 0.012,
+        'spend': 0,
+    }
+
+
+def test_user_sms_list_after_webhook(cli, settings, send_sms, send_webhook, sync_db: SyncDb):
+    ext_id = send_sms(company_code='snapcrap')
+
+    send_sms(uid=str(uuid.uuid4()), company_code='flip')
+    r = cli.get(modify_url('/messages/sms-test/', settings, 'snapcrap'))
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data == {
+        'items': [
+            {
+                'id': 1,
+                'external_id': ext_id,
+                'to_ext_link': None,
+                'to_address': '+44 7896 541236',
+                'to_dst': '<+44 7896 541236>',
+                'to_name': ' ',
+                'subject': 'this is a test apples',
+                'send_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+                'update_ts': RegexStr(r'\d{4}-\d{2}-\d{2}.*'),
+                'status': 'Sent',
+                'method': 'sms-test',
+                'cost': 0,
+            },
+        ],
+        'count': 1,
+        'spend': 0,
     }
 
 

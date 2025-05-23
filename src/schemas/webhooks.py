@@ -98,8 +98,6 @@ class MessageBirdWebHook(BaseWebhook):
     status: MessageBirdMessageStatus
     message_id: IDStr
     error_code: str = None
-    message_length: int
-    message_part_count: int
     price_amount: float
 
     def extra_json(self, sort_keys=False):
@@ -111,8 +109,6 @@ class MessageBirdWebHook(BaseWebhook):
             'message_id': 'id',
             'ts': 'statusDatetime',
             'error_code': 'statusErrorCode',
-            'message_length': 'messageLength',
-            'message_part_count': 'messagePartCount',
             'price_amount': 'price[amount]',
         }
 

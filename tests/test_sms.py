@@ -315,7 +315,7 @@ def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
     assert msg['to_address'] == '+44 7801 234567'
     assert msg['from_name'] == 'Morpheus'
     assert msg['body'] == 'this is a message'
-    assert msg['cost'] == 0.02
+    assert msg['cost'] is None
     assert len(msg['tags']) == 1  # just group_id
 
     url_args = {
@@ -324,6 +324,7 @@ def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
         'recipient': '447801234567',
         'status': 'delivered',
         'statusDatetime': '2032-06-06T12:00:00',
+        'price[amount]': 0.006,
     }
     r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
     assert r.status_code == 200, r.text
@@ -354,7 +355,7 @@ def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, wor
     assert msg['to_address'] == '+44 7801 234567'
     assert msg['from_name'] == 'Morpheus'
     assert msg['body'] == 'this is a message'
-    assert msg['cost'] == 0.02
+    assert msg['cost'] is None
     assert len(msg['tags']) == 1  # just group_id
 
     url_args = {
@@ -363,10 +364,7 @@ def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, wor
         'recipient': '447801234567',
         'status': 'delivered',
         'statusDatetime': '2032-06-06T12:00:00',
-        'price[amount]': 0.006,
-        'price[currency]': 'GBP',
-        'messageLength': 123,
-        'messagePartCount': 1,
+        'price[amount]': 0.07,
     }
     r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
     assert r.status_code == 200, r.text
@@ -374,6 +372,9 @@ def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, wor
 
     msg = sync_db.fetchrow_b('select * from messages')
     assert msg['status'] == 'delivered'
+    assert msg['cost'] == 0.07
+
+    #
 
 
 def test_failed_render(cli, tmpdir, sync_db: SyncDb, worker, loop):

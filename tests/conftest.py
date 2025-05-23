@@ -14,6 +14,7 @@ from httpx import URL, AsyncClient
 from pathlib import Path
 from starlette.testclient import TestClient
 from typing import Any, Callable
+from urllib.parse import urlencode
 
 from src.schemas.messages import EmailSendModel, SendMethod
 from src.settings import Settings
@@ -229,6 +230,26 @@ def send_sms(cli, worker, loop):
         return data['uid'] + '-447896541236'
 
     return _send_message
+
+
+@pytest.fixture
+def send_webhook(cli, worker, loop):
+    def _send_webhook(message_id, price, **extra):
+        url_args = {
+            'id': message_id,
+            'reference': 'morpheus',
+            'recipient': '447801234567',
+            'status': 'delivered',
+            'statusDatetime': '2032-06-06T12:00:00',
+            'price[amount]': price,
+        }
+
+        url_args.update(**extra)
+        r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
+        assert r.status_code == 201
+        worker.test_run()
+
+    return _send_webhook
 
 
 @pytest.fixture(name='call_send_emails')
