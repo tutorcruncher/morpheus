@@ -82,6 +82,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     message_id = await glove.pg.fetchval_b(
         'select id from messages where :where', where=(V('external_id') == m.message_id) & (V('method') == send_method)
     )
+
     if not message_id:
         return UpdateStatus.missing
 

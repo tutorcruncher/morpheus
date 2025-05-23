@@ -234,11 +234,11 @@ def send_sms(cli, worker, loop):
 
 @pytest.fixture
 def send_webhook(cli, worker, loop):
-    def _send_webhook(message_id, price, **extra):
+    def _send_webhook(ext_id, price, **extra):
         url_args = {
-            'id': message_id,
+            'id': ext_id,
             'reference': 'morpheus',
-            'recipient': '447801234567',
+            'recipient': '447896541236',
             'status': 'delivered',
             'statusDatetime': '2032-06-06T12:00:00',
             'price[amount]': price,
@@ -246,7 +246,7 @@ def send_webhook(cli, worker, loop):
 
         url_args.update(**extra)
         r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
-        assert r.status_code == 201
+        assert r.status_code == 200
         worker.test_run()
 
     return _send_webhook
