@@ -333,6 +333,49 @@ def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
     assert msg['status'] == 'delivered'
 
 
+def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, worker, loop):
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'webhook-test',
+        'method': 'sms-messagebird',
+        'main_template': 'this is a message',
+        'recipients': [{'first_name': 'John', 'last_name': 'Doe', 'user_link': 4321, 'number': '07801234567'}],
+    }
+
+    r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == 1
+
+    msg = sync_db.fetchrow_b('select * from messages join message_groups g on g.id = messages.id')
+    assert msg['status'] == 'send'
+    assert msg['to_first_name'] == 'John'
+    assert msg['to_last_name'] == 'Doe'
+    assert msg['to_user_link'] == '4321'
+    assert msg['to_address'] == '+44 7801 234567'
+    assert msg['from_name'] == 'Morpheus'
+    assert msg['body'] == 'this is a message'
+    assert msg['cost'] == 0.02
+    assert len(msg['tags']) == 1  # just group_id
+
+    url_args = {
+        'id': msg['external_id'],
+        'reference': 'morpheus',
+        'recipient': '447801234567',
+        'status': 'delivered',
+        'statusDatetime': '2032-06-06T12:00:00',
+        'price[amount]': 0.006,
+        'price[currency]': 'GBP',
+        'messageLength': 123,
+        'messagePartCount': 1,
+    }
+    r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
+    assert r.status_code == 200, r.text
+    assert worker.test_run() == 2
+
+    msg = sync_db.fetchrow_b('select * from messages')
+    assert msg['status'] == 'delivered'
+
+
 def test_failed_render(cli, tmpdir, sync_db: SyncDb, worker, loop):
     data = {
         'uid': str(uuid4()),

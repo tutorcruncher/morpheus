@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -90,8 +91,15 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     if log_each:
         main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
-    await glove.pg.execute_b(
-        'insert into events (:values__names) values :values',
-        values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
-    )
+    qs = [
+        glove.pg.execute_b(
+            'insert into events (:values__names) values :values',
+            values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
+        ),
+    ]
+    if hasattr(m, 'price'):
+        price = m.price
+        qs.append(glove.pg.execute_b('update messages set price=:price', price))
+    await asyncio.gather(*qs)
+
     return UpdateStatus.added

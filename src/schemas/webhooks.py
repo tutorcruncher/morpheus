@@ -98,13 +98,23 @@ class MessageBirdWebHook(BaseWebhook):
     status: MessageBirdMessageStatus
     message_id: IDStr
     error_code: str = None
+    message_length: int
+    message_part_count: int
+    price_amount: float
 
     def extra_json(self, sort_keys=False):
         return json.dumps({'error_code': self.error_code} if self.error_code else {}, sort_keys=sort_keys)
 
     class Config:
         ignore_extra = True
-        fields = {'message_id': 'id', 'ts': 'statusDatetime', 'error_code': 'statusErrorCode'}
+        fields = {
+            'message_id': 'id',
+            'ts': 'statusDatetime',
+            'error_code': 'statusErrorCode',
+            'message_length': 'messageLength',
+            'message_part_count': 'messagePartCount',
+            'price_amount': 'price[amount]',
+        }
 
 
 ID_REGEX = re.compile(r'[/<>= ]')

@@ -127,7 +127,6 @@ class SendSMS:
         # remove the + from the beginning of the number
         msg_id = f'{self.m.uid}-{sms_data.number.number[1:]}'
         send_ts = utcnow()
-        cost = 0.012 * sms_data.length.parts
         output = (
             f'to: {sms_data.number}\n'
             f'msg id: {msg_id}\n'
@@ -136,7 +135,6 @@ class SendSMS:
             f'tags: {self.tags}\n'
             f'company_code: {self.m.company_code}\n'
             f'from_name: {self.from_name}\n'
-            f'cost: {cost}\n'
             f'length: {sms_data.length}\n'
             f'message:\n'
             f'{sms_data.message}\n'
@@ -146,7 +144,7 @@ class SendSMS:
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_sms(msg_id, send_ts, sms_data, cost)
+        await self._store_sms(msg_id, send_ts, sms_data)
 
     async def _messagebird_get_mcc_cost(self, redis, mcc):
         rates_key = 'messagebird-rates'
@@ -213,18 +211,7 @@ class SendSMS:
             return await self._messagebird_get_mcc_cost(redis, mcc)
 
     async def _messagebird_send_sms(self, sms_data: SmsData):
-        try:
-            msg_cost = await self._messagebird_get_number_cost(sms_data.number)
-        except MessageBirdExternalError:
-            msg_cost = 0  # Set to SMS cost to 0 until cost API is working/changed
-        if msg_cost is None:
-            return
-
-        cost = sms_data.length.parts * msg_cost
         send_ts = utcnow()
-        main_logger.info(
-            'sending SMS to %s, parts: %d, cost: %0.2fp', sms_data.number.number, sms_data.length.parts, cost * 100
-        )
         r = await self.messagebird.post(
             'messages',
             originator=self.from_name,
@@ -237,9 +224,9 @@ class SendSMS:
         data = r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
-        await self._store_sms(data['id'], send_ts, sms_data, cost)
+        await self._store_sms(data['id'], send_ts, sms_data)
 
-    async def _store_sms(self, external_id, send_ts, sms_data: SmsData, cost: float):
+    async def _store_sms(self, external_id, send_ts, sms_data: SmsData):
         message_id = await glove.pg.fetchval_b(
             'insert into messages (:values__names) values :values returning id',
             values=Values(
@@ -255,7 +242,6 @@ class SendSMS:
                 to_address=sms_data.number.number_formatted,
                 tags=self.tags,
                 body=sms_data.message,
-                cost=cost,
                 extra=json.dumps(asdict(sms_data.length)),
             ),
         )
