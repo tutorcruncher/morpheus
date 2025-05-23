@@ -97,7 +97,7 @@ async def messages_list(
         data['previous'] = f"{this_url}?offset={max(offset - LIST_PAGE_SIZE, 0)}"
     if 'sms' in method:
         start, end = month_interval()
-        data['spend'] = await get_sms_spend(conn, company_id=company_id, start=start, end=end, method=method)
+        data['spend'] = await get_sms_spend(conn, company_id=company_id, start=start, end=end, method=method) or 0
     return data
 
 
