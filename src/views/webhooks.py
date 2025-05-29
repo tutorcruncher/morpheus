@@ -63,7 +63,7 @@ async def messagebird_webhook_view(request: Request):
         if event.error_code == '104':
             logger.error(
                 '[webhooks][mesagebird] carrier rejected error',
-                extra={'id': event.message_id, 'dateitme': event.ts, 'status': event.status},
+                extra={'id': event.message_id, 'datetime': event.ts, 'status': event.status},
             )
         else:
             # Will change this to a warning in the future
