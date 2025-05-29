@@ -61,9 +61,13 @@ async def messagebird_webhook_view(request: Request):
         raise HttpUnprocessableEntity(e.args[0])
     if event.error_code is not None:
         if event.error_code == '104':
-            logger.error('[webhooks][mesagebird] carrier rejected error', extra={'id': event.message_id})
+            logger.error(
+                '[webhooks][mesagebird] carrier rejected error',
+                extra={'id': event.message_id, 'dateitme': event.ts, 'status': event.status},
+            )
         else:
-            logger.warning('[webhooks][mesagebird] delivery failed with status: %s', event.status)
+            # Will change this to a warning in the future
+            logger.error('[webhooks][mesagebird] delivery failed with status: %s', event.status)
 
     method = SendMethod.sms_messagebird
     if (test := request.query_params.get('test')) and test.lower() == 'true':
