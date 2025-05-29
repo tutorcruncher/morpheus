@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pydantic import BaseModel, validator
 from pydantic.validators import str_validator
-from typing import List
+from typing import List, Optional
 
 from src.schemas.messages import MessageStatus
 
@@ -98,7 +98,7 @@ class MessageBirdWebHook(BaseWebhook):
     status: MessageBirdMessageStatus
     message_id: IDStr
     error_code: str = None
-    price_amount: float
+    price_amount: Optional[float] = None
 
     def extra_json(self, sort_keys=False):
         return json.dumps({'error_code': self.error_code} if self.error_code else {}, sort_keys=sort_keys)
