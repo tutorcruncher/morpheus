@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 from fastapi import APIRouter, Form, Header
 from foxglove import glove
 from foxglove.exceptions import HttpBadRequest, HttpForbidden, HttpUnprocessableEntity
@@ -14,6 +15,8 @@ from src.schemas.webhooks import MandrillSingleWebhook, MessageBirdWebHook
 from src.views.common import index
 
 app = APIRouter(route_class=KeepBodyAPIRoute)
+
+logger = logging.getLogger('views.webhooks')
 
 
 @app.post('/test/')
@@ -56,6 +59,12 @@ async def messagebird_webhook_view(request: Request):
         event = MessageBirdWebHook(**request.query_params)
     except ValidationError as e:
         raise HttpUnprocessableEntity(e.args[0])
+    if event.error_code is not None:
+        if event.error_code == '104':
+            logger.error('[webhooks][mesagebird] carrier rejected error', extra={'id': event.message_id})
+        else:
+            logger.warning('[webhooks][mesagebird] delivery failed with status: %s', event.status)
+
     method = SendMethod.sms_messagebird
     if (test := request.query_params.get('test')) and test.lower() == 'true':
         method = SendMethod.sms_test
