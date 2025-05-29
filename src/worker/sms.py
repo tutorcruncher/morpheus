@@ -147,6 +147,8 @@ class SendSMS:
 
     async def _messagebird_send_sms(self, sms_data: SmsData):
         send_ts = utcnow()
+        main_logger.info('sending SMS to %s, parts: %d', sms_data.number.number, sms_data.length.parts)
+
         r = await self.messagebird.post(
             'messages',
             originator=self.from_name,
