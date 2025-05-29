@@ -7,7 +7,7 @@ THIS_DIR = Path(__file__).parent.resolve()
 
 
 class Settings(BaseSettings):
-    pg_dsn = 'postgresql://postgres:waffle@localhost:5432/morpheus'
+    pg_dsn = 'postgresql://postgres@localhost:5432/morpheus'
     sql_path: Path = THIS_DIR / 'models.sql'
     patch_paths: List[str] = ['app.patches']
 

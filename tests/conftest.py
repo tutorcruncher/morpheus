@@ -33,7 +33,7 @@ def fix_loop(settings):
     return loop
 
 
-DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres:waffle@localhost:5432/morpheus_test')
+DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
 
 
 @pytest.fixture(name='settings')
