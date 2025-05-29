@@ -98,11 +98,12 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
             values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
         ),
     ]
-    if isinstance(m, MessageBirdWebHook):
+    if isinstance(m, MessageBirdWebHook) and m.price_amount is not None:
         cost = m.price_amount
         qs.append(
             glove.pg.execute_b('update messages set cost=:cost where id=:message_id', cost=cost, message_id=message_id)
         )
+
     await asyncio.gather(*qs)
 
     return UpdateStatus.added
