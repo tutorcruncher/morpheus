@@ -262,6 +262,7 @@ def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, wor
     assert msg['status'] == 'delivered'
     assert msg['cost'] == 0.07
 
+
 def test_messagebird_webhook_carrier_failed(cli, sync_db: SyncDb, dummy_server, worker, loop):
     data = {
         'uid': str(uuid4()),
@@ -292,7 +293,7 @@ def test_messagebird_webhook_carrier_failed(cli, sync_db: SyncDb, dummy_server, 
         'recipient': '447801234567',
         'status': 'delivery_failed',
         'statusDatetime': '2032-06-06T12:00:00',
-        'statusReason':'carrier+rejected'
+        'statusReason': 'carrier+rejected',
     }
 
     r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
