@@ -1,5 +1,6 @@
-import logging
 import re
+from buildpg import V
+from buildpg.clauses import Where
 from datetime import datetime, timedelta
 from foxglove.db.helpers import SyncDb
 from urllib.parse import urlencode
@@ -170,7 +171,7 @@ def test_invalid_number(cli, tmpdir, worker, loop):
     }
 
 
-def test_exceed_cost_limit(cli, tmpdir, worker, loop):
+def test_exceed_cost_limit(cli, tmpdir, worker, loop, sync_db, send_sms, send_webhook):
     d = {
         'company_code': 'cost-test',
         'cost_limit': 0.1,
@@ -178,30 +179,25 @@ def test_exceed_cost_limit(cli, tmpdir, worker, loop):
         'main_template': 'this is a message',
         'recipients': [{'number': f'0789112385{i}'} for i in range(4)],
     }
+
+    where = Where(V('company_id') == 1)
+
     r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert worker.test_run() == 4
     assert {'status': 'enqueued', 'spend': 0.0} == r.json()
     assert len(tmpdir.listdir()) == 4
-    r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == 8
-    assert {'status': 'enqueued', 'spend': 0.048} == r.json()
-    assert len(tmpdir.listdir()) == 8
 
-    r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    obj = r.json()
-    assert 0.095 < obj['spend'] < 0.097
-    assert worker.test_run() == 12
-    assert len(tmpdir.listdir()) == 12
+    msg_ext_ids = sync_db.fetchval_b('select array_agg(external_id) from messages :where', where=where)
+    for ext_id in msg_ext_ids:
+        send_webhook(ext_id, 0.03)
 
     r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status_code == 402, r.text
     obj = r.json()
-    assert 0.143 < obj['spend'] < 0.145
+
+    assert obj['spend'] == 0.12
     assert obj['cost_limit'] == 0.1
-    assert len(tmpdir.listdir()) == 12
 
 
 def test_send_messagebird(cli, tmpdir, dummy_server, worker, loop):
@@ -215,87 +211,18 @@ def test_send_messagebird(cli, tmpdir, dummy_server, worker, loop):
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
-    assert [
-        'POST /messagebird/hlr > 201',
-        'GET /messagebird/hlr/447801234567 > 200',
-        'GET /messagebird/pricing/sms/outbound > 200',
-        'POST /messagebird/messages > 201',
-    ] == dummy_server.log
+    assert 'POST /messagebird/messages > 201' in dummy_server.log
 
     # send again, this time hlr look and pricing requests shouldn't occur
     data = dict(data, uid=str(uuid4()))
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert worker.test_run() == 2
-    assert len(dummy_server.log) == 5
-    assert dummy_server.log[4] == 'POST /messagebird/messages > 201'
+    assert len(dummy_server.log) == 2
+    assert dummy_server.log[1] == 'POST /messagebird/messages > 201'
 
 
-def test_messagebird_no_hlr(cli, tmpdir, dummy_server, worker, caplog, loop):
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'method': 'sms-messagebird',
-        'main_template': 'this is a message',
-        'recipients': [{'number': '07888888888'}],
-    }
-    r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == 1
-    assert [
-        'POST /messagebird/hlr > 201',
-        *['GET /messagebird/hlr/447888888888 > 200' for _ in range(60)],
-    ] == dummy_server.log
-    dummy_server.log = []
-    assert 'No HLR result found for +447888888888 after 30 attempts' in caplog.messages
-
-
-def test_messsagebird_no_hlr_found(cli, tmpdir, dummy_server, worker, caplog, loop):
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'method': 'sms-messagebird',
-        'main_template': 'this is a message',
-        'recipients': [{'number': '07877777777'}],
-    }
-    r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == 1
-    assert [
-        'POST /messagebird/hlr > 201',
-        *['GET /messagebird/hlr/447877777777 > 404' for _ in range(60)],
-    ] == dummy_server.log
-    dummy_server.log = []
-    assert 'No HLR result found for +447877777777 after 30 attempts' in caplog.messages
-
-
-def test_messagebird_no_network(cli, tmpdir, dummy_server, worker, caplog, loop):
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'method': 'sms-messagebird',
-        'main_template': 'this is a message',
-        'recipients': [{'number': '07777777777'}],
-    }
-    caplog.set_level(logging.INFO)
-    r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == 1
-    assert [
-        'POST /messagebird/hlr > 201',
-        'GET /messagebird/hlr/447777777777 > 200',
-        'GET /messagebird/hlr/447777777777 > 200',
-        'GET /messagebird/pricing/sms/outbound > 200',
-        'POST /messagebird/messages > 201',
-    ] == dummy_server.log
-    dummy_server.log = []
-    assert (
-        """found result for +447777777777 after 1 attempts {\n  "status": "active",\n  "network": "o2"\n}"""
-        in caplog.messages
-    )
-
-
-def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
+def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, worker, loop):
     data = {
         'uid': str(uuid4()),
         'company_code': 'webhook-test',
@@ -303,6 +230,7 @@ def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
         'main_template': 'this is a message',
         'recipients': [{'first_name': 'John', 'last_name': 'Doe', 'user_link': 4321, 'number': '07801234567'}],
     }
+
     r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
@@ -315,7 +243,7 @@ def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
     assert msg['to_address'] == '+44 7801 234567'
     assert msg['from_name'] == 'Morpheus'
     assert msg['body'] == 'this is a message'
-    assert msg['cost'] == 0.02
+    assert msg['cost'] is None
     assert len(msg['tags']) == 1  # just group_id
 
     url_args = {
@@ -324,6 +252,7 @@ def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
         'recipient': '447801234567',
         'status': 'delivered',
         'statusDatetime': '2032-06-06T12:00:00',
+        'price[amount]': 0.07,
     }
     r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
     assert r.status_code == 200, r.text
@@ -331,6 +260,7 @@ def test_messagebird_webhook(cli, sync_db: SyncDb, dummy_server, worker, loop):
 
     msg = sync_db.fetchrow_b('select * from messages')
     assert msg['status'] == 'delivered'
+    assert msg['cost'] == 0.07
 
 
 def test_failed_render(cli, tmpdir, sync_db: SyncDb, worker, loop):
@@ -416,9 +346,13 @@ def test_send_too_long(cli, tmpdir):
     assert len(tmpdir.listdir()) == 0
 
 
-def test_sms_billing(cli, send_sms):
+def test_sms_billing(cli, send_sms, send_webhook, sync_db):
+    ext_ids = []
     for i in range(4):
-        send_sms(uid=str(uuid4()), company_code='billing-test')
+        ext_id = send_sms(uid=str(uuid4()), company_code='billing-test')
+        ext_ids.append(ext_id)
+    for ext_id in ext_ids:
+        send_webhook(ext_id, 0.012)
 
     start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
     end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')

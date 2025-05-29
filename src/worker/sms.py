@@ -1,6 +1,5 @@
 from dataclasses import asdict, dataclass
 
-import asyncio
 import chevron
 import json
 import logging
@@ -20,7 +19,7 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from typing import Optional
 
-from src.ext import ApiError, MessageBird
+from src.ext import MessageBird
 from src.render.main import MessageTooLong, SmsLength, apply_short_links, sms_length
 from src.schemas.messages import MessageStatus, SmsRecipientModel, SmsSendMethod, SmsSendModel
 from src.settings import Settings
@@ -127,7 +126,6 @@ class SendSMS:
         # remove the + from the beginning of the number
         msg_id = f'{self.m.uid}-{sms_data.number.number[1:]}'
         send_ts = utcnow()
-        cost = 0.012 * sms_data.length.parts
         output = (
             f'to: {sms_data.number}\n'
             f'msg id: {msg_id}\n'
@@ -136,7 +134,6 @@ class SendSMS:
             f'tags: {self.tags}\n'
             f'company_code: {self.m.company_code}\n'
             f'from_name: {self.from_name}\n'
-            f'cost: {cost}\n'
             f'length: {sms_data.length}\n'
             f'message:\n'
             f'{sms_data.message}\n'
@@ -146,85 +143,12 @@ class SendSMS:
             save_path = self.settings.test_output / f'{msg_id}.txt'
             test_logger.info('sending message: %s (saved to %s)', output, save_path)
             save_path.write_text(output)
-        await self._store_sms(msg_id, send_ts, sms_data, cost)
-
-    async def _messagebird_get_mcc_cost(self, redis, mcc):
-        rates_key = 'messagebird-rates'
-        if not await redis.exists(rates_key):
-            # get fresh data on rates by mcc
-            main_logger.info('getting fresh pricing data from messagebird...')
-            r = await self.messagebird.get('pricing/sms/outbound')
-            if r.status_code != 200:
-                response = r.text
-                main_logger.error(
-                    'error getting messagebird api', extra={'status': r.status_code, 'response': response}
-                )
-                raise MessageBirdExternalError((r.status_code, response))
-            data = r.json()
-            prices = data['prices']
-            if not next((1 for g in prices if g['mcc'] == '0'), None):
-                main_logger.error('no default messagebird pricing with mcc "0"', extra={'prices': prices})
-            prices = {g['mcc']: f'{float(g["price"]):0.5f}' for g in prices}
-            await asyncio.gather(redis.hmset_dict(rates_key, prices), redis.expire(rates_key, ONE_DAY))
-        rate = await redis.hget(rates_key, mcc, encoding='utf8')
-        if not rate:
-            main_logger.warning('no rate found for mcc: "%s", using default', mcc)
-            rate = await redis.hget(rates_key, '0', encoding='utf8')
-        assert rate, f'no rate found for mcc: {mcc}'
-        return float(rate)
-
-    async def _messagebird_get_number_cost(self, number: Number):
-        cc_mcc_key = f'messagebird-cc:{number.country_code}'
-        with await self.ctx['redis'] as redis:
-            mcc = await redis.get(cc_mcc_key)
-            if mcc is None:
-                main_logger.info('no mcc for %s, doing HLR lookup...', number.number)
-                api_number = number.number.replace('+', '')
-
-                data = {'msisdn': api_number}
-                response = await self.messagebird.post('hlr', **data)
-                hlr_data = response.json()
-                hlr_id = hlr_data.get('id')
-
-                network, hlr = None, None
-                for i in range(60):
-                    try:
-                        r = await self.messagebird.get(f'hlr/{hlr_id}')
-                    except ApiError:
-                        main_logger.info('Error retrieving HLR data for %s, attempt %d', number.number, i)
-                        continue
-                    hlr = r.json()
-                    if hlr.get('errors'):
-                        continue
-                    network = hlr.get('network')
-                    if not network:
-                        continue
-                    elif hlr['status'] == 'active':
-                        main_logger.info(
-                            'found result for %s after %d attempts %s', number.number, i, json.dumps(hlr, indent=2)
-                        )
-                        break
-                    await asyncio.sleep(1)
-                if not hlr or not network:
-                    main_logger.warning('No HLR result found for %s after 30 attempts', number.number, extra=hlr)
-                    return
-                mcc = str(network)[:3]
-                await redis.setex(cc_mcc_key, ONE_YEAR, mcc)
-            return await self._messagebird_get_mcc_cost(redis, mcc)
+        await self._store_sms(msg_id, send_ts, sms_data)
 
     async def _messagebird_send_sms(self, sms_data: SmsData):
-        try:
-            msg_cost = await self._messagebird_get_number_cost(sms_data.number)
-        except MessageBirdExternalError:
-            msg_cost = 0  # Set to SMS cost to 0 until cost API is working/changed
-        if msg_cost is None:
-            return
-
-        cost = sms_data.length.parts * msg_cost
         send_ts = utcnow()
-        main_logger.info(
-            'sending SMS to %s, parts: %d, cost: %0.2fp', sms_data.number.number, sms_data.length.parts, cost * 100
-        )
+        main_logger.info('sending SMS to %s, parts: %d', sms_data.number.number, sms_data.length.parts)
+
         r = await self.messagebird.post(
             'messages',
             originator=self.from_name,
@@ -237,9 +161,9 @@ class SendSMS:
         data = r.json()
         if data['recipients']['totalCount'] != 1:
             main_logger.error('not one recipients in send response', extra={'data': data})
-        await self._store_sms(data['id'], send_ts, sms_data, cost)
+        await self._store_sms(data['id'], send_ts, sms_data)
 
-    async def _store_sms(self, external_id, send_ts, sms_data: SmsData, cost: float):
+    async def _store_sms(self, external_id, send_ts, sms_data: SmsData):
         message_id = await glove.pg.fetchval_b(
             'insert into messages (:values__names) values :values returning id',
             values=Values(
@@ -255,7 +179,6 @@ class SendSMS:
                 to_address=sms_data.number.number_formatted,
                 tags=self.tags,
                 body=sms_data.message,
-                cost=cost,
                 extra=json.dumps(asdict(sms_data.length)),
             ),
         )

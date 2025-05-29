@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -10,7 +11,7 @@ from pydantic.datetime_parse import parse_datetime
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
 from src.schemas.messages import SendMethod
-from src.schemas.webhooks import BaseWebhook, MandrillWebhook
+from src.schemas.webhooks import BaseWebhook, MandrillWebhook, MessageBirdWebHook
 
 main_logger = logging.getLogger('worker.webhooks')
 
@@ -81,6 +82,7 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     message_id = await glove.pg.fetchval_b(
         'select id from messages where :where', where=(V('external_id') == m.message_id) & (V('method') == send_method)
     )
+
     if not message_id:
         return UpdateStatus.missing
 
@@ -90,8 +92,17 @@ async def update_message_status(ctx, send_method: SendMethod, m: BaseWebhook, lo
     if log_each:
         main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, m.ts, m.status)
 
-    await glove.pg.execute_b(
-        'insert into events (:values__names) values :values',
-        values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
-    )
+    qs = [
+        glove.pg.execute_b(
+            'insert into events (:values__names) values :values',
+            values=Values(message_id=message_id, status=m.status, ts=m.ts, extra=m.extra_json()),
+        ),
+    ]
+    if isinstance(m, MessageBirdWebHook):
+        cost = m.price_amount
+        qs.append(
+            glove.pg.execute_b('update messages set cost=:cost where id=:message_id', cost=cost, message_id=message_id)
+        )
+    await asyncio.gather(*qs)
+
     return UpdateStatus.added
