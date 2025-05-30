@@ -14,7 +14,7 @@ from httpcore import ReadTimeout as HttpReadTimeout
 from httpx import ConnectError, ReadTimeout
 from itertools import chain
 from pathlib import Path
-from pydf import generate_pdf
+from fpdf import FPDF
 from typing import List, Optional
 
 from src.ext import ApiError
@@ -34,6 +34,20 @@ test_logger = logging.getLogger('worker.test')
 
 STYLES_SASS = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
+
+
+def generate_pdf_from_html(html: str, page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm') -> bytes:
+    pdf = FPDF(orientation='P', unit='mm', format=page_size.upper())
+    pdf.add_page()
+
+    left_margin = float(margin_left.replace('mm', ''))
+    right_margin = float(margin_right.replace('mm', ''))
+
+    pdf.set_left_margin(left_margin)
+    pdf.set_right_margin(right_margin)
+    pdf.write_html(html)
+
+    return pdf.output()
 
 
 def utcnow():
@@ -201,12 +215,11 @@ class SendEmail:
             await self._store_email_failed(MessageStatus.render_failed, f'Error rendering email: {e}')
 
     async def _generate_base64_pdf(self, pdf_attachments):
-        kwargs = dict(page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm')
         for a in pdf_attachments:
             if a.html:
                 try:
-                    pdf_content = generate_pdf(a.html, **kwargs)
-                except RuntimeError as e:
+                    pdf_content = generate_pdf_from_html(a.html, page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm')
+                except Exception as e:
                     main_logger.warning('error generating pdf, data: %s', e)
                 else:
                     yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
