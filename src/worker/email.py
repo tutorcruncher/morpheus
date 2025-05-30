@@ -10,11 +10,11 @@ from chevron import ChevronError
 from concurrent.futures import TimeoutError
 from datetime import datetime, timezone
 from foxglove import glove
+from fpdf import FPDF
 from httpcore import ReadTimeout as HttpReadTimeout
 from httpx import ConnectError, ReadTimeout
 from itertools import chain
 from pathlib import Path
-from fpdf import FPDF
 from typing import List, Optional
 
 from src.ext import ApiError
@@ -218,7 +218,9 @@ class SendEmail:
         for a in pdf_attachments:
             if a.html:
                 try:
-                    pdf_content = generate_pdf_from_html(a.html, page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm')
+                    pdf_content = generate_pdf_from_html(
+                        a.html, page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm'
+                    )
                 except Exception as e:
                     main_logger.warning('error generating pdf, data: %s', e)
                 else:
