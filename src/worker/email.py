@@ -37,7 +37,7 @@ email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
 
 
 def generate_pdf_from_html(
-    html: str, page_size: str = 'A4', zoom: str = '1.25', margin_left: str = '8mm', margin_right: str = '8mm'
+    html: str, page_size: str = 'A4', zoom: str = '1.0', margin_left: str = '10mm', margin_right: str = '10mm'
 ) -> bytes:
     from weasyprint import CSS
 
@@ -51,9 +51,14 @@ def generate_pdf_from_html(
         zoom: {zoom};
     }}
     """
+
     html_doc = HTML(string=html)
     css_doc = CSS(string=page_css)
-    pdf_bytes = html_doc.write_pdf(stylesheets=[css_doc])
+
+    pdf_bytes = html_doc.write_pdf(
+        stylesheets=[css_doc],
+        presentational_hints=True,
+    )
     return pdf_bytes
 
 
