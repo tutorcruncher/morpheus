@@ -14,8 +14,8 @@ from httpcore import ReadTimeout as HttpReadTimeout
 from httpx import ConnectError, ReadTimeout
 from itertools import chain
 from pathlib import Path
-from pydf import generate_pdf
 from typing import List, Optional
+from weasyprint import HTML
 
 from src.ext import ApiError
 from src.render import EmailInfo, MessageDef, render_email
@@ -34,6 +34,55 @@ test_logger = logging.getLogger('worker.test')
 
 STYLES_SASS = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
+
+
+# Add a simple url_fetcher for debugging
+def logging_url_fetcher(url, timeout=10, ssl_context=None):
+    from weasyprint.urls import default_url_fetcher
+    main_logger.info(f"WeasyPrint is attempting to fetch URL: {url}")
+    try:
+        result = default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
+        main_logger.info(f"Successfully fetched {url}, content type: {result.get('mime_type')}")
+        return result
+    except Exception as e:
+        main_logger.error(f"Failed to fetch {url}: {e}", exc_info=True)
+        # Propagate the error to see it in PDF generation or logs
+        raise
+
+
+def generate_pdf_from_html(
+    html: str, 
+    page_size: str = 'A4', 
+    zoom: str = '1.0', 
+    margin_left: str = '10mm', 
+    margin_right: str = '10mm',
+    base_url_for_html: Optional[str] = None 
+) -> bytes:
+    from weasyprint import CSS
+
+    page_css = f"""
+    @page {{
+        size: {page_size};
+        margin-left: {margin_left};
+        margin-right: {margin_right};
+    }}
+    body {{
+        zoom: {zoom};
+    }}
+    """
+
+    html_doc = HTML(
+        string=html, 
+        base_url=base_url_for_html, 
+        url_fetcher=logging_url_fetcher
+    )
+    css_doc = CSS(string=page_css)
+
+    pdf_bytes = html_doc.write_pdf(
+        stylesheets=[css_doc],
+        presentational_hints=True,
+    )
+    return pdf_bytes
 
 
 def utcnow():
@@ -201,13 +250,22 @@ class SendEmail:
             await self._store_email_failed(MessageStatus.render_failed, f'Error rendering email: {e}')
 
     async def _generate_base64_pdf(self, pdf_attachments):
-        kwargs = dict(page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm')
         for a in pdf_attachments:
             if a.html:
                 try:
-                    pdf_content = generate_pdf(a.html, **kwargs)
-                except RuntimeError as e:
-                    main_logger.warning('error generating pdf, data: %s', e)
+                    # Assuming URLs in a.html (like {{ bootstrap_url }}) are absolute,
+                    # base_url_for_html can remain None.
+                    # If they could be relative, a proper base_url would be needed here.
+                    pdf_content = generate_pdf_from_html(
+                        a.html, 
+                        page_size='A4', 
+                        zoom='1.25', 
+                        margin_left='8mm', 
+                        margin_right='8mm',
+                        base_url_for_html=None 
+                    )
+                except Exception as e:
+                    main_logger.warning('error generating pdf, data: %s', e, exc_info=True)
                 else:
                     yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
 
