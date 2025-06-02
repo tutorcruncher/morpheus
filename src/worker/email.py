@@ -36,8 +36,27 @@ STYLES_SASS = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
 
 
+# Add a simple url_fetcher for debugging
+def logging_url_fetcher(url, timeout=10, ssl_context=None):
+    from weasyprint.urls import default_url_fetcher
+    main_logger.info(f"WeasyPrint is attempting to fetch URL: {url}")
+    try:
+        result = default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
+        main_logger.info(f"Successfully fetched {url}, content type: {result.get('mime_type')}")
+        return result
+    except Exception as e:
+        main_logger.error(f"Failed to fetch {url}: {e}", exc_info=True)
+        # Propagate the error to see it in PDF generation or logs
+        raise
+
+
 def generate_pdf_from_html(
-    html: str, page_size: str = 'A4', zoom: str = '1.0', margin_left: str = '10mm', margin_right: str = '10mm'
+    html: str, 
+    page_size: str = 'A4', 
+    zoom: str = '1.0', 
+    margin_left: str = '10mm', 
+    margin_right: str = '10mm',
+    base_url_for_html: Optional[str] = None 
 ) -> bytes:
     from weasyprint import CSS
 
@@ -52,7 +71,11 @@ def generate_pdf_from_html(
     }}
     """
 
-    html_doc = HTML(string=html)
+    html_doc = HTML(
+        string=html, 
+        base_url=base_url_for_html, 
+        url_fetcher=logging_url_fetcher
+    )
     css_doc = CSS(string=page_css)
 
     pdf_bytes = html_doc.write_pdf(
@@ -230,11 +253,19 @@ class SendEmail:
         for a in pdf_attachments:
             if a.html:
                 try:
+                    # Assuming URLs in a.html (like {{ bootstrap_url }}) are absolute,
+                    # base_url_for_html can remain None.
+                    # If they could be relative, a proper base_url would be needed here.
                     pdf_content = generate_pdf_from_html(
-                        a.html, page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm'
+                        a.html, 
+                        page_size='A4', 
+                        zoom='1.25', 
+                        margin_left='8mm', 
+                        margin_right='8mm',
+                        base_url_for_html=None 
                     )
                 except Exception as e:
-                    main_logger.warning('error generating pdf, data: %s', e)
+                    main_logger.warning('error generating pdf, data: %s', e, exc_info=True)
                 else:
                     yield dict(type='application/pdf', name=a.name, content=base64.b64encode(pdf_content).decode())
 
