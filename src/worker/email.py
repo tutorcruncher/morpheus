@@ -10,12 +10,12 @@ from chevron import ChevronError
 from concurrent.futures import TimeoutError
 from datetime import datetime, timezone
 from foxglove import glove
-from fpdf import FPDF
 from httpcore import ReadTimeout as HttpReadTimeout
 from httpx import ConnectError, ReadTimeout
 from itertools import chain
 from pathlib import Path
 from typing import List, Optional
+from weasyprint import HTML
 
 from src.ext import ApiError
 from src.render import EmailInfo, MessageDef, render_email
@@ -36,19 +36,23 @@ STYLES_SASS = (THIS_DIR / 'extra' / 'default-styles.scss').read_text()
 email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
 
 
-def generate_pdf_from_html(html: str, page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm') -> bytes:
-    pdf = FPDF(orientation='P', unit='mm', format=page_size.upper())
-    pdf.add_page()
+def generate_pdf_from_html(html: str, page_size: str = 'A4', zoom: str = '1.0', margin_left: str = '10mm', margin_right: str = '10mm') -> bytes:
+    from weasyprint import CSS
 
-    left_margin = float(margin_left.replace('mm', ''))
-    right_margin = float(margin_right.replace('mm', ''))
-
-    pdf.set_left_margin(left_margin)
-    pdf.set_right_margin(right_margin)
-    pdf.write_html(html)
-
-    return pdf.output()
-
+    page_css = f"""
+    @page {{
+        size: {page_size};
+        margin-left: {margin_left};
+        margin-right: {margin_right};
+    }}
+    body {{
+        zoom: {zoom};
+    }}
+    """
+    html_doc = HTML(string=html)
+    css_doc = CSS(string=page_css)
+    pdf_bytes = html_doc.write_pdf(stylesheets=[css_doc])
+    return pdf_bytes
 
 def utcnow():
     return datetime.utcnow().replace(tzinfo=timezone.utc)
