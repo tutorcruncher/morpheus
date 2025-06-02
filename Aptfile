@@ -1,4 +1,4 @@
 libjpeg62
 libc6
 openssl
-http://nz2.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libcrypto1.1-udeb_1.1.1f-1ubuntu2.24_amd64.udeb
+http://nz2.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_i386.deb
