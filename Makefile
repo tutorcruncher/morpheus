@@ -20,3 +20,11 @@ lint:
 .PHONY: test
 test:
 	pytest tests/ --cov=src
+
+.PHONY: reset-db
+reset-db:
+	psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS morpheus"
+	psql -h localhost -U postgres -c "CREATE DATABASE morpheus"
+	psql -h localhost -U postgres -d morpheus -f src/models.sql
+	python -m src.patches
+

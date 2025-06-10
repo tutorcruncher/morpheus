@@ -1,8 +1,11 @@
 import asyncio
-from foxglove.db.patches import patch, run_sql_section
+from foxglove.db.migrations import run_migrations
+from foxglove.db.patches import import_patches, patch, run_sql_section, update_enums
 from textwrap import dedent, indent
 from time import time
 from tqdm import tqdm
+
+from src.settings import Settings
 
 
 @patch
@@ -202,3 +205,22 @@ async def add_aggregation_view(conn, settings, **kwargs):
     run the "message_aggregation" section of models.sql
     """
     await run_sql_section('message_aggregation', settings.sql_path.read_text(), conn)
+
+
+@patch(direct=True)
+async def sync_message_status_enum(conn, **kwargs):
+    from src.schemas.messages import MessageStatus
+
+    print('syncing message_statuses enum')
+    await update_enums({'message_statuses': MessageStatus}, conn)
+    print('syncing message_statuses enum done')
+
+
+if __name__ == '__main__':
+
+    async def main():
+        settings = Settings()
+        patches = import_patches(settings)
+        await run_migrations(settings, patches, live=True)
+
+    asyncio.run(main())
