@@ -13,7 +13,8 @@ from pytest_toolbox.comparison import AnyInt, RegexStr
 from starlette.testclient import TestClient
 from uuid import uuid4
 
-from src.schemas.messages import EmailRecipientModel
+from src.schemas.messages import EmailRecipientModel, MessageStatus
+from src.spam.spam_check import OpenAISpamEmailService, SpamCheckResult
 from src.worker import delete_old_emails, email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -569,7 +570,14 @@ def test_mandrill_send_client_error(sync_db: SyncDb, worker_ctx, call_send_email
 
     with pytest.raises(Retry) as exc_info:
         loop.run_until_complete(
-            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+            worker_send_email(
+                worker_ctx,
+                group_id,
+                c_id,
+                EmailRecipientModel(address='testing@recipient.com'),
+                m,
+                SpamCheckResult(spam=False, reason=''),
+            )
         )
     assert exc_info.value.defer_score == 5_000
 
@@ -583,7 +591,14 @@ def test_mandrill_send_many_errors(sync_db: SyncDb, worker_ctx, call_send_emails
     worker_ctx['job_try'] = 10
 
     loop.run_until_complete(
-        worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+        worker_send_email(
+            worker_ctx,
+            group_id,
+            c_id,
+            EmailRecipientModel(address='testing@recipient.com'),
+            m,
+            SpamCheckResult(spam=False, reason=''),
+        )
     )
 
     m = sync_db.fetchrow_b('select * from messages')
@@ -598,7 +613,14 @@ def test_mandrill_send_502(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
 
     with pytest.raises(Retry) as exc_info:
         loop.run_until_complete(
-            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+            worker_send_email(
+                worker_ctx,
+                group_id,
+                c_id,
+                EmailRecipientModel(address='testing@recipient.com'),
+                m,
+                SpamCheckResult(spam=False, reason=''),
+            )
         )
     assert exc_info.value.defer_score == 5_000
 
@@ -612,7 +634,14 @@ def test_mandrill_send_502_last(sync_db: SyncDb, call_send_emails, loop, worker_
 
     with pytest.raises(Retry) as exc_info:
         loop.run_until_complete(
-            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+            worker_send_email(
+                worker_ctx,
+                group_id,
+                c_id,
+                EmailRecipientModel(address='testing@recipient.com'),
+                m,
+                SpamCheckResult(spam=False, reason=''),
+            )
         )
     assert exc_info.value.defer_score == 43_200_000
 
@@ -626,7 +655,14 @@ def test_mandrill_send_500_nginx(sync_db: SyncDb, call_send_emails, loop, worker
 
     with pytest.raises(Retry) as exc_info:
         loop.run_until_complete(
-            worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='testing@recipient.com'), m)
+            worker_send_email(
+                worker_ctx,
+                group_id,
+                c_id,
+                EmailRecipientModel(address='testing@recipient.com'),
+                m,
+                SpamCheckResult(spam=False, reason=''),
+            )
         )
     assert exc_info.value.defer_score == 10_000
     assert sync_db.fetchval('select count(*) from messages') == 0
@@ -803,3 +839,136 @@ def test_delete_old_messages(cli: TestClient, send_email, sync_db: SyncDb, worke
     assert sync_db.fetchval('select count(*) from messages') == 3
     loop.run_until_complete(delete_old_emails({'pg': sync_db}))
     assert sync_db.fetchval('select count(*) from messages') == 2
+
+
+@pytest.mark.spam
+def test_send_spam_email(cli: TestClient, sync_db: SyncDb, worker):
+    # Prepare the spammy message
+    spammy_message = 'Buy now! This is not a drill! Click here for free money!'
+    context = {'main_message__render': spammy_message}
+
+    # Send the first email
+    uuid1 = str(uuid4())
+    recipients = []
+    for i in range(21):
+        recipients.append(
+            {
+                'first_name': f'First Name User {i}',
+                'last_name': f'Last Name User {i}',
+                'address': f'user{i}@example.org',
+                'tags': ['test'],
+            }
+        )
+
+    data1 = {
+        'uid': uuid1,
+        'company_code': 'foobar',
+        'from_address': 'Spammer <spam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Spam offer',
+        'context': context,
+        'recipients': recipients,
+    }
+    r1 = cli.post('/send/email/', json=data1, headers={'Authorization': 'testing-key'})
+    assert r1.status_code == 201, r1.text
+    assert worker.test_run() == len(recipients)
+
+    # get the group form the message_groups table
+    message_group = sync_db.fetchrow_b('select * from message_groups where :where', where=V('uuid') == uuid1)
+    assert str(message_group['uuid']) == uuid1
+    assert message_group['company_id'] == 1
+    assert message_group['message_method'] == 'email-test'
+    assert message_group['from_email'] == 'spam@example.com'
+    assert message_group['from_name'] == 'Spammer'
+
+    message = sync_db.fetchrow_b('select * from messages where :where', where=V('group_id') == message_group['id'])
+    assert message['status'] == MessageStatus.spam_detected
+    assert message['body'] == 'This is spam'
+
+
+@pytest.mark.spam
+def test_send_multiple_spam_emails(cli: TestClient, sync_db: SyncDb, worker):
+    # Prepare the spammy message
+    spammy_message = 'Buy now! This is not a drill! Click here for free money!'
+    context = {'main_message__render': spammy_message}
+
+    # Send the first spam email
+    uuid1 = str(uuid4())
+    recipients = []
+    for i in range(21):
+        recipients.append(
+            {
+                'first_name': f'First Name User {i}',
+                'last_name': f'Last Name User {i}',
+                'address': f'user{i}@example.org',
+                'tags': ['test'],
+            }
+        )
+    data1 = {
+        'uid': uuid1,
+        'company_code': 'foobar',
+        'from_address': 'Spammer <spam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Spam offer',
+        'context': context,
+        'recipients': recipients,
+    }
+    r1 = cli.post('/send/email/', json=data1, headers={'Authorization': 'testing-key'})
+    assert r1.status_code == 201, r1.text
+
+    # Send the second spam email with the same content
+    uuid2 = str(uuid4())
+    data2 = {
+        'uid': uuid2,
+        'company_code': 'foobar',
+        'from_address': 'Spammer <spam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Spam offer',
+        'context': context,  # same spammy content
+        'recipients': recipients,
+    }
+    r2 = cli.post('/send/email/', json=data2, headers={'Authorization': 'testing-key'})
+    assert r2.status_code == 201, r2.text
+    assert worker.test_run() == len(recipients) * 2
+
+    # Check both emails are logged in the database and have status 'spam_detected'
+    for uid in (uuid1, uuid2):
+        group = sync_db.fetchrow_b('select * from message_groups where :where', where=V('uuid') == uid)
+        assert str(group['uuid']) == uid
+        message = sync_db.fetchrow_b('select * from messages where :where', where=V('group_id') == group['id'])
+        assert message['status'] == MessageStatus.spam_detected
+        assert message['body'] == 'This is spam'
+
+
+@pytest.mark.spam
+def test_spam_check_only_for_more_than_20_recipients(cli, monkeypatch):
+    called = {}
+
+    async def fake_is_spam_email(self, m):
+        called['called'] = True
+        return SpamCheckResult(spam=False, reason='')
+
+    monkeypatch.setattr(OpenAISpamEmailService, 'is_spam_email', fake_is_spam_email)
+
+    # Case 1: 20 recipients (should NOT call spam check)
+    called.clear()
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'from_address': 'Tester <tester@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Test',
+        'context': {'message': 'test'},
+        'recipients': [{'address': f'{i}@example.com'} for i in range(20)],
+    }
+    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert not called.get('called', False)
+
+    # Case 2: 21 recipients (should call spam check)
+    called.clear()
+    data['uid'] = str(uuid4())
+    data['recipients'] = [{'address': f'{i}@example.com'} for i in range(21)]
+    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert called.get('called', False)

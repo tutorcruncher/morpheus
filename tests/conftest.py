@@ -9,15 +9,21 @@ from buildpg.asyncpg import BuildPgConnection
 from foxglove import glove
 from foxglove.db import PgMiddleware, prepare_database
 from foxglove.db.helpers import DummyPgPool, SyncDb
+from foxglove.db.migrations import run_patch
+from foxglove.db.patches import import_patches
 from foxglove.test_server import create_dummy_server
 from httpx import URL, AsyncClient
 from pathlib import Path
 from starlette.testclient import TestClient
 from typing import Any, Callable
+from unittest.mock import AsyncMock
 from urllib.parse import urlencode
 
+from src.main import app
 from src.schemas.messages import EmailSendModel, SendMethod
 from src.settings import Settings
+from src.spam.spam_check import OpenAISpamEmailService, SpamCheckResult
+from src.views.email import get_spam_service
 from src.worker import shutdown, startup, worker_settings
 
 from . import dummy_server
@@ -33,7 +39,7 @@ def fix_loop(settings):
     return loop
 
 
-DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
+DB_DSN = os.getenv('TEST_DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
 
 
 @pytest.fixture(name='settings')
@@ -72,6 +78,10 @@ def fix_raw_conn(settings, await_: Callable):
 
     conn = await_(asyncpg.connect_b(dsn=settings.pg_dsn, server_settings={'jit': 'off'}))
 
+    patches = import_patches(settings)
+    for patch in patches:
+        if patch.direct:
+            await_(run_patch(conn, patch, patch.func.__name__, True))
     yield conn
 
     await_(conn.close())
@@ -279,3 +289,26 @@ def _fix_call_send_emails(glove, sync_db):
         return group_id, company_id, m
 
     return run
+
+
+@pytest.fixture(autouse=True)
+def patch_spam_detection(request):
+    # Create a fake response object
+    class FakeResponse:
+        output_parsed = (
+            SpamCheckResult(spam=True, reason='This is spam')
+            if 'spam' in request.keywords
+            else SpamCheckResult(spam=False, reason='Not spam')
+        )
+
+    # Create a fake client with a mocked responses.parse method
+    fake_client = AsyncMock()
+    fake_client.responses.parse.return_value = FakeResponse()
+
+    fake_service = OpenAISpamEmailService(client=fake_client)
+    app.dependency_overrides[get_spam_service] = lambda: fake_service
+
+    yield  # let the test run
+
+    # Clean up after the test
+    app.dependency_overrides.pop(get_spam_service, None)

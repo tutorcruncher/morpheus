@@ -1,15 +1,19 @@
+import os
+from dotenv import load_dotenv
 from foxglove import BaseSettings
 from pathlib import Path
 from pydantic import NoneStr, validator
 from typing import List
 
+load_dotenv()
+
 THIS_DIR = Path(__file__).parent.resolve()
 
 
 class Settings(BaseSettings):
-    pg_dsn = 'postgresql://postgres@localhost:5432/morpheus'
+    pg_dsn = "postgresql://postgres@localhost:5432/morpheus"
     sql_path: Path = THIS_DIR / 'models.sql'
-    patch_paths: List[str] = ['app.patches']
+    patch_paths: List[str] = ['src.patches']
 
     cookie_name = 'morpheus'
     auth_key = 'insecure'
@@ -29,7 +33,7 @@ class Settings(BaseSettings):
 
     worker_func = 'src.worker:main'
     admin_basic_auth_password = 'testing'
-    test_output: Path = None
+    test_output: Path = Path(os.getenv("TEST_OUTPUT")) if os.getenv("TEST_OUTPUT") else None
 
     delete_old_emails: bool = False
     update_aggregation_view: bool = False
@@ -44,6 +48,8 @@ class Settings(BaseSettings):
     us_send_number = '15744445663'
     canada_send_number = '12048170659'
     tc_registered_originator = 'TtrCrnchr'
+
+    enable_spam_check: bool = True
 
     @validator('pg_dsn')
     def heroku_ready_pg_dsn(cls, v):
@@ -70,4 +76,7 @@ class Settings(BaseSettings):
             'auth_key': {'env': 'AUTH_KEY'},
             'user_auth_key': {'env': 'USER_AUTH_KEY'},
             'host_name': {'env': 'HOST_NAME'},
+            'enable_spam_check': {'env': 'ENABLE_SPAM_CHECK'},
         }
+        env_file = ".env"
+        env_file_encoding = "utf-8"
