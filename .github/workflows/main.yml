@@ -29,7 +29,7 @@ jobs:
         options: --entrypoint redis-server
 
     env:
-      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/morpheus_test'
+      TEST_DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/morpheus_test'
 
     steps:
     - uses: actions/checkout@v2
@@ -45,7 +45,6 @@ jobs:
         pip freeze
     - name: lint
       run: make lint
-
     - name: test
       run: make test
 

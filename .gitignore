@@ -5,3 +5,8 @@ env/
 build/
 dist/
 .coverage
+tmp/
+env2
+.env
+.python-version
+.vscode/

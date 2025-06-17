@@ -28,6 +28,7 @@ from src.schemas.messages import (
     MessageStatus,
 )
 from src.settings import Settings
+from src.spam.spam_check import SpamCheckResult
 
 main_logger = logging.getLogger('worker.email')
 test_logger = logging.getLogger('worker.test')
@@ -41,9 +42,17 @@ def utcnow():
 
 
 class SendEmail:
-    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags'
+    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags', 'spam_result'
 
-    def __init__(self, ctx: dict, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
+    def __init__(
+        self,
+        ctx: dict,
+        group_id: int,
+        company_id: int,
+        recipient: EmailRecipientModel,
+        m: EmailSendModel,
+        spam_result: SpamCheckResult,
+    ):
         self.ctx = ctx
         self.settings: Settings = ctx['settings']
         self.group_id = group_id
@@ -51,8 +60,16 @@ class SendEmail:
         self.recipient: EmailRecipientModel = recipient
         self.m: EmailSendModel = m
         self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
+        self.spam_result: SpamCheckResult = spam_result
 
     async def run(self):
+        if self.spam_result and self.spam_result.spam:
+            main_logger.info(
+                f"Email for group {self.group_id}, recipient {self.recipient.address} marked as spam. "
+                f"Reason: {self.spam_result.reason}"
+            )
+            await self._store_email_failed(MessageStatus.spam_detected, self.spam_result.reason)
+            return
         main_logger.info('Sending email to %s via %s', self.recipient.address, self.m.method)
         if self.ctx['job_try'] > len(email_retrying):
             main_logger.error('%s: tried to send email %d times, all failed', self.group_id, self.ctx['job_try'])
@@ -275,6 +292,8 @@ class SendEmail:
         )
 
 
-async def send_email(ctx, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
-    s = SendEmail(ctx, group_id, company_id, recipient, m)
+async def send_email(
+    ctx, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel, spam_result: SpamCheckResult
+):
+    s = SendEmail(ctx, group_id, company_id, recipient, m, spam_result)
     return await s.run()
