@@ -26,5 +26,11 @@ reset-db:
 	psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS morpheus"
 	psql -h localhost -U postgres -c "CREATE DATABASE morpheus"
 	psql -h localhost -U postgres -d morpheus -f src/models.sql
+	# Run patches in specific order for schema migration
+	python -m foxglove.db.patches performance_step1 --live  # Create initial structure
+	python -m foxglove.db.patches performance_step2 --live  # Create indexes (direct)
+	python -m foxglove.db.patches performance_step3 --live  # Update data (direct)
+	python -m foxglove.db.patches performance_step4 --live  # Finalize schema changes
+	# Run any remaining patches
 	python -m src.patches
 

@@ -43,13 +43,14 @@ class BaseSpamEmailService:
 
 class OpenAISpamEmailService(BaseSpamEmailService):
     LLMPrompt: type[LLMPromptTemplate] = LLMPromptTemplate
-    model: str = "gpt-4o"
     text_format: type[BaseModel] = SpamCheckResult
+    model: str
 
     def __init__(self, client: AsyncOpenAI = None):
         if client is None:
             client = get_openai_client()  # pragma: no cover
         self.client: AsyncOpenAI = client
+        self.model = glove.settings.llm_model_name
 
     def _prepare_prompt(self, m: EmailSendModel) -> tuple[str, str]:
         prompt_template = self.LLMPrompt(m)

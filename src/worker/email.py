@@ -64,9 +64,10 @@ class SendEmail:
 
     async def run(self):
         if self.spam_result and self.spam_result.spam:
-            main_logger.info(
-                f"Email for group {self.group_id}, recipient {self.recipient.address} marked as spam. "
-                f"Reason: {self.spam_result.reason}"
+            main_logger.error(
+                f'Email for group {self.group_id}, recipient {self.recipient.address} marked as spam. '
+                f'Reason: {self.spam_result.reason}',
+                extra={'company_id': self.company_id},
             )
             await self._store_email_failed(MessageStatus.spam_detected, self.spam_result.reason)
             return

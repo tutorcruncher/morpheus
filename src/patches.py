@@ -1,5 +1,7 @@
 import asyncio
-from foxglove.db.migrations import run_migrations
+from buildpg.asyncpg import connect_b
+from foxglove import glove
+from foxglove.db.migrations import run_migrations, run_patch
 from foxglove.db.patches import import_patches, patch, run_sql_section, update_enums
 from textwrap import dedent, indent
 from time import time
@@ -9,10 +11,11 @@ from src.settings import Settings
 
 
 @patch
-async def run_logic_sql(conn, settings, **kwargs):
+async def run_logic_sql(conn, **kwargs):
     """
     run the "logic" section of models.sql
     """
+    settings = glove.settings
     await run_sql_section('logic', settings.sql_path.read_text(), conn)
 
 
@@ -38,7 +41,7 @@ async def chunked_update(conn, table, sql, sleep_time: float = 0):
 
 
 @patch
-async def performance_step1(conn, settings, **kwargs):
+async def performance_step1(conn, **kwargs):
     """
     First step to changing schema to improve performance. THIS WILL BE SLOW, but can be run in the background.
     """
@@ -84,7 +87,7 @@ async def performance_step1(conn, settings, **kwargs):
 
 
 @patch(direct=True)
-async def performance_step2(conn, settings, **kwargs):
+async def performance_step2(conn, **kwargs):
     """
     Second step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
@@ -122,7 +125,7 @@ async def performance_step2(conn, settings, **kwargs):
 
 
 @patch(direct=True)
-async def performance_step3(conn, settings, **kwargs):
+async def performance_step3(conn, **kwargs):
     """
     Third step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
@@ -148,7 +151,7 @@ async def performance_step3(conn, settings, **kwargs):
 
 
 @patch
-async def performance_step4(conn, settings, **kwargs):
+async def performance_step4(conn, **kwargs):
     """
     Fourth step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
     """
@@ -200,15 +203,22 @@ async def performance_step4(conn, settings, **kwargs):
 
 
 @patch
-async def add_aggregation_view(conn, settings, **kwargs):
+async def add_aggregation_view(conn, **kwargs):
     """
     run the "message_aggregation" section of models.sql
     """
+    settings = glove.settings
     await run_sql_section('message_aggregation', settings.sql_path.read_text(), conn)
 
 
 @patch(direct=True)
 async def sync_message_status_enum(conn, **kwargs):
+    """
+    Direct patches are executed immediately and directly on the database connection.
+    ,rather than being managed by the migration runner (run_migrations).
+    Updating Postgres enums, which must be in sync before running migrations that depend on them.
+    Hence, the `direct=True` for this patch.
+    """
     from src.schemas.messages import MessageStatus
 
     print('syncing message_statuses enum')
@@ -221,6 +231,17 @@ if __name__ == '__main__':
     async def main():
         settings = Settings()
         patches = import_patches(settings)
+
+        # Filter out performance patches since they're run separately via Makefile
+        patches = [p for p in patches if not p.func.__name__.startswith('performance_step')]
+
+        direct_patches = [p for p in patches if getattr(p, "direct", False)]
+        if direct_patches:
+            conn = await connect_b(dsn=settings.pg_dsn)
+            for p in direct_patches:
+                await run_patch(conn, p, p.func.__name__, True)
+            await conn.close()
+
         await run_migrations(settings, patches, live=True)
 
     asyncio.run(main())

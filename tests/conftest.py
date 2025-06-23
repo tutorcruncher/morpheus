@@ -9,7 +9,7 @@ from buildpg.asyncpg import BuildPgConnection
 from foxglove import glove
 from foxglove.db import PgMiddleware, prepare_database
 from foxglove.db.helpers import DummyPgPool, SyncDb
-from foxglove.db.migrations import run_patch
+from foxglove.db.migrations import run_migrations, run_patch
 from foxglove.db.patches import import_patches
 from foxglove.test_server import create_dummy_server
 from httpx import URL, AsyncClient
@@ -59,6 +59,7 @@ def fix_settings(tmpdir):
         auth_key='testing-key',
         secret_key='testkey',
         origin='https://example.com',
+        llm_model_name='test-llm-model',
     )
     assert not settings.dev_mode
     glove._settings = settings
@@ -79,10 +80,12 @@ def fix_raw_conn(settings, await_: Callable):
     conn = await_(asyncpg.connect_b(dsn=settings.pg_dsn, server_settings={'jit': 'off'}))
 
     patches = import_patches(settings)
+    patches = [p for p in patches if not p.func.__name__.startswith('performance_step')]
     for patch in patches:
         if patch.direct:
             await_(run_patch(conn, patch, patch.func.__name__, True))
     yield conn
+    await_(run_migrations(settings, patches, live=True))
 
     await_(conn.close())
 
@@ -292,7 +295,7 @@ def _fix_call_send_emails(glove, sync_db):
 
 
 @pytest.fixture(autouse=True)
-def patch_spam_detection(request):
+def patch_spam_detection(request, settings: Settings):
     # Create a fake response object
     class FakeResponse:
         output_parsed = (

@@ -38,7 +38,7 @@ async def email_send_view(
     if glove.settings.enable_spam_check and len(m.recipients) > 20:
         spam_result = await spam_service.is_spam_email(m)
     else:
-        logger.info(f"Skipping spam check for {len(m.recipients)} recipients")
+        logger.info(f'Skipping spam check for {len(m.recipients)} recipients')
         spam_result = SpamCheckResult(spam=False, reason='')
 
     logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
