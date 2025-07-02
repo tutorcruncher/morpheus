@@ -39,6 +39,7 @@ class MessageStatus(str, Enum):
 
     render_failed = 'render_failed'
     send_request_failed = 'send_request_failed'
+    spam_detected = 'spam_detected'  # this status is used when morpheus spam service check detects spam
 
     send = 'send'
     deferral = 'deferral'
@@ -46,7 +47,7 @@ class MessageStatus(str, Enum):
     soft_bounce = 'soft_bounce'
     open = 'open'
     click = 'click'
-    spam = 'spam'
+    spam = 'spam'  # this status is used when recipient marks the email as spam
     unsub = 'unsub'
     reject = 'reject'
 
