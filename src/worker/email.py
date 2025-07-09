@@ -28,7 +28,7 @@ from src.schemas.messages import (
     MessageStatus,
 )
 from src.settings import Settings
-from src.spam.spam_check import SpamCheckResult
+from src.spam.services import SpamCheckResult
 
 main_logger = logging.getLogger('worker.email')
 test_logger = logging.getLogger('worker.test')

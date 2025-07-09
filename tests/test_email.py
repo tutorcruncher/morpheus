@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 from uuid import uuid4
 
 from src.schemas.messages import EmailRecipientModel, MessageStatus
-from src.spam.spam_check import OpenAISpamEmailService, SpamCheckResult
+from src.spam.services import OpenAISpamEmailService, SpamCheckResult
 from src.worker import delete_old_emails, email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -910,7 +910,7 @@ def test_send_multiple_spam_emails(cli: TestClient, sync_db: SyncDb, worker):
         'from_address': 'Spammer <spam@example.com>',
         'method': 'email-test',
         'subject_template': 'Spam offer',
-        'context': context,
+        'context': context,  # same spammy content
         'recipients': recipients,
     }
     r1 = cli.post('/send/email/', json=data1, headers={'Authorization': 'testing-key'})

@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 
-from src.render.main import MessageDef, render_email
-from src.schemas.messages import EmailSendModel
+from src.render.main import EmailInfo
 
 
 @dataclass
 class LLMPromptTemplate:
-    m: EmailSendModel
+    email_info: EmailInfo
+    company_name: str
     instruction_template: str = """
     You are an email analyst that helps the user to classify the email as spam or not spam.
     You work for a company called TutorCruncher. TutorCruncher is a tutoring agency management platform.
@@ -42,30 +42,10 @@ class LLMPromptTemplate:
         return self.instruction_template
 
     def render_prompt(self) -> str:
-        recipient = self.m.recipients[0] if self.m.recipients else None
-        company_name = self.m.context.get("company_name", "")
-
-        # Merge context and headers like the worker
-        context = dict(self.m.context, **(recipient.context if recipient and hasattr(recipient, "context") else {}))
-        headers = dict(self.m.headers, **(recipient.headers if recipient and hasattr(recipient, "headers") else {}))
-
-        # Build MessageDef for rendering
-        message_def = MessageDef(
-            first_name=recipient.first_name if recipient else "",
-            last_name=recipient.last_name if recipient else "",
-            main_template=self.m.main_template,
-            mustache_partials=self.m.mustache_partials or {},
-            macros=self.m.macros or {},
-            subject_template=self.m.subject_template,
-            context=context,
-            headers=headers,
-        )
-
-        email_info = render_email(message_def)
         return self.prompt_template.format(
-            subject=email_info.subject,
-            company_name=company_name,
-            full_name=email_info.full_name,
-            headers=email_info.headers,
-            html_body=email_info.html_body,
+            subject=self.email_info.subject,
+            company_name=self.company_name,
+            full_name=self.email_info.full_name,
+            headers=self.email_info.headers,
+            html_body=self.email_info.html_body,
         )

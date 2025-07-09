@@ -22,8 +22,8 @@ from urllib.parse import urlencode
 from src.main import app
 from src.schemas.messages import EmailSendModel, SendMethod
 from src.settings import Settings
-from src.spam.spam_check import OpenAISpamEmailService, SpamCheckResult
-from src.views.email import get_spam_service
+from src.spam.email_checker import EmailSpamChecker
+from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
 from src.worker import shutdown, startup, worker_settings
 
 from . import dummy_server
@@ -295,7 +295,7 @@ def _fix_call_send_emails(glove, sync_db):
 
 
 @pytest.fixture(autouse=True)
-def patch_spam_detection(request, settings: Settings):
+def patch_spam_detection(request, settings: Settings, glove):
     # Create a fake response object
     class FakeResponse:
         output_parsed = (
@@ -309,9 +309,14 @@ def patch_spam_detection(request, settings: Settings):
     fake_client.responses.parse.return_value = FakeResponse()
 
     fake_service = OpenAISpamEmailService(client=fake_client)
-    app.dependency_overrides[get_spam_service] = lambda: fake_service
+    fake_cache = SpamCacheService(glove.redis)
+    fake_checker = EmailSpamChecker(fake_service, fake_cache)
+
+    from src.views.email import get_spam_checker
+
+    app.dependency_overrides[get_spam_checker] = lambda: fake_checker
 
     yield  # let the test run
 
     # Clean up after the test
-    app.dependency_overrides.pop(get_spam_service, None)
+    app.dependency_overrides.pop(get_spam_checker, None)

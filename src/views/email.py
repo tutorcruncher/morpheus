@@ -9,24 +9,24 @@ from foxglove.route_class import KeepBodyAPIRoute
 from starlette.responses import JSONResponse
 
 from src.schemas.messages import EmailSendModel
-from src.spam.spam_check import OpenAISpamEmailService, SpamCheckResult
+from src.spam.email_checker import EmailSpamChecker
+from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
 
 logger = logging.getLogger('views.email')
 app = APIRouter(route_class=KeepBodyAPIRoute)
 
 
-def get_spam_service():
-    """
-    Simple dependency provider for the spam service.
-    """
-    return OpenAISpamEmailService()  # pragma: no cover
+def get_spam_checker() -> EmailSpamChecker:  # pragma: no cover
+    cache_service = SpamCacheService(glove.redis)
+    spam_service = OpenAISpamEmailService()
+    return EmailSpamChecker(spam_service, cache_service)
 
 
 @app.post('/send/email/')
 async def email_send_view(
     m: EmailSendModel = Body(None),
     conn: BuildPgConnection = Depends(get_db),
-    spam_service: OpenAISpamEmailService = Depends(get_spam_service),
+    spam_checker: EmailSpamChecker = Depends(get_spam_checker),
 ):
     group_key = f'group:{m.uid}'
     v = await glove.redis.incr(group_key)
@@ -36,7 +36,7 @@ async def email_send_view(
 
     # Only check for spam if enabled in settings and more than 20 recipients
     if glove.settings.enable_spam_check and len(m.recipients) > 20:
-        spam_result = await spam_service.is_spam_email(m)
+        spam_result = await spam_checker.check_spam(m)
     else:
         logger.info(f'Skipping spam check for {len(m.recipients)} recipients')
         spam_result = SpamCheckResult(spam=False, reason='')
