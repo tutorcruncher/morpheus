@@ -35,7 +35,7 @@ async def email_send_view(
     await glove.redis.expire(group_key, 86400)
 
     # Only check for spam if enabled in settings and more than 20 recipients
-    if glove.settings.enable_spam_check and len(m.recipients) > 20:
+    if glove.settings.enable_spam_check and len(m.recipients) > glove.settings.min_recipients_for_spam_check:
         spam_result = await spam_checker.check_spam(m)
     else:
         logger.info(f'Skipping spam check for {len(m.recipients)} recipients')

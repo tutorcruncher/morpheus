@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     tc_registered_originator = 'TtrCrnchr'
 
     enable_spam_check: bool = True
+    min_recipients_for_spam_check: int = 20
     llm_model_name: str = 'gpt-4o'
     openai_api_key: str = None
 
@@ -84,6 +85,7 @@ class Settings(BaseSettings):
             'user_auth_key': {'env': 'USER_AUTH_KEY'},
             'host_name': {'env': 'HOST_NAME'},
             'enable_spam_check': {'env': 'ENABLE_SPAM_CHECK'},
+            'min_recipients_for_spam_check': {'env': 'MIN_RECIPIENTS_FOR_SPAM_CHECK'},
             'llm_model_name': {'env': 'LLM_MODEL_NAME'},
             'openai_api_key': {'env': 'OPENAI_API_KEY'},
             'test_output': {'env': 'TEST_OUTPUT'},
