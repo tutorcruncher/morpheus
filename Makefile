@@ -34,3 +34,7 @@ reset-db:
 	# Run any remaining patches
 	python -m src.patches
 
+.PHONY: run_patch
+run_patch:
+	python -m src.patches $(PATCH)
+

@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from buildpg.asyncpg import connect_b
 from foxglove import glove
 from foxglove.db.migrations import run_migrations, run_patch
@@ -226,22 +227,62 @@ async def sync_message_status_enum(conn, **kwargs):
     print('syncing message_statuses enum done')
 
 
-if __name__ == '__main__':
+async def main():
+    """
+    Patch runner CLI.
 
-    async def main():
-        settings = Settings()
-        patches = import_patches(settings)
+    Usage:
+        python -m src.patches # Run all non-performance patches in order
+        python -m src.patches PATCH=patch_name   # Run only the patch with the given name
 
-        # Filter out performance patches since they're run separately via Makefile
-        patches = [p for p in patches if not p.func.__name__.startswith('performance_step')]
+    - Direct patches are run immediately with their own DB connection.
+    - Non-direct patches are run via the migration runner.
+    - Performance patches are excluded (run via Makefile or manually).
+    - Duplicate patch names are skipped (only the first occurrence is run).
+    """
 
-        direct_patches = [p for p in patches if getattr(p, "direct", False)]
-        if direct_patches:
+    patch_name = sys.argv[1] if len(sys.argv) > 1 else None
+    settings = Settings()
+    patches = import_patches(settings)
+
+    seen = set()
+
+    if patch_name:
+        # Only run the patch with the given name, if not already seen
+        for p in patches:
+            name = p.func.__name__
+            if name != patch_name or name in seen:
+                continue
+            seen.add(name)
+            if getattr(p, "direct", False):
+                conn = await connect_b(dsn=settings.pg_dsn)
+                print(f"running direct patch {name}")
+                await run_patch(conn, p, name, True)
+                await conn.close()
+            else:
+                print(f"running non-direct patch {name}")
+                await run_migrations(settings, [p], live=True)
+            return
+        print(f"Patch '{patch_name}' not found. Available patches:")
+        sys.exit(1)
+
+    # Filter out performance patches since they're run separately via Makefile
+    patches = [p for p in patches if not p.func.__name__.startswith('performance_step')]
+
+    for p in patches:
+        name = p.func.__name__
+        if name in seen:
+            continue
+        seen.add(name)
+        if getattr(p, "direct", False):
             conn = await connect_b(dsn=settings.pg_dsn)
-            for p in direct_patches:
-                await run_patch(conn, p, p.func.__name__, True)
+            print(f"running direct patch {name}")
+            await run_patch(conn, p, name, True)
             await conn.close()
+        else:
+            print(f"running non-direct patch {name}")
+            await run_migrations(settings, [p], live=True)
 
-        await run_migrations(settings, patches, live=True)
 
+if __name__ == '__main__':
     asyncio.run(main())
