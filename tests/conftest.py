@@ -84,8 +84,8 @@ def fix_raw_conn(settings, await_: Callable):
     for patch in patches:
         if patch.direct:
             await_(run_patch(conn, patch, patch.func.__name__, True))
-    yield conn
     await_(run_migrations(settings, patches, live=True))
+    yield conn
 
     await_(conn.close())
 
@@ -299,7 +299,7 @@ def patch_spam_detection(request, settings: Settings, glove):
     # Create a fake response object
     class FakeResponse:
         output_parsed = (
-            SpamCheckResult(spam=True, reason='This is spam')
+            SpamCheckResult(spam=True, reason='This is spam for testing purposes')
             if 'spam' in request.keywords
             else SpamCheckResult(spam=False, reason='Not spam')
         )

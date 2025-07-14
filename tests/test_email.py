@@ -866,6 +866,7 @@ def test_send_spam_email(cli: TestClient, sync_db: SyncDb, worker):
         'from_address': 'Spammer <spam@example.com>',
         'method': 'email-test',
         'subject_template': 'Spam offer',
+        'main_template': '{{{ main_message }}}',
         'context': context,
         'recipients': recipients,
     }
@@ -882,8 +883,10 @@ def test_send_spam_email(cli: TestClient, sync_db: SyncDb, worker):
     assert message_group['from_name'] == 'Spammer'
 
     message = sync_db.fetchrow_b('select * from messages where :where', where=V('group_id') == message_group['id'])
-    assert message['status'] == MessageStatus.spam_detected
-    assert message['body'] == 'This is spam'
+    assert message['spam_status']
+    assert message['spam_reason'] == 'This is spam for testing purposes'
+    assert message['status'] == MessageStatus.send
+    assert spammy_message in message['body']
 
 
 @pytest.mark.spam
@@ -910,6 +913,7 @@ def test_send_multiple_spam_emails(cli: TestClient, sync_db: SyncDb, worker):
         'from_address': 'Spammer <spam@example.com>',
         'method': 'email-test',
         'subject_template': 'Spam offer',
+        'main_template': '{{{ main_message }}}',
         'context': context,  # same spammy content
         'recipients': recipients,
     }
@@ -924,6 +928,7 @@ def test_send_multiple_spam_emails(cli: TestClient, sync_db: SyncDb, worker):
         'from_address': 'Spammer <spam@example.com>',
         'method': 'email-test',
         'subject_template': 'Spam offer',
+        'main_template': '{{{ main_message }}}',
         'context': context,  # same spammy content
         'recipients': recipients,
     }
@@ -931,13 +936,15 @@ def test_send_multiple_spam_emails(cli: TestClient, sync_db: SyncDb, worker):
     assert r2.status_code == 201, r2.text
     assert worker.test_run() == len(recipients) * 2
 
-    # Check both emails are logged in the database and have status 'spam_detected'
+    # Check both emails are logged in the database and have status 'send'
     for uid in (uuid1, uuid2):
         group = sync_db.fetchrow_b('select * from message_groups where :where', where=V('uuid') == uid)
         assert str(group['uuid']) == uid
         message = sync_db.fetchrow_b('select * from messages where :where', where=V('group_id') == group['id'])
-        assert message['status'] == MessageStatus.spam_detected
-        assert message['body'] == 'This is spam'
+        assert message['spam_status']
+        assert message['spam_reason'] == 'This is spam for testing purposes'
+        assert message['status'] == MessageStatus.send
+        assert spammy_message in message['body']
 
 
 @pytest.mark.spam

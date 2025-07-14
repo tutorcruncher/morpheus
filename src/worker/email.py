@@ -63,14 +63,6 @@ class SendEmail:
         self.spam_result: SpamCheckResult = spam_result
 
     async def run(self):
-        if self.spam_result and self.spam_result.spam:
-            main_logger.error(
-                f'Email for group {self.group_id}, recipient {self.recipient.address} marked as spam. '
-                f'Reason: {self.spam_result.reason}',
-                extra={'company_id': self.company_id},
-            )
-            await self._store_email_failed(MessageStatus.spam_detected, self.spam_result.reason)
-            return
         main_logger.info('Sending email to %s via %s', self.recipient.address, self.m.method)
         if self.ctx['job_try'] > len(email_retrying):
             main_logger.error('%s: tried to send email %d times, all failed', self.group_id, self.ctx['job_try'])
@@ -257,6 +249,8 @@ class SendEmail:
             tags=self.tags,
             subject=email_info.subject,
             body=email_info.html_body,
+            spam_status=self.spam_result.spam,
+            spam_reason=self.spam_result.reason,
         )
         attachments = [
             f'{getattr(a, "id", None) or ""}::{a.name}'

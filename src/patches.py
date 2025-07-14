@@ -3,7 +3,7 @@ import sys
 from buildpg.asyncpg import connect_b
 from foxglove import glove
 from foxglove.db.migrations import run_migrations, run_patch
-from foxglove.db.patches import import_patches, patch, run_sql_section, update_enums
+from foxglove.db.patches import import_patches, patch, run_sql_section
 from textwrap import dedent, indent
 from time import time
 from tqdm import tqdm
@@ -212,19 +212,20 @@ async def add_aggregation_view(conn, **kwargs):
     await run_sql_section('message_aggregation', settings.sql_path.read_text(), conn)
 
 
-@patch(direct=True)
-async def sync_message_status_enum(conn, **kwargs):
+@patch(auto_run=True)
+async def add_spam_status_and_reason_to_messages(conn, **kwargs):
     """
-    Direct patches are executed immediately and directly on the database connection.
-    ,rather than being managed by the migration runner (run_migrations).
-    Updating Postgres enums, which must be in sync before running migrations that depend on them.
-    Hence, the `direct=True` for this patch.
+    Add spam_status and spam_reason columns to the messages table.
     """
-    from src.schemas.messages import MessageStatus
-
-    print('syncing message_statuses enum')
-    await update_enums({'message_statuses': MessageStatus}, conn)
-    print('syncing message_statuses enum done')
+    print('Adding spam_status and spam_reason columns to messages table')
+    await conn.execute(
+        """
+        ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS spam_status BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS spam_reason TEXT;
+    """
+    )
+    print('Added spam_status and spam_reason columns')
 
 
 async def main():
