@@ -39,7 +39,6 @@ class MessageStatus(str, Enum):
 
     render_failed = 'render_failed'
     send_request_failed = 'send_request_failed'
-    spam_detected = 'spam_detected'  # this status is used when morpheus spam service check detects spam
 
     send = 'send'
     deferral = 'deferral'

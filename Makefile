@@ -26,15 +26,13 @@ reset-db:
 	psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS morpheus"
 	psql -h localhost -U postgres -c "CREATE DATABASE morpheus"
 	psql -h localhost -U postgres -d morpheus -f src/models.sql
-	# Run patches in specific order for schema migration
-	python -m foxglove.db.patches performance_step1 --live  # Create initial structure
-	python -m foxglove.db.patches performance_step2 --live  # Create indexes (direct)
-	python -m foxglove.db.patches performance_step3 --live  # Update data (direct)
-	python -m foxglove.db.patches performance_step4 --live  # Finalize schema changes
-	# Run any remaining patches
-	python -m src.patches
+	foxglove patch add_aggregation_view --live --patch-args ':'
+	foxglove patch add_spam_status_and_reason_to_messages --live --patch-args ':'
 
+# Run a specific patch by name:
+#   make run_patch PATCH=patch_function_name
+#   make run_patch PATCH=patch_function_name LIVE=1
 .PHONY: run_patch
 run_patch:
-	python -m src.patches $(PATCH)
+	foxglove patch $(PATCH) $(if $(LIVE),--live,) --patch-args ':'
 

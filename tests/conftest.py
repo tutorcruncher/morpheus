@@ -80,6 +80,8 @@ def fix_raw_conn(settings, await_: Callable):
     conn = await_(asyncpg.connect_b(dsn=settings.pg_dsn, server_settings={'jit': 'off'}))
 
     patches = import_patches(settings)
+    # we can skip the performance_step patches, as prepare_database function uses latest models.sql which already
+    # has the optimized schema that the performance patches were trying to achieve
     patches = [p for p in patches if not p.func.__name__.startswith('performance_step')]
     for patch in patches:
         if patch.direct:
