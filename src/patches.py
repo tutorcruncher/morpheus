@@ -207,7 +207,7 @@ async def add_aggregation_view(conn, **kwargs):
     await run_sql_section('message_aggregation', settings.sql_path.read_text(), conn)
 
 
-@patch
+@patch(auto_run=True)
 async def add_spam_status_and_reason_to_messages(conn, **kwargs):
     """
     Add spam_status and spam_reason columns to the messages table.
