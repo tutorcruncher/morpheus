@@ -11,10 +11,12 @@ from foxglove.db.helpers import SyncDb
 from pathlib import Path
 from pytest_toolbox.comparison import AnyInt, RegexStr
 from starlette.testclient import TestClient
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from src.schemas.messages import EmailRecipientModel, MessageStatus
-from src.spam.services import OpenAISpamEmailService, SpamCheckResult
+from src.schemas.messages import EmailRecipientModel, EmailSendModel, MessageStatus
+from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
+from src.views.email import get_spam_checker
 from src.worker import delete_old_emails, email_retrying, send_email as worker_send_email
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -951,7 +953,7 @@ def test_send_multiple_spam_emails(cli: TestClient, sync_db: SyncDb, worker):
 def test_spam_check_only_for_more_than_20_recipients(cli, monkeypatch):
     called = {}
 
-    async def fake_is_spam_email(self, m):
+    async def fake_is_spam_email(self, email_info, company_name):
         called['called'] = True
         return SpamCheckResult(spam=False, reason='')
 
@@ -979,3 +981,190 @@ def test_spam_check_only_for_more_than_20_recipients(cli, monkeypatch):
     r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert called.get('called', False)
+
+
+@pytest.mark.spam
+def test_non_spam_emails_are_cached(cli, monkeypatch):
+    """Test that non-spam emails are cached and reused on subsequent identical requests."""
+    call_count = {'count': 0}
+
+    async def fake_is_spam_email(self, email_info, company_name):
+        call_count['count'] += 1
+        return SpamCheckResult(spam=False, reason='This is a legitimate email')
+
+    monkeypatch.setattr(OpenAISpamEmailService, 'is_spam_email', fake_is_spam_email)
+
+    context = {'main_message__render': 'Welcome to our tutoring service! Your lesson is scheduled.'}
+
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'from_address': 'Tutor Agency <admin@tutoragency.com>',
+        'method': 'email-test',
+        'subject_template': 'Welcome to our service',
+        'main_template': '{{{ main_message }}}',
+        'context': context,
+        'recipients': [{'address': f'student{i}@example.com'} for i in range(21)],
+    }
+
+    # First request should call spam check
+    r1 = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r1.status_code == 201, r1.text
+    assert call_count['count'] == 1  # Spam check called once
+
+    # Second request with identical content should use cache
+    data['uid'] = str(uuid4())  # Different UID but same content
+    r2 = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r2.status_code == 201, r2.text
+    assert call_count['count'] == 1  # Spam check NOT called again (cached result used)
+
+
+def test_get_spam_checker():
+    """Test that get_spam_checker creates and returns the correct EmailSpamChecker instance."""
+
+    mock_cache_service = Mock()
+    mock_spam_service = Mock()
+    mock_checker = Mock()
+    mock_openai_client = Mock()
+
+    # Patch the service constructors to return our mocks
+    with patch('src.views.email.SpamCacheService', return_value=mock_cache_service) as mock_cache_class, patch(
+        'src.views.email.OpenAISpamEmailService', return_value=mock_spam_service
+    ) as mock_spam_class, patch(
+        'src.views.email.EmailSpamChecker', return_value=mock_checker
+    ) as mock_checker_class, patch(
+        'src.views.email.glove'
+    ) as mock_glove, patch(
+        'src.views.email.get_openai_client', return_value=mock_openai_client
+    ) as mock_get_client:
+        mock_glove.redis = Mock()
+
+        result = get_spam_checker()
+
+        mock_cache_class.assert_called_once_with(mock_glove.redis)
+        mock_get_client.assert_called_once()
+        mock_spam_class.assert_called_once_with(mock_openai_client)
+
+        mock_checker_class.assert_called_once_with(mock_spam_service, mock_cache_service)
+
+        assert result == mock_checker
+
+
+def test_get_cache_key_with_emojis_and_special_chars():
+    """
+    Test that SpamCacheService.get_cache_key correctly generates cache keys
+    for messages containing various character types.
+
+    Verifies that the cache key generation handles:
+    - Emoji characters (e.g. 👋, 🎉)
+    - Unicode special characters and accents (e.g. é, ç)
+    - Asian language characters (Chinese, Japanese, Korean)
+    - Mixed content with multiple character types
+    - Empty messages
+    - HTML entities
+    - Various line ending formats
+
+    This ensures the caching system works reliably across all possible message content.
+    """
+
+    # Create a mock redis client
+    mock_redis = Mock()
+    cache_service = SpamCacheService(mock_redis)
+
+    # Test cases with various special characters and emojis
+    test_cases = [
+        {
+            'name': 'basic_emojis',
+            'message': 'Hello! 👋 Welcome to our service! 🎉',
+            'company_code': 'test_company',
+            'expected_prefix': 'spam_content:',
+        },
+        {
+            'name': 'unicode_special_chars',
+            'message': 'Café résumé naïve façade',
+            'company_code': 'accent_company',
+            'expected_prefix': 'spam_content:',
+        },
+        {
+            'name': 'asian_characters',
+            'message': '你好世界！こんにちは世界！안녕하세요 세계!',
+            'company_code': 'asian_company',
+            'expected_prefix': 'spam_content:',
+        },
+        {
+            'name': 'mixed_content',
+            'message': '🎓 Education + 📚 Learning = 💡 Success! 你好!',
+            'company_code': 'mixed_company',
+            'expected_prefix': 'spam_content:',
+        },
+        {'name': 'empty_message', 'message': '', 'company_code': 'empty_company', 'expected_prefix': 'spam_content:'},
+        {
+            'name': 'html_entities',
+            'message': '&lt;script&gt;alert("Hello")&lt;/script&gt;',
+            'company_code': 'html_company',
+            'expected_prefix': 'spam_content:',
+        },
+        {
+            'name': 'newlines_and_tabs',
+            'message': 'Line 1\nLine 2\tTabbed content\r\nWindows line',
+            'company_code': 'format_company',
+            'expected_prefix': 'spam_content:',
+        },
+    ]
+
+    for test_case in test_cases:
+        # Create EmailSendModel with the test message
+        email_model = EmailSendModel(
+            uid=str(uuid4()),
+            company_code=test_case['company_code'],
+            from_address='Test User <test@example.com>',
+            method='email-test',
+            subject_template='Test Subject',
+            context={'main_message__render': test_case['message']},
+            recipients=[],
+        )
+
+        # Get the cache key
+        cache_key = cache_service.get_cache_key(email_model)
+
+        # Verify the key format
+        assert cache_key.startswith(test_case['expected_prefix'])
+        assert cache_key.endswith(f":{test_case['company_code']}")
+
+        # Verify it contains a hash (64 hex characters)
+        parts = cache_key.split(':')
+        assert len(parts) == 3
+        assert len(parts[1]) == 64  # SHA256 hash is 64 hex characters
+        assert all(c in '0123456789abcdef' for c in parts[1])  # Valid hex
+
+        # Verify that different messages produce different hashes
+        if test_case['name'] != 'empty_message':
+            # Create another model with slightly different message
+            email_model2 = EmailSendModel(
+                uid=str(uuid4()),
+                company_code=test_case['company_code'],
+                from_address='Test User <test@example.com>',
+                method='email-test',
+                subject_template='Test Subject',
+                context={'main_message__render': test_case['message'] + 'extra'},
+                recipients=[],
+            )
+            cache_key2 = cache_service.get_cache_key(email_model2)
+            assert (
+                cache_key != cache_key2
+            ), f"Different messages should produce different cache keys for {test_case['name']}"
+
+        # Verify that same message with different company code produces different keys
+        email_model3 = EmailSendModel(
+            uid=str(uuid4()),
+            company_code=test_case['company_code'] + '_different',
+            from_address='Test User <test@example.com>',
+            method='email-test',
+            subject_template='Test Subject',
+            context={'main_message__render': test_case['message']},
+            recipients=[],
+        )
+        cache_key3 = cache_service.get_cache_key(email_model3)
+        assert (
+            cache_key != cache_key3
+        ), f"Different company codes should produce different cache keys for {test_case['name']}"

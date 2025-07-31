@@ -24,5 +24,3 @@ ipython==8.11.0
 py==1.11.0
 setuptools==78.0.2
 openai==1.85.0
-devtools==0.12.2
-dotenv==0.9.9

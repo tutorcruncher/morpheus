@@ -8,6 +8,7 @@ from foxglove.exceptions import HttpConflict
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.responses import JSONResponse
 
+from src.llm_client import get_openai_client
 from src.schemas.messages import EmailSendModel
 from src.spam.email_checker import EmailSpamChecker
 from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
@@ -16,9 +17,9 @@ logger = logging.getLogger('views.email')
 app = APIRouter(route_class=KeepBodyAPIRoute)
 
 
-def get_spam_checker() -> EmailSpamChecker:  # pragma: no cover
+def get_spam_checker() -> EmailSpamChecker:
     cache_service = SpamCacheService(glove.redis)
-    spam_service = OpenAISpamEmailService()
+    spam_service = OpenAISpamEmailService(get_openai_client())
     return EmailSpamChecker(spam_service, cache_service)
 
 
@@ -39,7 +40,7 @@ async def email_send_view(
         spam_result = await spam_checker.check_spam(m)
     else:
         logger.info(f'Skipping spam check for {len(m.recipients)} recipients')
-        spam_result = SpamCheckResult(spam=False, reason='')
+        spam_result = SpamCheckResult(spam=False, reason='No spam check performed due to settings or recipient count')
 
     logger.info('sending %d emails (group %s) via %s for %s', len(m.recipients), m.uid, m.method, m.company_code)
     company_id = await conn.fetchval_b('select id from companies where code=:code', code=m.company_code)
