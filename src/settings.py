@@ -91,4 +91,3 @@ class Settings(BaseSettings):
             'test_output': {'env': 'TEST_OUTPUT'},
         }
         env_file = '.env'
-        env_file_encoding = 'utf-8'
