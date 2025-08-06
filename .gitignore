@@ -5,5 +5,4 @@ env/
 build/
 dist/
 .coverage
-tmp/
 .env
