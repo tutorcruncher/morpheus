@@ -26,8 +26,8 @@ class EmailSpamChecker:
 
         # prepare email info for spam check for the first recipient email only
         recipient = m.recipients[0]
-        context = dict(m.context, **(recipient.context if hasattr(recipient, "context") else {}))
-        headers = dict(m.headers, **(recipient.headers if hasattr(recipient, "headers") else {}))
+        context = dict(m.context, **recipient.context)
+        headers = dict(m.headers, **recipient.headers)
         message_def = MessageDef(
             first_name=recipient.first_name,
             last_name=recipient.last_name,

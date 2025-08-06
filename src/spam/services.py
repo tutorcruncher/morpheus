@@ -84,7 +84,7 @@ class SpamCacheService:
 
     async def get(self, m: EmailSendModel) -> Optional[SpamCheckResult]:
         key = self.get_cache_key(m)
-        cached_data = await self.redis.get(key)
+        cached_data: Optional[str] = await self.redis.get(key)
         if cached_data:
             return SpamCheckResult.parse_raw(cached_data)
         return None
