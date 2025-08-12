@@ -28,6 +28,7 @@ from src.schemas.messages import (
     MessageStatus,
 )
 from src.settings import Settings
+from src.spam.services import SpamCheckResult
 
 main_logger = logging.getLogger('worker.email')
 test_logger = logging.getLogger('worker.test')
@@ -41,9 +42,17 @@ def utcnow():
 
 
 class SendEmail:
-    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags'
+    __slots__ = 'ctx', 'settings', 'recipient', 'group_id', 'company_id', 'm', 'tags', 'spam_result'
 
-    def __init__(self, ctx: dict, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
+    def __init__(
+        self,
+        ctx: dict,
+        group_id: int,
+        company_id: int,
+        recipient: EmailRecipientModel,
+        m: EmailSendModel,
+        spam_result: SpamCheckResult,
+    ):
         self.ctx = ctx
         self.settings: Settings = ctx['settings']
         self.group_id = group_id
@@ -51,6 +60,7 @@ class SendEmail:
         self.recipient: EmailRecipientModel = recipient
         self.m: EmailSendModel = m
         self.tags = list(set(self.recipient.tags + self.m.tags + [str(self.m.uid)]))
+        self.spam_result: SpamCheckResult = spam_result
 
     async def run(self):
         main_logger.info('Sending email to %s via %s', self.recipient.address, self.m.method)
@@ -239,6 +249,8 @@ class SendEmail:
             tags=self.tags,
             subject=email_info.subject,
             body=email_info.html_body,
+            spam_status=self.spam_result.spam,
+            spam_reason=self.spam_result.reason,
         )
         attachments = [
             f'{getattr(a, "id", None) or ""}::{a.name}'
@@ -275,6 +287,8 @@ class SendEmail:
         )
 
 
-async def send_email(ctx, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel):
-    s = SendEmail(ctx, group_id, company_id, recipient, m)
+async def send_email(
+    ctx, group_id: int, company_id: int, recipient: EmailRecipientModel, m: EmailSendModel, spam_result: SpamCheckResult
+):
+    s = SendEmail(ctx, group_id, company_id, recipient, m, spam_result)
     return await s.run()

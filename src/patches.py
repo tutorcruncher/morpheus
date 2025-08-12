@@ -1,4 +1,5 @@
 import asyncio
+from foxglove import glove
 from foxglove.db.patches import patch, run_sql_section
 from textwrap import dedent, indent
 from time import time
@@ -6,10 +7,11 @@ from tqdm import tqdm
 
 
 @patch
-async def run_logic_sql(conn, settings, **kwargs):
+async def run_logic_sql(conn, **kwargs):
     """
     run the "logic" section of models.sql
     """
+    settings = glove.settings
     await run_sql_section('logic', settings.sql_path.read_text(), conn)
 
 
@@ -35,7 +37,7 @@ async def chunked_update(conn, table, sql, sleep_time: float = 0):
 
 
 @patch
-async def performance_step1(conn, settings, **kwargs):
+async def performance_step1(conn, **kwargs):
     """
     First step to changing schema to improve performance. THIS WILL BE SLOW, but can be run in the background.
     """
@@ -81,7 +83,7 @@ async def performance_step1(conn, settings, **kwargs):
 
 
 @patch(direct=True)
-async def performance_step2(conn, settings, **kwargs):
+async def performance_step2(conn, **kwargs):
     """
     Second step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
@@ -119,7 +121,7 @@ async def performance_step2(conn, settings, **kwargs):
 
 
 @patch(direct=True)
-async def performance_step3(conn, settings, **kwargs):
+async def performance_step3(conn, **kwargs):
     """
     Third step to changing schema to improve performance. THIS WILL BE VERY SLOW, but can be run in the background.
     """
@@ -145,7 +147,7 @@ async def performance_step3(conn, settings, **kwargs):
 
 
 @patch
-async def performance_step4(conn, settings, **kwargs):
+async def performance_step4(conn, **kwargs):
     """
     Fourth step to changing schema to improve performance. This should not be too slow, but will LOCK ENTIRE TABLES.
     """
@@ -197,8 +199,25 @@ async def performance_step4(conn, settings, **kwargs):
 
 
 @patch
-async def add_aggregation_view(conn, settings, **kwargs):
+async def add_aggregation_view(conn, **kwargs):
     """
     run the "message_aggregation" section of models.sql
     """
+    settings = glove.settings
     await run_sql_section('message_aggregation', settings.sql_path.read_text(), conn)
+
+
+@patch(auto_run=True)
+async def add_spam_status_and_reason_to_messages(conn, **kwargs):
+    """
+    Add spam_status and spam_reason columns to the messages table.
+    """
+    print('Adding spam_status and spam_reason columns to messages table')
+    await conn.execute(
+        """
+        ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS spam_status BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS spam_reason TEXT;
+    """
+    )
+    print('Added spam_status and spam_reason columns')

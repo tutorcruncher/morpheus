@@ -46,7 +46,7 @@ class MessageStatus(str, Enum):
     soft_bounce = 'soft_bounce'
     open = 'open'
     click = 'click'
-    spam = 'spam'
+    spam = 'spam'  # this status is used when recipient marks the email as spam
     unsub = 'unsub'
     reject = 'reject'
 

@@ -12,3 +12,4 @@ pytest-mock==3.10.0
 pytest-sugar==0.9.6
 pytest-timeout==2.1.0
 pytest-toolbox==0.4
+dotenv==0.9.9
