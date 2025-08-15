@@ -1194,7 +1194,8 @@ def test_spam_logging_includes_body(cli: TestClient, sync_db: SyncDb, worker, ca
         'subject_template': 'Urgent: {{ company_name }} Alert!',
         'main_template': '{{{ main_message }}}',
         'context': {
-            'main_message__render': 'Hi {{ recipient_first_name }},\n\nDont miss out on <b>FREE MONEY</b>! Click [here]({{ login_link }}) now!\n\nRegards,\n{{ company_name }}',
+            'main_message__render': 'Hi {{ recipient_first_name }},\n\nDont miss out on <b>FREE MONEY</b>! '
+            'Click [here]({{ login_link }}) now!\n\nRegards,\n{{ company_name }}',
             'company_name': 'TestCorp',
             'login_link': 'https://spam.example.com/click',
         },

@@ -61,10 +61,6 @@ class EmailSpamChecker:
         await self.cache_service.set(m, spam_result)
 
         if spam_result.spam:
-            main_body = _clean_html_body(
-                email_info.html_body,
-            )
-
             logger.error(
                 "Email flagged as spam",
                 extra={
@@ -73,7 +69,7 @@ class EmailSpamChecker:
                     "subject": subject,
                     "company": company_name,
                     "company_code": m.company_code,
-                    "email_main_body": main_body or 'no main body',
+                    "email_main_body": _clean_html_body(email_info.html_body) or 'no main body',
                 },
             )
         return spam_result
