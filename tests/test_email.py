@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import pytest
 import re
 from arq import Retry
@@ -1168,3 +1169,98 @@ def test_get_cache_key_with_emojis_and_special_chars():
         assert (
             cache_key != cache_key3
         ), f"Different company codes should produce different cache keys for {test_case['name']}"
+
+
+@pytest.mark.spam
+def test_spam_logging_uses_render_body(cli: TestClient, sync_db: SyncDb, worker, caplog):
+    caplog.set_level(logging.ERROR, logger='spam.email_checker')
+
+    body = 'Hello {{ recipient_first_name }}, click now.'
+    context = {'main_message__render': body}
+
+    recipients = []
+    for i in range(21):
+        recipients.append(
+            {
+                'first_name': f'First Name User {i}',
+                'last_name': f'Last Name User {i}',
+                'address': f'user{i}@example.org',
+                'tags': ['test'],
+            }
+        )
+
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'from_address': 'Spammer <spam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Spam offer',
+        'main_template': '{{{ main_message }}}',
+        'context': context,
+        'recipients': recipients,
+    }
+
+    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == len(recipients)
+
+    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
+    assert records
+    assert getattr(records[-1], 'email_main_body') == 'Hello First Name User 0, click now.'
+
+
+@pytest.mark.spam
+def test_spam_logging_strips_html_from_context(cli: TestClient, sync_db: SyncDb, worker, caplog):
+    caplog.set_level(logging.ERROR, logger='spam.email_checker')
+
+    html = '<p>Buy <b>NOW</b></p><p>Ok</p><br>'
+    context = {'main_message': html}
+
+    recipients = []
+    for i in range(21):
+        recipients.append({'address': f'user{i}@example.org', 'tags': ['test']})
+
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'from_address': 'Spammer <spam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Spam offer',
+        'main_template': '{{{ main_message }}}',
+        'context': context,
+        'recipients': recipients,
+    }
+
+    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == len(recipients)
+
+    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
+    assert records
+    assert getattr(records[-1], 'email_main_body') == 'Buy NOW\n\nOk'
+
+
+@pytest.mark.spam
+def test_spam_email_logging(cli: TestClient, sync_db: SyncDb, worker, caplog):
+    caplog.set_level(logging.ERROR, logger='spam.email_checker')
+
+    recipients = [{'address': f'user{i}@example.org'} for i in range(21)]
+
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'from_address': 'Spammer <spam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Spam offer',
+        'main_template': '<div><p>Bold <b>text</b></p></div>',
+        'context': {},
+        'recipients': recipients,
+    }
+
+    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == len(recipients)
+
+    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
+    assert records
+    assert getattr(records[-1], 'email_main_body') == 'Bold text'

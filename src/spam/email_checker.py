@@ -1,11 +1,24 @@
 import logging
-from html import escape
+import re
+from html import unescape
+from typing import Optional
 
 from src.render.main import MessageDef, render_email
 from src.schemas.messages import EmailSendModel
 from src.spam.services import OpenAISpamEmailService, SpamCacheService
 
 logger = logging.getLogger('spam.email_checker')
+
+_html_tag_re = re.compile(r'<[^>]+>')
+_white_space_re = re.compile(r'\s+')
+
+
+def _clean_html_body(
+    html_body: Optional[str] = None,
+) -> str:
+    if isinstance(html_body, str) and html_body.strip():
+        return _white_space_re.sub(' ', unescape(_html_tag_re.sub('', html_body)))
+    return ''
 
 
 class EmailSpamChecker:
@@ -40,9 +53,7 @@ class EmailSpamChecker:
         )
         email_info = render_email(message_def)
         company_name = m.context.get("company_name", "no_company")
-        escaped_html = escape(email_info.html_body)
         subject = email_info.subject
-        recipients = [recipient.address for recipient in m.recipients]
 
         spam_result = await self.spam_service.is_spam_email(email_info, company_name)
 
@@ -50,15 +61,19 @@ class EmailSpamChecker:
         await self.cache_service.set(m, spam_result)
 
         if spam_result.spam:
+            main_body = _clean_html_body(
+                email_info.html_body,
+            )
+
             logger.error(
                 "Email flagged as spam",
                 extra={
                     "reason": spam_result.reason,
                     "number of recipients": len(m.recipients),
-                    "to": recipients,
                     "subject": subject,
                     "company": company_name,
-                    "html_escaped": escaped_html,
+                    "company_code": m.company_code,
+                    "email_main_body": main_body or 'no main body',
                 },
             )
         return spam_result
