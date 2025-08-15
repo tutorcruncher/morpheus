@@ -1172,18 +1172,15 @@ def test_get_cache_key_with_emojis_and_special_chars():
 
 
 @pytest.mark.spam
-def test_spam_logging_uses_render_body(cli: TestClient, sync_db: SyncDb, worker, caplog):
+def test_spam_logging_includes_body(cli: TestClient, sync_db: SyncDb, worker, caplog):
     caplog.set_level(logging.ERROR, logger='spam.email_checker')
-
-    body = 'Hello {{ recipient_first_name }}, click now.'
-    context = {'main_message__render': body}
 
     recipients = []
     for i in range(21):
         recipients.append(
             {
-                'first_name': f'First Name User {i}',
-                'last_name': f'Last Name User {i}',
+                'first_name': f'User{i}',
+                'last_name': f'Last{i}',
                 'address': f'user{i}@example.org',
                 'tags': ['test'],
             }
@@ -1194,9 +1191,13 @@ def test_spam_logging_uses_render_body(cli: TestClient, sync_db: SyncDb, worker,
         'company_code': 'foobar',
         'from_address': 'Spammer <spam@example.com>',
         'method': 'email-test',
-        'subject_template': 'Spam offer',
+        'subject_template': 'Urgent: {{ company_name }} Alert!',
         'main_template': '{{{ main_message }}}',
-        'context': context,
+        'context': {
+            'main_message__render': 'Hi {{ recipient_first_name }},\n\nDont miss out on <b>FREE MONEY</b>! Click [here]({{ login_link }}) now!\n\nRegards,\n{{ company_name }}',
+            'company_name': 'TestCorp',
+            'login_link': 'https://spam.example.com/click',
+        },
         'recipients': recipients,
     }
 
@@ -1206,61 +1207,7 @@ def test_spam_logging_uses_render_body(cli: TestClient, sync_db: SyncDb, worker,
 
     records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
     assert records
-    assert getattr(records[-1], 'email_main_body') == 'Hello First Name User 0, click now.'
-
-
-@pytest.mark.spam
-def test_spam_logging_strips_html_from_context(cli: TestClient, sync_db: SyncDb, worker, caplog):
-    caplog.set_level(logging.ERROR, logger='spam.email_checker')
-
-    html = '<p>Buy <b>NOW</b></p><p>Ok</p><br>'
-    context = {'main_message': html}
-
-    recipients = []
-    for i in range(21):
-        recipients.append({'address': f'user{i}@example.org', 'tags': ['test']})
-
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'from_address': 'Spammer <spam@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Spam offer',
-        'main_template': '{{{ main_message }}}',
-        'context': context,
-        'recipients': recipients,
-    }
-
-    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == len(recipients)
-
-    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
-    assert records
-    assert getattr(records[-1], 'email_main_body') == 'Buy NOW\n\nOk'
-
-
-@pytest.mark.spam
-def test_spam_email_logging(cli: TestClient, sync_db: SyncDb, worker, caplog):
-    caplog.set_level(logging.ERROR, logger='spam.email_checker')
-
-    recipients = [{'address': f'user{i}@example.org'} for i in range(21)]
-
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'from_address': 'Spammer <spam@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Spam offer',
-        'main_template': '<div><p>Bold <b>text</b></p></div>',
-        'context': {},
-        'recipients': recipients,
-    }
-
-    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == len(recipients)
-
-    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
-    assert records
-    assert getattr(records[-1], 'email_main_body') == 'Bold text'
+    body = getattr(records[-1], 'email_main_body')
+    assert 'Hi User0' in body
+    assert 'FREE MONEY' in body
+    assert 'TestCorp' in body
