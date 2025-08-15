@@ -1207,8 +1207,9 @@ def test_spam_logging_includes_body(cli: TestClient, sync_db: SyncDb, worker, ca
     assert worker.test_run() == len(recipients)
 
     records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
-    assert records
-    body = getattr(records[-1], 'email_main_body')
-    assert 'Hi User0' in body
-    assert 'FREE MONEY' in body
-    assert 'TestCorp' in body
+    assert len(records) == 1
+    body = getattr(records[0], 'email_main_body')
+    assert (
+        body == 'Hi {{ recipient_first_name }}, Dont miss out on FREE MONEY! '
+        'Click [here]({{ login_link }}) now! Regards, {{ company_name }}'
+    )

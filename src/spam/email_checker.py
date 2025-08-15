@@ -69,7 +69,7 @@ class EmailSpamChecker:
                     "subject": subject,
                     "company": company_name,
                     "company_code": m.company_code,
-                    "email_main_body": _clean_html_body(email_info.html_body) or 'no main body',
+                    "email_main_body": _clean_html_body(context.get('main_message__render', '')) or 'no main body',
                 },
             )
         return spam_result
