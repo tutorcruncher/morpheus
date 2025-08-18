@@ -1,7 +1,7 @@
 import logging
 import re
 from html import unescape
-from typing import Optional
+from typing import Optional, Union
 
 from src.render.main import MessageDef, render_email
 from src.schemas.messages import EmailSendModel
@@ -15,10 +15,12 @@ _white_space_re = re.compile(r'\s+')
 
 def _clean_html_body(
     html_body: Optional[str] = None,
-) -> str:
+) -> Union[str, None]:
+    '''
+    Cleans the html body - removes HTML tags and whitespaces
+    '''
     if isinstance(html_body, str) and html_body.strip():
         return _white_space_re.sub(' ', unescape(_html_tag_re.sub('', html_body)))
-    return ''
 
 
 class EmailSpamChecker:
@@ -69,7 +71,7 @@ class EmailSpamChecker:
                     "subject": subject,
                     "company": company_name,
                     "company_code": m.company_code,
-                    "email_main_body": _clean_html_body(context.get('main_message__render', '')) or 'no main body',
+                    "email_main_body": _clean_html_body(context.get('main_message__render')) or 'no main body',
                 },
             )
         return spam_result
