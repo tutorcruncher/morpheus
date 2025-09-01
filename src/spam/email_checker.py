@@ -5,7 +5,7 @@ from typing import Optional, Union
 
 from src.render.main import MessageDef, render_email
 from src.schemas.messages import EmailSendModel
-from src.spam.services import OpenAISpamEmailService, SpamCacheService
+from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
 
 logger = logging.getLogger('spam.email_checker')
 
@@ -57,21 +57,38 @@ class EmailSpamChecker:
         company_name = m.context.get("company_name", "no_company")
         subject = email_info.subject
 
-        spam_result = await self.spam_service.is_spam_email(email_info, company_name)
+        try:
+            spam_result = await self.spam_service.is_spam_email(email_info, company_name)
+            # Cache all results (both spam and non-spam)
+            await self.cache_service.set(m, spam_result)
 
-        # Cache all results (both spam and non-spam)
-        await self.cache_service.set(m, spam_result)
-
-        if spam_result.spam:
+            if spam_result.spam:
+                logger.error(
+                    "Email flagged as spam",
+                    extra={
+                        "reason": spam_result.reason,
+                        "number of recipients": len(m.recipients),
+                        "subject": subject,
+                        "company": company_name,
+                        "company_code": m.company_code,
+                        "email_main_body": _clean_html_body(context.get('main_message__render')) or 'no main body',
+                    },
+                )
+        except Exception as e:
+            # Use the same logging structure for consistency
             logger.error(
-                "Email flagged as spam",
+                "Error during spam check",
                 extra={
-                    "reason": spam_result.reason,
-                    "number of recipients": len(m.recipients),
-                    "subject": subject,
+                    "reason": str(e),
+                    "subject": email_info.subject,
+                    "email_main_body": _clean_html_body(context.get('main_message__render')) or 'no main body',
                     "company": company_name,
                     "company_code": m.company_code,
-                    "email_main_body": _clean_html_body(context.get('main_message__render')) or 'no main body',
                 },
             )
+            # Return a safe default when spam check fails
+            spam_result = SpamCheckResult(
+                spam=False, reason="Spam check failed - defaulting to not spam due to service error"
+            )
+
         return spam_result

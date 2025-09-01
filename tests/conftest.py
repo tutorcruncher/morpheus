@@ -308,7 +308,11 @@ def patch_spam_detection(request, settings: Settings, glove):
 
     # Create a fake client with a mocked responses.parse method
     fake_client = AsyncMock()
-    fake_client.responses.parse.return_value = FakeResponse()
+    if 'spam_service_error' in request.keywords:
+        # This will RAISE Exception when fake_client.responses.parse() is called
+        fake_client.responses.parse.side_effect = Exception('Openai test error')
+    else:
+        fake_client.responses.parse.return_value = FakeResponse()
 
     fake_service = OpenAISpamEmailService(client=fake_client)
     fake_cache = SpamCacheService(glove.redis)

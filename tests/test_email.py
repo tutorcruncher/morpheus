@@ -1213,3 +1213,51 @@ def test_spam_logging_includes_body(cli: TestClient, sync_db: SyncDb, worker, ca
         body == 'Hi {{ recipient_first_name }}, Dont miss out on FREE MONEY! '
         'Click [here]({{ login_link }}) now! Regards, {{ company_name }}'
     )
+
+
+@pytest.mark.spam_service_error
+def test_openai_service_error(cli: TestClient, sync_db: SyncDb, worker, caplog):
+    caplog.set_level(logging.ERROR, logger='spam.email_checker')
+
+    recipients = []
+    for i in range(21):
+        recipients.append(
+            {
+                'first_name': f'User{i}',
+                'last_name': f'Last{i}',
+                'address': f'user{i}@example.org',
+                'tags': ['test'],
+            }
+        )
+
+    data = {
+        'uid': str(uuid4()),
+        'company_code': 'foobar',
+        'from_address': 'Spammer <spam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'Urgent: {{ company_name }} Alert!',
+        'main_template': '{{{ main_message }}}',
+        'context': {
+            'main_message__render': 'Hi {{ recipient_first_name }},\n\nDont miss out on <b>FREE MONEY</b>! '
+            'Click [here]({{ login_link }}) now!\n\nRegards,\n{{ company_name }}',
+            'company_name': 'TestCorp',
+            'login_link': 'https://spam.example.com/click',
+        },
+        'recipients': recipients,
+    }
+
+    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == len(recipients)
+
+    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
+    assert len(records) == 1
+    record = records[0]
+    assert record.reason == 'Openai test error'
+    assert record.subject == 'Urgent: TestCorp Alert!'
+    assert (
+        record.email_main_body == 'Hi {{ recipient_first_name }}, Dont miss out on FREE MONEY! '
+        'Click [here]({{ login_link }}) now! Regards, {{ company_name }}'
+    )
+    assert record.company == 'TestCorp'
+    assert record.company_code == 'foobar'
