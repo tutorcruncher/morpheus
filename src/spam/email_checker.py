@@ -1,6 +1,7 @@
 import logging
 import re
 from html import unescape
+from openai import OpenAIError
 from typing import Optional, Union
 
 from src.render.main import MessageDef, render_email
@@ -59,7 +60,7 @@ class EmailSpamChecker:
 
         try:
             spam_result = await self.spam_service.is_spam_email(email_info, company_name)
-            # Cache all results (both spam and non-spam)
+            # Cache all results (both spam and non-spam) - only when successful
             await self.cache_service.set(m, spam_result)
 
             if spam_result.spam:
@@ -74,10 +75,10 @@ class EmailSpamChecker:
                         "email_main_body": _clean_html_body(context.get('main_message__render')) or 'no main body',
                     },
                 )
-        except Exception as e:
+        except OpenAIError as e:
             # Use the same logging structure for consistency
             logger.error(
-                "Error during spam check",
+                "LLM Provider Error during spam check",
                 extra={
                     "reason": str(e),
                     "subject": email_info.subject,
