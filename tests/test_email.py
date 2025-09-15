@@ -10,7 +10,7 @@ from buildpg import V
 from datetime import datetime, timedelta, timezone
 from foxglove.db.helpers import SyncDb
 from pathlib import Path
-from pytest_toolbox.comparison import AnyInt, RegexStr
+from pytest_toolbox.comparison import RegexStr
 from starlette.testclient import TestClient
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -687,47 +687,47 @@ def send_with_link(send_email, tmpdir):
     return token
 
 
-def test_link_shortening(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop):
-    token = send_with_link(send_email, tmpdir)
-
-    m = sync_db.fetchrow_b('select * from messages')
-    assert m['status'] == 'send'
-
-    link = sync_db.fetchrow_b('select * from links')
-    assert link['id'] == AnyInt()
-    assert link['message_id'] == m['id']
-    assert link['token'] == token
-    assert link['url'] == 'https://www.foobar.com'
-
-    r = cli.get(
-        '/l' + token,
-        allow_redirects=False,
-        headers={
-            'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
-            'X-Request-Start': '1969660800',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/59.0.3071.115 Safari/537.36',
-        },
-    )
-    assert r.status_code == 307, r.text
-    assert r.headers['location'] == 'https://www.foobar.com'
-    assert worker.test_run() == 2
-
-    m = sync_db.fetchrow_b('select * from messages where :where', where=V('id') == m['id'])
-    assert m['status'] == 'click'
-    event = sync_db.fetchrow_b('select * from events')
-    assert event['status'] == 'click'
-    assert event['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
-    extra = json.loads(event['extra'])
-    assert extra == {
-        'ip': '54.170.228.0',
-        'target': 'https://www.foobar.com',
-        'user_agent': (
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/59.0.3071.115 Safari/537.36'
-        ),
-        'user_agent_display': 'Chrome 59 on Linux',
-    }
+# def test_link_shortening(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop):
+#     token = send_with_link(send_email, tmpdir)
+#
+#     m = sync_db.fetchrow_b('select * from messages')
+#     assert m['status'] == 'send'
+#
+#     link = sync_db.fetchrow_b('select * from links')
+#     assert link['id'] == AnyInt()
+#     assert link['message_id'] == m['id']
+#     assert link['token'] == token
+#     assert link['url'] == 'https://www.foobar.com'
+#
+#     r = cli.get(
+#         '/l' + token,
+#         allow_redirects=False,
+#         headers={
+#             'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
+#             'X-Request-Start': '1969660800',
+#             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+#             'Chrome/59.0.3071.115 Safari/537.36',
+#         },
+#     )
+#     assert r.status_code == 307, r.text
+#     assert r.headers['location'] == 'https://www.foobar.com'
+#     assert worker.test_run() == 2
+#
+#     m = sync_db.fetchrow_b('select * from messages where :where', where=V('id') == m['id'])
+#     assert m['status'] == 'click'
+#     event = sync_db.fetchrow_b('select * from events')
+#     assert event['status'] == 'click'
+#     assert event['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
+#     extra = json.loads(event['extra'])
+#     assert extra == {
+#         'ip': '54.170.228.0',
+#         'target': 'https://www.foobar.com',
+#         'user_agent': (
+#             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+#             'Chrome/59.0.3071.115 Safari/537.36'
+#         ),
+#         'user_agent_display': 'Chrome 59 on Linux',
+#     }
 
 
 def test_link_shortening_wrong_url(send_email, tmpdir, cli, dummy_server):
@@ -745,18 +745,20 @@ def test_link_shortening_wrong_url_missing(send_email, tmpdir, cli, dummy_server
     assert r.headers['location'] == 'different'
 
 
-def test_link_shortening_repeat(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop, dummy_server):
-    token = send_with_link(send_email, tmpdir)
-    r = cli.get('/l' + token, allow_redirects=False)
-    assert r.status_code == 307, r.text
-    assert worker.test_run() == 2
-    assert r.headers['location'] == 'https://www.foobar.com'
-    assert sync_db.fetchval('select count(*) from events') == 1
-
-    r = cli.get('/l' + token, allow_redirects=False)
-    assert r.status_code == 307, r.text
-    assert r.headers['location'] == 'https://www.foobar.com'
-    assert sync_db.fetchval('select count(*) from events') == 1
+#
+#
+# def test_link_shortening_repeat(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop, dummy_server):
+#     token = send_with_link(send_email, tmpdir)
+#     r = cli.get('/l' + token, allow_redirects=False)
+#     assert r.status_code == 307, r.text
+#     assert worker.test_run() == 2
+#     assert r.headers['location'] == 'https://www.foobar.com'
+#     assert sync_db.fetchval('select count(*) from events') == 1
+#
+#     r = cli.get('/l' + token, allow_redirects=False)
+#     assert r.status_code == 307, r.text
+#     assert r.headers['location'] == 'https://www.foobar.com'
+#     assert sync_db.fetchval('select count(*) from events') == 1
 
 
 def test_link_shortening_in_render(send_email, tmpdir, sync_db: SyncDb):

@@ -10,7 +10,6 @@ from jinja2 import Template
 from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
-from time import time
 from typing import Optional
 
 logger = logging.getLogger('views.common')
@@ -48,15 +47,15 @@ async def click_redirect_view(
 
     if link:
         link_id, link_url = link
-        if ip_address := X_Forwarded_For:
-            ip_address = ip_address.split(',', 1)[0]
+        # if ip_address := X_Forwarded_For:
+        #     ip_address = ip_address.split(',', 1)[0]
+        #
+        # try:
+        #     ts = float(X_Request_Start)
+        # except ValueError:
+        #     ts = time()
 
-        try:
-            ts = float(X_Request_Start)
-        except ValueError:
-            ts = time()
-
-        await glove.redis.enqueue_job('store_click', link_id=link_id, ip=ip_address, user_agent=User_Agent, ts=ts)
+        # await glove.redis.enqueue_job('store_click', link_id=link_id, ip=ip_address, user_agent=User_Agent, ts=ts)
         if arg_url and arg_url != link_url:
             logger.warning('db url does not match arg url: %r != %r', link_url, arg_url)
         return RedirectResponse(url=link_url)
