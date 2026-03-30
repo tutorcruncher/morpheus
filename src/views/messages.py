@@ -1,5 +1,7 @@
 import json
 import re
+from typing import List, Optional
+
 from buildpg import V, logic
 from buildpg.asyncpg import BuildPgConnection
 from buildpg.clauses import Select
@@ -9,7 +11,6 @@ from foxglove.exceptions import HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from markupsafe import Markup
 from starlette.requests import Request
-from typing import List, Optional
 
 from src.schemas.messages import SendMethod
 from src.schemas.models import Event, Message
@@ -92,9 +93,9 @@ async def messages_list(
     data = {'items': [Message(**m).parsed_details for m in items], 'count': full_count}
     this_url = request.url_for('messages_list', method=method.value)
     if (offset + len(items)) < full_count:
-        data['next'] = f"{this_url}?offset={offset + len(items)}"
+        data['next'] = f'{this_url}?offset={offset + len(items)}'
     if offset:
-        data['previous'] = f"{this_url}?offset={max(offset - LIST_PAGE_SIZE, 0)}"
+        data['previous'] = f'{this_url}?offset={max(offset - LIST_PAGE_SIZE, 0)}'
     if 'sms' in method:
         start, end = month_interval()
         data['spend'] = await get_sms_spend(conn, company_id=company_id, start=start, end=end, method=method) or 0

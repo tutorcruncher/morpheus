@@ -1,8 +1,9 @@
 import json
 from datetime import datetime
+from typing import List, Optional
+
 from markupsafe import Markup
 from pydantic import UUID4, BaseModel, Json, PositiveInt
-from typing import List, Optional
 
 from src.schemas.messages import MessageStatus, SendMethod
 

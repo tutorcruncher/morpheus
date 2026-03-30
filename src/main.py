@@ -1,4 +1,6 @@
 import logging
+
+import logfire
 import uvicorn as uvicorn
 from fastapi import FastAPI, Request
 from foxglove import exceptions, glove
@@ -14,6 +16,15 @@ from src.views import common, email, messages, sms, subaccounts, webhooks
 
 logger = logging.getLogger('main')
 settings = Settings()
+
+if settings.logfire_token:
+    logfire.configure(
+        token=settings.logfire_token,
+        environment=settings.environment,
+        service_name='morpheus',
+        distributed_tracing=True,
+        scrubbing=False,
+    )
 
 glove._settings = Settings()
 
@@ -40,6 +51,10 @@ app.add_middleware(ErrorMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=['*'])
 app.add_middleware(PgMiddleware)
 app.router.route_class = KeepBodyAPIRoute
+
+if settings.logfire_token:
+    logfire.instrument_fastapi(app)
+    logfire.instrument_requests()
 
 
 @app.exception_handler(exceptions.HttpMessageError)

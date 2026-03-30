@@ -32,24 +32,29 @@ jobs:
       TEST_DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/morpheus_test'
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: set up python
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        python-version: '3.12'
+
+    - name: install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
 
     - name: install dependencies
-      run: |
-        make install
-        pip freeze
+      run: make install-dev
+
     - name: lint
       run: make lint
+
     - name: test
       run: make test
 
     - name: codecov
-      run: bash <(curl -s https://codecov.io/bash)
+      uses: codecov/codecov-action@v5
       env:
         CODECOV_TOKEN: '1b5eacd0-b422-4654-970d-84acdb03cf53'
 
@@ -64,7 +69,7 @@ jobs:
       HEROKU_APP: tc-morpheus
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - run: git fetch --unshallow
       - run: git switch master
       - run: git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/$HEROKU_APP.git
@@ -75,20 +80,23 @@ jobs:
     if: "success() && startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: set up python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.12'
 
-      - name: install
-        run: |
-          make install
-          pip install -U wheel twine
+      - name: install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - name: build
-        run: python setup.py sdist bdist_wheel
+        run: uv build
+
+      - name: install twine
+        run: uv pip install --system twine
 
       - run: twine check dist/*
 

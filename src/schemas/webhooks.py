@@ -2,9 +2,10 @@ import json
 import re
 from datetime import datetime, timezone
 from enum import Enum
+from typing import List, Optional
+
 from pydantic import BaseModel, validator
 from pydantic.validators import str_validator
-from typing import List, Optional
 
 from src.schemas.messages import MessageStatus
 

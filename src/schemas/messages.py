@@ -1,8 +1,9 @@
 from enum import Enum
 from pathlib import Path
-from pydantic import BaseModel, NameEmail, constr
 from typing import Dict, List
 from uuid import UUID
+
+from pydantic import BaseModel, NameEmail, constr
 
 THIS_DIR = Path(__file__).parent.parent.resolve()
 

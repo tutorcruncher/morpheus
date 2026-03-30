@@ -1,5 +1,6 @@
 .idea/
 env/
+.venv/
 *.py[cod]
 *.egg-info/
 build/

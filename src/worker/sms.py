@@ -1,12 +1,13 @@
-from dataclasses import asdict, dataclass
-
-import chevron
 import json
 import logging
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Optional
+
+import chevron
 from buildpg import MultipleValues, Values
 from chevron import ChevronError
 from foxglove import glove
-from pathlib import Path
 from phonenumbers import (
     NumberParseException,
     PhoneNumberFormat,
@@ -17,7 +18,6 @@ from phonenumbers import (
     parse as parse_number,
 )
 from phonenumbers.geocoder import country_name_for_number, description_for_number
-from typing import Optional
 
 from src.ext import MessageBird
 from src.render.main import MessageTooLong, SmsLength, apply_short_links, sms_length

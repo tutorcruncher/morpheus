@@ -1,5 +1,7 @@
 import json
 import logging
+from typing import Optional
+
 from buildpg.asyncpg import BuildPgConnection
 from fastapi import APIRouter, Depends
 from foxglove import glove
@@ -8,7 +10,6 @@ from foxglove.exceptions import HttpBadRequest, HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from httpx import Response
 from starlette.responses import JSONResponse
-from typing import Optional
 
 from src.schemas.messages import SendMethod, SubaccountModel
 from src.utils import AdminAuth

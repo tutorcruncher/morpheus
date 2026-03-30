@@ -1,8 +1,13 @@
 import asyncio
 import os
-import pytest
 import re
 import uuid
+from pathlib import Path
+from typing import Any, Callable
+from unittest.mock import AsyncMock
+from urllib.parse import urlencode
+
+import pytest
 from arq import Worker
 from buildpg import Values, asyncpg
 from buildpg.asyncpg import BuildPgConnection
@@ -13,11 +18,7 @@ from foxglove.db.migrations import run_migrations, run_patch
 from foxglove.db.patches import import_patches
 from foxglove.test_server import create_dummy_server
 from httpx import URL, AsyncClient
-from pathlib import Path
 from starlette.testclient import TestClient
-from typing import Any, Callable
-from unittest.mock import AsyncMock
-from urllib.parse import urlencode
 
 from src.main import app
 from src.schemas.messages import EmailSendModel, SendMethod

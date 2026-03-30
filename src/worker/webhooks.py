@@ -2,10 +2,11 @@ import asyncio
 import hashlib
 import json
 import logging
-from arq.utils import to_unix_ms
-from buildpg import V, Values
 from datetime import timezone
 from enum import Enum
+
+from arq.utils import to_unix_ms
+from buildpg import V, Values
 from foxglove import glove
 from pydantic.datetime_parse import parse_datetime
 from ua_parser.user_agent_parser import Parse as ParseUserAgent

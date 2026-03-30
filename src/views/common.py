@@ -1,16 +1,17 @@
 import base64
 import logging
+from html import escape
+from pathlib import Path
+from typing import Optional
+
 from buildpg.asyncpg import BuildPgConnection
 from fastapi import APIRouter, Depends, Header
 from foxglove import glove
 from foxglove.db.middleware import get_db
 from foxglove.route_class import KeepBodyAPIRoute
-from html import escape
 from jinja2 import Template
-from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
-from typing import Optional
 
 logger = logging.getLogger('views.common')
 app = APIRouter(route_class=KeepBodyAPIRoute)

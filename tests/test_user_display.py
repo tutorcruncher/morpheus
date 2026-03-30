@@ -2,16 +2,17 @@ import hashlib
 import hmac
 import json
 import uuid
-from buildpg import V, Values
 from datetime import date, datetime, timedelta, timezone
-from foxglove import glove
-from foxglove.db.helpers import SyncDb
 from operator import itemgetter
-from pytest_toolbox.comparison import RegexStr
-from starlette.testclient import TestClient
 from urllib.parse import urlencode
 
+from buildpg import V, Values
+from foxglove import glove
+from foxglove.db.helpers import SyncDb
+from starlette.testclient import TestClient
+
 from src.schemas.messages import MessageStatus
+from tests.utils import RegexStr
 
 
 def modify_url(url, settings, company='foobar'):
@@ -490,9 +491,9 @@ def test_invalid_expiry(cli, settings):
     r = cli.get('/messages/email-test/?' + urlencode(args))
     assert r.status_code == 422, r.text
     assert {
-        "detail": [
-            {"loc": ["query", "expires"], "msg": "invalid datetime format", "type": "value_error.datetime"},
-            {"loc": ["query", "expires"], "msg": "invalid datetime format", "type": "value_error.datetime"},
+        'detail': [
+            {'loc': ['query', 'expires'], 'msg': 'invalid datetime format', 'type': 'value_error.datetime'},
+            {'loc': ['query', 'expires'], 'msg': 'invalid datetime format', 'type': 'value_error.datetime'},
         ]
     } == r.json()
 

@@ -1,10 +1,11 @@
 import re
-from buildpg import V
-from buildpg.clauses import Where
-from datetime import datetime, timedelta
-from foxglove.db.helpers import SyncDb
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from uuid import uuid4
+
+from buildpg import V
+from buildpg.clauses import Where
+from foxglove.db.helpers import SyncDb
 
 from src.main import settings
 
@@ -440,8 +441,8 @@ def test_sms_billing(cli, send_sms, send_webhook, sync_db):
     for ext_id in ext_ids:
         send_webhook(ext_id, 0.012)
 
-    start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
-    end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
+    start = (datetime.now(timezone.utc) - timedelta(days=5)).strftime('%Y-%m-%d')
+    end = (datetime.now(timezone.utc) + timedelta(days=5)).strftime('%Y-%m-%d')
     data = dict(start=start, end=end, company_code='billing-test')
     r = cli.get(
         '/billing/sms-test/billing-test/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}

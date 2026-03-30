@@ -1,25 +1,25 @@
-black = black -S -l 120 --target-version py38
-isort = isort -w 120
-
-PHONY: install
+.PHONY: install
 install:
-	pip install -r requirements.txt
-	pip install -r tests/requirements.txt
+	uv sync
+
+.PHONY: install-dev
+install-dev:
+	uv sync --dev
+	uv run pre-commit install
 
 .PHONY: format
 format:
-	$(isort) src tests
-	$(black) src tests
+	uv run --active ruff check --fix src tests
+	uv run --active ruff format src tests
 
 .PHONY: lint
 lint:
-	flake8 src tests
-	$(isort) --check-only src tests
-	$(black) --check src tests
+	uv run --active ruff check src tests
+	uv run --active ruff format --check src tests
 
 .PHONY: test
 test:
-	pytest tests/ --cov=src
+	uv run pytest tests/ --cov=src
 
 .PHONY: reset-db
 reset-db:
@@ -35,4 +35,3 @@ reset-db:
 .PHONY: run_patch
 run_patch:
 	foxglove patch $(PATCH) $(if $(LIVE),--live,) --patch-args ':'
-

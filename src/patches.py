@@ -1,8 +1,9 @@
 import asyncio
-from foxglove import glove
-from foxglove.db.patches import patch, run_sql_section
 from textwrap import dedent, indent
 from time import time
+
+from foxglove import glove
+from foxglove.db.patches import patch, run_sql_section
 from tqdm import tqdm
 
 

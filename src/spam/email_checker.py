@@ -1,8 +1,9 @@
 import logging
 import re
 from html import unescape
-from openai import OpenAIError
 from typing import Optional, Union
+
+from openai import OpenAIError
 
 from src.render.main import MessageDef, render_email
 from src.schemas.messages import EmailSendModel
@@ -17,9 +18,9 @@ _white_space_re = re.compile(r'\s+')
 def _clean_html_body(
     html_body: Optional[str] = None,
 ) -> Union[str, None]:
-    '''
+    """
     Cleans the html body - removes HTML tags and whitespaces
-    '''
+    """
     if isinstance(html_body, str) and html_body.strip():
         return _white_space_re.sub(' ', unescape(_html_tag_re.sub('', html_body)))
 
@@ -55,7 +56,7 @@ class EmailSpamChecker:
             headers=headers,
         )
         email_info = render_email(message_def)
-        company_name = m.context.get("company_name", "no_company")
+        company_name = m.context.get('company_name', 'no_company')
         subject = email_info.subject
 
         try:
@@ -65,31 +66,31 @@ class EmailSpamChecker:
 
             if spam_result.spam:
                 logger.error(
-                    "Email flagged as spam",
+                    'Email flagged as spam',
                     extra={
-                        "reason": spam_result.reason,
-                        "number of recipients": len(m.recipients),
-                        "subject": subject,
-                        "company": company_name,
-                        "company_code": m.company_code,
-                        "email_main_body": _clean_html_body(context.get('main_message__render')) or 'no main body',
+                        'reason': spam_result.reason,
+                        'number of recipients': len(m.recipients),
+                        'subject': subject,
+                        'company': company_name,
+                        'company_code': m.company_code,
+                        'email_main_body': _clean_html_body(context.get('main_message__render')) or 'no main body',
                     },
                 )
         except OpenAIError as e:
             # Use the same logging structure for consistency
             logger.error(
-                "LLM Provider Error during spam check",
+                'LLM Provider Error during spam check',
                 extra={
-                    "reason": str(e),
-                    "subject": email_info.subject,
-                    "email_main_body": _clean_html_body(context.get('main_message__render')) or 'no main body',
-                    "company": company_name,
-                    "company_code": m.company_code,
+                    'reason': str(e),
+                    'subject': email_info.subject,
+                    'email_main_body': _clean_html_body(context.get('main_message__render')) or 'no main body',
+                    'company': company_name,
+                    'company_code': m.company_code,
                 },
             )
             # Return a safe default when spam check fails
             spam_result = SpamCheckResult(
-                spam=False, reason="Spam check failed - defaulting to not spam due to service error"
+                spam=False, reason='Spam check failed - defaulting to not spam due to service error'
             )
 
         return spam_result

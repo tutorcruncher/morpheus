@@ -1,4 +1,5 @@
 import logging
+
 from buildpg import Values
 from buildpg.asyncpg import BuildPgConnection
 from fastapi import APIRouter, Body, Depends

@@ -1,7 +1,8 @@
-import click
 import logging
-import requests
 import uuid
+
+import click
+import requests
 
 from src.settings import Settings
 

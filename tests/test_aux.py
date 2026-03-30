@@ -1,4 +1,5 @@
 import base64
+
 import pytest
 from foxglove.db.helpers import SyncDb
 from foxglove.test_server import DummyServer

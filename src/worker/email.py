@@ -3,19 +3,20 @@ import binascii
 import json
 import logging
 import re
-from arq import Retry
 from asyncio import CancelledError
-from buildpg import MultipleValues, Values
-from chevron import ChevronError
 from concurrent.futures import TimeoutError
 from datetime import datetime, timezone
+from itertools import chain
+from pathlib import Path
+from typing import List, Optional
+
+from arq import Retry
+from buildpg import MultipleValues, Values
+from chevron import ChevronError
 from foxglove import glove
 from httpcore import ReadTimeout as HttpReadTimeout
 from httpx import ConnectError, ReadTimeout
-from itertools import chain
-from pathlib import Path
 from pydf import generate_pdf
-from typing import List, Optional
 
 from src.ext import ApiError
 from src.render import EmailInfo, MessageDef, render_email
@@ -38,7 +39,7 @@ email_retrying = [5, 10, 60, 600, 1800, 3600, 12 * 3600]
 
 
 def utcnow():
-    return datetime.utcnow().replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
 
 
 class SendEmail:

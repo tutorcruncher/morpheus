@@ -1,8 +1,9 @@
+from pathlib import Path
+from typing import List, Optional
+
 from dotenv import load_dotenv
 from foxglove import BaseSettings
-from pathlib import Path
 from pydantic import NoneStr, validator
-from typing import List
 
 load_dotenv()
 
@@ -53,6 +54,10 @@ class Settings(BaseSettings):
     llm_model_name: str = 'gpt-4o'
     openai_api_key: str = None
 
+    # Observability
+    environment: str = 'development'
+    logfire_token: Optional[str] = None
+
     @validator('pg_dsn')
     def heroku_ready_pg_dsn(cls, v):
         return v.replace('gres://', 'gresql://')
@@ -89,5 +94,7 @@ class Settings(BaseSettings):
             'llm_model_name': {'env': 'LLM_MODEL_NAME'},
             'openai_api_key': {'env': 'OPENAI_API_KEY'},
             'test_output': {'env': 'TEST_OUTPUT'},
+            'environment': {'env': 'ENVIRONMENT'},
+            'logfire_token': {'env': 'LOGFIRE_TOKEN'},
         }
         env_file = '.env'

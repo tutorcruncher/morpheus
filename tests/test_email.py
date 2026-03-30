@@ -3,22 +3,23 @@ import hashlib
 import hmac
 import json
 import logging
-import pytest
 import re
-from arq import Retry
-from buildpg import V
 from datetime import datetime, timedelta, timezone
-from foxglove.db.helpers import SyncDb
 from pathlib import Path
-from pytest_toolbox.comparison import RegexStr
-from starlette.testclient import TestClient
 from unittest.mock import Mock, patch
 from uuid import uuid4
+
+import pytest
+from arq import Retry
+from buildpg import V
+from foxglove.db.helpers import SyncDb
+from starlette.testclient import TestClient
 
 from src.schemas.messages import EmailRecipientModel, EmailSendModel, MessageStatus
 from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
 from src.views.email import get_spam_checker
 from src.worker import delete_old_emails, email_retrying, send_email as worker_send_email
+from tests.utils import RegexStr
 
 THIS_DIR = Path(__file__).parent.resolve()
 
@@ -312,7 +313,7 @@ def test_markdown_context(send_email, tmpdir):
 
 def test_partials(send_email, tmpdir):
     message_id = send_email(
-        main_template='message: |{{{ message }}}|\n' 'foo: {{ foo }}\n' 'partial: {{> test_p }}',
+        main_template='message: |{{{ message }}}|\nfoo: {{ foo }}\npartial: {{> test_p }}',
         context={'message__render': '{{foo}} {{> test_p }}', 'foo': 'FOO', 'bar': 'BAR'},
         mustache_partials={'test_p': 'foo ({{ foo }}) bar **{{ bar }}**'},
     )
@@ -394,11 +395,11 @@ def test_macro_in_message(send_email, tmpdir):
         context={
             'pay_link': '/pay/now/123/',
             'first_name': 'John',
-            'message__render': '# hello {{ first_name }}\n' 'centered_button(Pay now | {{ pay_link }})\n',
+            'message__render': '# hello {{ first_name }}\ncentered_button(Pay now | {{ pay_link }})\n',
         },
         macros={
             'centered_button(text | link)': (
-                '<div class="button">\n' '  <a href="{{ link }}"><span>{{ text }}</span></a>\n' '</div>\n'
+                '<div class="button">\n  <a href="{{ link }}"><span>{{ text }}</span></a>\n</div>\n'
             )
         },
     )
@@ -448,7 +449,7 @@ def test_standard_sass(cli: TestClient, tmpdir, worker, loop):
 def test_custom_sass(send_email, tmpdir):
     message_id = send_email(
         main_template='{{{ css }}}',
-        context={'css__sass': '.foo {\n  .bar {\n    color: black;\n    width: (60px / 6);\n  }\n' '}'},
+        context={'css__sass': '.foo {\n  .bar {\n    color: black;\n    width: (60px / 6);\n  }\n}'},
     )
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -1031,15 +1032,13 @@ def test_get_spam_checker():
     mock_openai_client = Mock()
 
     # Patch the service constructors to return our mocks
-    with patch('src.views.email.SpamCacheService', return_value=mock_cache_service) as mock_cache_class, patch(
-        'src.views.email.OpenAISpamEmailService', return_value=mock_spam_service
-    ) as mock_spam_class, patch(
-        'src.views.email.EmailSpamChecker', return_value=mock_checker
-    ) as mock_checker_class, patch(
-        'src.views.email.glove'
-    ) as mock_glove, patch(
-        'src.views.email.get_openai_client', return_value=mock_openai_client
-    ) as mock_get_client:
+    with (
+        patch('src.views.email.SpamCacheService', return_value=mock_cache_service) as mock_cache_class,
+        patch('src.views.email.OpenAISpamEmailService', return_value=mock_spam_service) as mock_spam_class,
+        patch('src.views.email.EmailSpamChecker', return_value=mock_checker) as mock_checker_class,
+        patch('src.views.email.glove') as mock_glove,
+        patch('src.views.email.get_openai_client', return_value=mock_openai_client) as mock_get_client,
+    ):
         mock_glove.redis = Mock()
 
         result = get_spam_checker()
@@ -1132,7 +1131,7 @@ def test_get_cache_key_with_emojis_and_special_chars():
 
         # Verify the key format
         assert cache_key.startswith(test_case['expected_prefix'])
-        assert cache_key.endswith(f":{test_case['company_code']}")
+        assert cache_key.endswith(f':{test_case["company_code"]}')
 
         # Verify it contains a hash (64 hex characters)
         parts = cache_key.split(':')
@@ -1153,9 +1152,9 @@ def test_get_cache_key_with_emojis_and_special_chars():
                 recipients=[],
             )
             cache_key2 = cache_service.get_cache_key(email_model2)
-            assert (
-                cache_key != cache_key2
-            ), f"Different messages should produce different cache keys for {test_case['name']}"
+            assert cache_key != cache_key2, (
+                f'Different messages should produce different cache keys for {test_case["name"]}'
+            )
 
         # Verify that same message with different company code produces different keys
         email_model3 = EmailSendModel(
@@ -1168,9 +1167,9 @@ def test_get_cache_key_with_emojis_and_special_chars():
             recipients=[],
         )
         cache_key3 = cache_service.get_cache_key(email_model3)
-        assert (
-            cache_key != cache_key3
-        ), f"Different company codes should produce different cache keys for {test_case['name']}"
+        assert cache_key != cache_key3, (
+            f'Different company codes should produce different cache keys for {test_case["name"]}'
+        )
 
 
 @pytest.mark.spam

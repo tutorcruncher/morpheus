@@ -1,16 +1,16 @@
-from dataclasses import asdict
-
 import logging
+from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import Tuple
+
 from buildpg import Values
 from buildpg.asyncpg import BuildPgConnection
-from datetime import datetime, timezone
 from fastapi import APIRouter, Body, Depends
 from foxglove import glove
 from foxglove.db.middleware import get_db
 from foxglove.exceptions import HttpConflict, HttpNotFound
 from foxglove.route_class import KeepBodyAPIRoute
 from starlette.responses import JSONResponse
-from typing import Tuple
 
 from src.schemas.messages import SmsNumbersModel, SmsSendMethod, SmsSendModel
 from src.utils import AdminAuth
@@ -40,7 +40,7 @@ async def sms_billing_view(
 
 
 def month_interval() -> Tuple[datetime, datetime]:
-    n = datetime.utcnow().replace(tzinfo=timezone.utc)
+    n = datetime.now(timezone.utc)
     return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0), n
 
 
