@@ -21,7 +21,7 @@ app = APIRouter(route_class=KeepBodyAPIRoute, dependencies=[Depends(AdminAuth)])
 @app.post('/create-subaccount/{method}/')
 async def create_subaccount(method: SendMethod, m: Optional[SubaccountModel] = None):
     if method != SendMethod.email_mandrill:
-        return JSONResponse({'message': f'no subaccount creation required for "{method}"'})
+        return JSONResponse({'message': f'no subaccount creation required for "{method.value}"'})
     assert m
 
     r: Response = await glove.mandrill.post(

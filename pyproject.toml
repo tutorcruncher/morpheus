@@ -58,13 +58,13 @@ app = [
     "chevron==0.14.0",
     "click==8.1.3",
     "fastapi==0.68.1",
-    "foxglove-web==0.0.28",
+    "foxglove-web==0.0.33",
     "jinja2==3.1.2",
     "libsass==0.22.0",
     "misaka==2.1.1",
     "MarkupSafe==2.1.2",
     "phonenumbers==8.13.6",
-    "pydantic[email]==1.9.2",
+    "pydantic[email]==1.10.21",
     "python-multipart==0.0.6",
     "python-pdf==0.39",
     "requests==2.28.2",
@@ -81,10 +81,10 @@ app = [
 ]
 dev = [
     "aiohttp==3.9.5",
-    "coverage==7.2.1",
+    "coverage==7.6.1",
     "docutils==0.19",
-    "pytest==7.2.1",
-    "pytest-cov==4.0.0",
+    "pytest==8.3.5",
+    "pytest-cov==6.1.1",
     "pytest-mock==3.10.0",
     "pytest-sugar==0.9.6",
     "pytest-timeout==2.1.0",
@@ -97,6 +97,8 @@ testpaths = ["tests"]
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:asyncio.base_events",
+    "ignore::aiohttp.web_exceptions.NotAppKeyWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 timeout = 20
 markers = [
