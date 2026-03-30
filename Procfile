@@ -1,2 +1,2 @@
-web: foxglove web
-worker: foxglove worker
+web: uv run foxglove web
+worker: uv run foxglove worker
