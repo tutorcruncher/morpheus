@@ -21,6 +21,14 @@ lint:
 test:
 	uv run pytest tests/ --cov=src
 
+.PHONY: run-dev
+run-dev:
+	uv run foxglove web
+
+.PHONY: run-worker
+run-worker:
+	uv run foxglove worker
+
 .PHONY: reset-db
 reset-db:
 	psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS morpheus"
