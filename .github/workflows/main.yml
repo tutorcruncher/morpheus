@@ -56,7 +56,7 @@ jobs:
     - name: codecov
       uses: codecov/codecov-action@v5
       env:
-        CODECOV_TOKEN: '1b5eacd0-b422-4654-970d-84acdb03cf53'
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   deploy:
     needs:

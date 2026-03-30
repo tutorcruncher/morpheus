@@ -23,10 +23,9 @@ if settings.logfire_token:
         environment=settings.environment,
         service_name='morpheus',
         distributed_tracing=True,
-        scrubbing=False,
     )
 
-glove._settings = Settings()
+glove._settings = settings
 
 
 async def startup():

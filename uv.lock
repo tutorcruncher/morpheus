@@ -990,7 +990,7 @@ app = [
     { name = "ipython", specifier = "==8.11.0" },
     { name = "jinja2", specifier = "==3.1.2" },
     { name = "libsass", specifier = "==0.22.0" },
-    { name = "logfire", extras = ["fastapi", "requests"] },
+    { name = "logfire", extras = ["fastapi", "requests"], specifier = "==4.31.0" },
     { name = "markupsafe", specifier = "==2.1.2" },
     { name = "misaka", specifier = "==2.1.1" },
     { name = "openai", specifier = "==1.85.0" },
@@ -1011,13 +1011,13 @@ dev = [
     { name = "aiohttp", specifier = "==3.9.5" },
     { name = "coverage", specifier = "==7.6.1" },
     { name = "docutils", specifier = "==0.19" },
-    { name = "pre-commit" },
+    { name = "pre-commit", specifier = "==4.5.1" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "pytest-cov", specifier = "==6.1.1" },
     { name = "pytest-mock", specifier = "==3.10.0" },
     { name = "pytest-sugar", specifier = "==0.9.6" },
     { name = "pytest-timeout", specifier = "==2.1.0" },
-    { name = "ruff" },
+    { name = "ruff", specifier = "==0.15.8" },
 ]
 
 [[package]]
