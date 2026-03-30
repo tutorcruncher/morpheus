@@ -103,4 +103,4 @@ class Settings(BaseSettings):
         def parse_env_var(cls, field_name: str, raw_val: str):
             if field_name == 'redis_settings':
                 return raw_val
-            return cls.json_loads(raw_val)
+            return super().parse_env_var(field_name, raw_val)

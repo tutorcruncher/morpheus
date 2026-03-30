@@ -42,7 +42,7 @@ jobs:
     - name: install uv
       uses: astral-sh/setup-uv@v4
       with:
-        version: "latest"
+        version: "0.10.4"
 
     - name: install dependencies
       run: make install-dev
@@ -90,7 +90,7 @@ jobs:
       - name: install uv
         uses: astral-sh/setup-uv@v4
         with:
-          version: "latest"
+          version: "0.10.4"
 
       - name: build
         run: uv build

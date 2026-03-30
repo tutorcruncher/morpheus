@@ -9,13 +9,13 @@ install-dev:
 
 .PHONY: format
 format:
-	uv run --active ruff check --fix src tests
-	uv run --active ruff format src tests
+	uv run ruff check --fix src tests
+	uv run ruff format src tests
 
 .PHONY: lint
 lint:
-	uv run --active ruff check src tests
-	uv run --active ruff format --check src tests
+	uv run ruff check src tests
+	uv run ruff format --check src tests
 
 .PHONY: test
 test:

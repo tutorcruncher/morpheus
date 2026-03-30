@@ -9,5 +9,8 @@ class RegexStr(str):
             return NotImplemented
         return bool(re.search(str(self), other))
 
+    def __hash__(self):
+        return super().__hash__()
+
     def __repr__(self):
         return f'RegexStr({super().__repr__()})'
