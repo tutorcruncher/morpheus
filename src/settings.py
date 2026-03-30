@@ -98,3 +98,9 @@ class Settings(BaseSettings):
             'logfire_token': {'env': 'LOGFIRE_TOKEN'},
         }
         env_file = '.env'
+
+        @classmethod
+        def parse_env_var(cls, field_name: str, raw_val: str):
+            if field_name == 'redis_settings':
+                return raw_val
+            return cls.json_loads(raw_val)
