@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "morpheus-mail"
-version = "1.0.41"
+version = "1.0.42"
 description = "Email rendering engine from morpheus"
 readme = {text = """
 Note: this only installs the rendering logic for `morpheus <https://github.com/tutorcruncher/morpheus>` \

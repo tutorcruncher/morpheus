@@ -919,7 +919,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/fa/87/b1020510a00aba1b9
 
 [[package]]
 name = "morpheus-mail"
-version = "1.0.41"
+version = "1.0.42"
 source = { editable = "." }
 dependencies = [
     { name = "chevron" },
