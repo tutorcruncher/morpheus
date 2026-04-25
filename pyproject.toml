@@ -1,0 +1,112 @@
+[project]
+name = "morpheus"
+version = "0.1.0"
+description = "TutorCruncher's email and SMS dispatch service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]==0.135.3",
+    "sqlmodel==0.0.38",
+    "uvicorn==0.44.0",
+    "pydantic==2.12.5",
+    "pydantic-settings==2.13.1",
+    "python-multipart==0.0.26",
+    "celery==5.6.3",
+    "redis==7.4.0",
+    "logfire[celery,fastapi,requests,sqlalchemy]==4.32.0",
+    "sentry-sdk==2.57.0",
+    "python-dotenv==1.2.2",
+    "psycopg2-binary==2.9.11",
+    "httpx==0.28.1",
+    "gunicorn==25.3.0",
+    "chevron==0.14.0",
+    "libsass==0.23.0",
+    "python-pdf==0.39",
+    "phonenumbers==8.13.55",
+    "ua-parser==1.0.1",
+    "MarkupSafe==3.0.2",
+    "jinja2==3.1.5",
+    "pydantic[email]",
+    "misaka>=2.1.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.15.10",
+    "ty==0.0.24",
+    "pytest==9.0.3",
+    "pytest-sugar==1.1.1",
+    "pre-commit==4.5.1",
+    "coverage==7.13.5",
+    "pytest-cov==7.1.0",
+    "pytest-env==1.6.0",
+    "pytest-timeout==2.4.0",
+    "pytest-xdist==3.8.0",
+    "dirty-equals==0.11",
+    "ipython==9.12.0",
+    "toml==0.10.2",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = ["I"]
+ignore = ['E402']
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+precision = 2
+exclude_lines = [
+    'pragma: no cover',
+    'def __repr__',
+    'def __str__',
+    'raise NotImplementedError',
+    'raise NotImplemented',
+    'print',
+    'if TYPE_CHECKING',
+    "if __name__ == '__main__':",
+]
+
+[tool.pytest.ini_options]
+addopts = "--tb=native"
+timeout = 30
+env = [
+    "TZ=UTC",
+    "TESTING=True",
+    "DATABASE_URL=postgresql://postgres@localhost:5432/morpheus_test",
+    "REDIS_URL=redis://localhost:6379/4",
+    "AUTH_KEY=testing",
+    "USER_AUTH_KEY=insecure",
+    "MANDRILL_KEY=good-mandrill-testing-key",
+    "MANDRILL_WEBHOOK_KEY=testing-mandrill-webhook-key",
+    "MESSAGEBIRD_KEY=testing-mb-key",
+    "HOST_NAME=testing.example.com",
+    "CLICK_HOST_NAME=click.example.com",
+]
+filterwarnings = [
+    'error',
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore::logfire._internal.config.LogfireNotConfiguredWarning",
+    "ignore::DeprecationWarning",
+]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["app/"]
+exclude = ["tests/", ".venv/", "__pycache__/", "src/"]
+
+[tool.ty.analysis]
+respect-type-ignore-comments = true

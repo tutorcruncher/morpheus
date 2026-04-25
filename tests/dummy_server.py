@@ -1,145 +1,121 @@
-import asyncio
+"""Sync httpx.MockTransport routes for Mandrill / Messagebird stand-in."""
+import json
 import re
-from aiohttp import web
-from aiohttp.web import Response, json_response
+import time
+
+import httpx
 
 
-async def mandrill_send_view(request):
-    data = await request.json()
-
-    message = data.get('message') or {}
-    if message.get('subject') == '__slow__':
-        await asyncio.sleep(30)
-    elif message.get('subject') == '__502__':
-        return Response(status=502)
-    elif message.get('subject') == '__500_nginx__':
-        return Response(text='<hr><center>nginx/1.12.2</center>', status=500)
-    elif message.get('subject') == '__500__':
-        return Response(text='foobar', status=500)
-
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    to_email = message['to'][0]['email']
-    return json_response(
-        [{'email': to_email, '_id': re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{to_email}'), 'status': 'queued'}]
-    )
+class DummyState:
+    def __init__(self) -> None:
+        self.mandrill_subaccounts: dict = {}
+        self.log: list = []
 
 
-async def mandrill_sub_account_add(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    sa_id = data['id']
-    if sa_id == 'broken':
-        return json_response({'error': 'snap something unknown went wrong'}, status=500)
-    elif sa_id in request.app['mandrill_subaccounts']:
-        return json_response({'message': f'A subaccount with id {sa_id} already exists'}, status=500)
-    else:
-        request.app['mandrill_subaccounts'][sa_id] = data
-        return json_response({'message': "subaccount created (this isn't the same response as mandrill)"})
+def _json(data, status: int = 200) -> httpx.Response:
+    return httpx.Response(status_code=status, json=data)
 
 
-async def mandrill_sub_account_delete(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    sa_id = data['id']
-    if sa_id == 'broken1' or sa_id not in request.app['mandrill_subaccounts']:
-        return json_response({'error': 'snap something unknown went wrong'}, status=500)
-    elif 'name' not in request.app['mandrill_subaccounts'][sa_id]:
-        return json_response(
-            {'message': f"No subaccount exists with the id '{sa_id}'", 'name': 'Unknown_Subaccount'}, status=500
-        )
-    else:
-        request.app['mandrill_subaccounts'][sa_id] = data
-        return json_response({'message': "subaccount deleted (this isn't the same response as mandrill)"})
+def _text(text: str, status: int = 200) -> httpx.Response:
+    return httpx.Response(status_code=status, text=text)
 
 
-async def mandrill_sub_account_info(request):
-    data = await request.json()
-    if data['key'] != 'good-mandrill-testing-key':
-        return json_response({'auth': 'failed'}, status=403)
-    sa_id = data['id']
-    sa_info = request.app['mandrill_subaccounts'].get(sa_id)
-    if sa_info:
-        return json_response({'subaccount_info': sa_info, 'sent_total': 200 if sa_id == 'lots-sent' else 42})
+def make_handler(state: DummyState):
+    def handler(request: httpx.Request) -> httpx.Response:
+        state.log.append(request)
+        path = request.url.path
+        method = request.method
+        body = request.content
+        try:
+            data = json.loads(body) if body else {}
+        except (ValueError, TypeError):
+            data = {}
 
+        # Mandrill ---------------------------------------
+        if path == '/mandrill/messages/send.json' and method == 'POST':
+            message = data.get('message') or {}
+            subject = message.get('subject')
+            if subject == '__slow__':
+                raise httpx.ReadTimeout('simulated timeout', request=request)
+            elif subject == '__502__':
+                return _text('', 502)
+            elif subject == '__500_nginx__':
+                return _text('<hr><center>nginx/1.12.2</center>', 500)
+            elif subject == '__500__':
+                return _text('foobar', 500)
 
-async def mandrill_webhook_list(request):
-    return json_response(
-        [
-            {
-                'url': 'https://example.com/webhook/mandrill/',
-                'auth_key': 'existing-auth-key',
-                'description': 'testing existing key',
-            }
-        ]
-    )
+            if data.get('key') != 'good-mandrill-testing-key':
+                return _json({'auth': 'failed'}, 403)
+            to_email = message['to'][0]['email']
+            return _json(
+                [
+                    {
+                        'email': to_email,
+                        '_id': re.sub(r'[^a-zA-Z0-9\-]', '', f'mandrill-{to_email}'),
+                        'status': 'queued',
+                    }
+                ]
+            )
 
+        if path == '/mandrill/subaccounts/add.json' and method == 'POST':
+            if data.get('key') != 'good-mandrill-testing-key':
+                return _json({'auth': 'failed'}, 403)
+            sa_id = data['id']
+            if sa_id == 'broken':
+                return _json({'error': 'snap something unknown went wrong'}, 500)
+            elif sa_id in state.mandrill_subaccounts:
+                return _json({'message': f'A subaccount with id {sa_id} already exists'}, 500)
+            state.mandrill_subaccounts[sa_id] = data
+            return _json({'message': "subaccount created (this isn't the same response as mandrill)"})
 
-async def mandrill_webhook_add(request):
-    data = await request.json()
-    if 'fail' in data['url']:
-        return Response(status=400)
-    return json_response({'auth_key': 'new-auth-key', 'description': 'testing new key'})
+        if path == '/mandrill/subaccounts/delete.json' and method == 'POST':
+            if data.get('key') != 'good-mandrill-testing-key':
+                return _json({'auth': 'failed'}, 403)
+            sa_id = data['id']
+            if sa_id == 'broken1' or sa_id not in state.mandrill_subaccounts:
+                return _json({'error': 'snap something unknown went wrong'}, 500)
+            elif 'name' not in state.mandrill_subaccounts[sa_id]:
+                return _json(
+                    {'message': f"No subaccount exists with the id '{sa_id}'", 'name': 'Unknown_Subaccount'},
+                    500,
+                )
+            state.mandrill_subaccounts[sa_id] = data
+            return _json({'message': "subaccount deleted (this isn't the same response as mandrill)"})
 
+        if path == '/mandrill/subaccounts/info.json' and method == 'GET':
+            # GET requests come through as POST in mandrill ApiSession; data is JSON-bodied
+            if data.get('key') != 'good-mandrill-testing-key':
+                return _json({'auth': 'failed'}, 403)
+            sa_id = data.get('id')
+            sa_info = state.mandrill_subaccounts.get(sa_id)
+            if sa_info:
+                return _json({'subaccount_info': sa_info, 'sent_total': 200 if sa_id == 'lots-sent' else 42})
+            return _json({}, 200)
 
-async def messagebird_hlr_post(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    data = await request.json()
-    return json_response(
-        status=201,
-        data={
-            'id': data['msisdn'],
-            'href': 'https://example.com/messagebird/hlr/testing1234',
-            'msisdn': data['msisdn'],
-        },
-    )
+        if path == '/mandrill/webhooks/list.json' and method == 'GET':
+            return _json(
+                [
+                    {
+                        'url': 'https://example.com/webhook/mandrill/',
+                        'auth_key': 'existing-auth-key',
+                        'description': 'testing existing key',
+                    }
+                ]
+            )
 
+        if path == '/mandrill/webhooks/add.json' and method == 'POST':
+            if 'fail' in (data.get('url') or ''):
+                return _text('', 400)
+            return _json({'auth_key': 'new-auth-key', 'description': 'testing new key'})
 
-async def messagebird_lookup(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    if '447888888888' in request.path:
-        return json_response({})
-    elif '447777777777' in request.path:
-        request_number = len(request.app['log'])
-        if request_number == 2:
-            return json_response({'status': 'active', 'network': 'o2'})
-        return json_response({})
-    elif '447877777777' in request.path:
-        return web.Response(body="{'error': 'Test error', 'code': 20}", content_type='application/json', status=404)
-    return json_response({'status': 'active', 'network': 23430})
+        # Messagebird ------------------------------------
+        if path == '/messagebird/messages' and method == 'POST':
+            assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
+            return _json(
+                {'id': '6a23b2037595620ca8459a3b00026003', 'recipients': {'totalCount': len(data['recipients'])}},
+                201,
+            )
 
+        return _text(f'no dummy route for {method} {path}', 404)
 
-async def messagebird_send(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    data = await request.json()
-    return json_response(
-        {'id': '6a23b2037595620ca8459a3b00026003', 'recipients': {'totalCount': len(data['recipients'])}}, status=201
-    )
-
-
-async def messagebird_pricing(request):
-    assert request.headers.get('Authorization') == 'AccessKey good-messagebird-testing-key'
-    return json_response(
-        {
-            'prices': [
-                {'mcc': '0', 'countryName': 'Default rate', 'price': '0.0400'},
-                {'mcc': '0', 'countryName': 'United Kingdom', 'price': '0.0200'},
-            ]
-        }
-    )
-
-
-routes = [
-    web.post('/mandrill/messages/send.json', mandrill_send_view),
-    web.post('/mandrill/subaccounts/add.json', mandrill_sub_account_add),
-    web.post('/mandrill/subaccounts/delete.json', mandrill_sub_account_delete),
-    web.get('/mandrill/subaccounts/info.json', mandrill_sub_account_info),
-    web.get('/mandrill/webhooks/list.json', mandrill_webhook_list),
-    web.post('/mandrill/webhooks/add.json', mandrill_webhook_add),
-    web.post('/messagebird/hlr', messagebird_hlr_post),
-    web.get('/messagebird/hlr/{id}', messagebird_lookup),
-    web.post('/messagebird/messages', messagebird_send),
-    web.get('/messagebird/pricing/sms/outbound', messagebird_pricing),
-]
+    return handler

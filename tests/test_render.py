@@ -1,6 +1,6 @@
 import pytest
 
-from src.render.main import MessageTooLong, SmsLength, sms_length
+from app.render.main import MessageTooLong, SmsLength, sms_length
 
 
 def idfn(v):

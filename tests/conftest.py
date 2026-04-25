@@ -1,208 +1,322 @@
-import asyncio
-import os
-import pytest
 import re
 import uuid
-from arq import Worker
-from buildpg import Values, asyncpg
-from buildpg.asyncpg import BuildPgConnection
-from foxglove import glove
-from foxglove.db import PgMiddleware, prepare_database
-from foxglove.db.helpers import DummyPgPool, SyncDb
-from foxglove.db.migrations import run_migrations, run_patch
-from foxglove.db.patches import import_patches
-from foxglove.test_server import create_dummy_server
-from httpx import URL, AsyncClient
 from pathlib import Path
-from starlette.testclient import TestClient
-from typing import Any, Callable
-from unittest.mock import AsyncMock
+from typing import Any
 from urllib.parse import urlencode
 
-from src.main import app
-from src.schemas.messages import EmailSendModel, SendMethod
-from src.settings import Settings
-from src.spam.email_checker import EmailSpamChecker
-from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
-from src.worker import shutdown, startup, worker_settings
+import httpx
+import pytest
+from celery import current_app as celery_current_app
+from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlmodel import select
 
-from . import dummy_server
-
-
-@pytest.fixture(name='loop')
-def fix_loop(settings):
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop
+from app.core import database as db_module
+from app.core.config import settings as app_settings
+from app.core.database import SessionLocal, engine, get_db
+from app.ext import clients as clients_module
+from app.main import app
+from app.messages.models import Company, Event, Link, Message, MessageGroup
+from app.messages.schemas import EmailSendModel
+from tests import dummy_server
 
 
-DB_DSN = os.getenv('TEST_DATABASE_URL', 'postgresql://postgres@localhost:5432/morpheus_test')
+THIS_DIR = Path(__file__).parent.resolve()
 
 
-@pytest.fixture(name='settings')
-def fix_settings(tmpdir):
-    settings = Settings(
-        dev_mode=False,
-        test_mode=True,
-        pg_dsn=DB_DSN,
-        test_output=Path(tmpdir),
-        delete_old_emails=True,
-        update_aggregation_view=True,
-        mandrill_url='http://localhost:8000/mandrill/',
-        messagebird_url='http://localhost:8000/messagebird/',
-        mandrill_key='good-mandrill-testing-key',
-        mandrill_webhook_key='testing-mandrill-api-key',
-        messagebird_key='good-messagebird-testing-key',
-        auth_key='testing-key',
-        secret_key='testkey',
-        origin='https://example.com',
-        llm_model_name='test-llm-model',
-    )
-    assert not settings.dev_mode
-    glove._settings = settings
-
-    yield settings
-    glove._settings = None
+def _truncate_all(conn) -> None:
+    conn.execute(text(
+        'TRUNCATE TABLE links, events, messages, message_groups, companies RESTART IDENTITY CASCADE'
+    ))
 
 
-@pytest.fixture(name='await_')
-def fix_await(loop):
-    return loop.run_until_complete
+@pytest.fixture(scope='session', autouse=True)
+def _create_schema():
+    """Create the schema once per test session. Tests reset state via TRUNCATE between tests."""
+    db_module.create_db_and_tables()
+    yield
 
 
-@pytest.fixture(name='raw_conn')
-def fix_raw_conn(settings, await_: Callable):
-    await_(prepare_database(settings, overwrite_existing=True, run_migrations=False))
-
-    conn = await_(asyncpg.connect_b(dsn=settings.pg_dsn, server_settings={'jit': 'off'}))
-
-    patches = import_patches(settings)
-    # we can skip the performance_step patches, as prepare_database function uses latest models.sql which already
-    # has the optimized schema that the performance patches were trying to achieve
-    patches = [p for p in patches if not p.func.__name__.startswith('performance_step')]
-    for patch in patches:
-        if patch.direct:
-            await_(run_patch(conn, patch, patch.func.__name__, True))
-    await_(run_migrations(settings, patches, live=True))
-    yield conn
-
-    await_(conn.close())
+@pytest.fixture(autouse=True)
+def _eager_celery():
+    celery_current_app.conf.task_always_eager = True
+    celery_current_app.conf.task_eager_propagates = True
+    yield
+    celery_current_app.conf.task_always_eager = False
 
 
-@pytest.fixture(name='db_conn')
-def fix_db_conn(settings, raw_conn: BuildPgConnection, await_: Callable):
-    async def start():
-        tr_ = raw_conn.transaction()
-        await tr_.start()
-        return tr_
-
-    tr = await_(start())
-    yield DummyPgPool(raw_conn)
-
-    async def end():
-        if not raw_conn.is_closed():
-            await tr.rollback()
-
-    await_(end())
+_TASK_COUNTER = {'count': 0}
 
 
-@pytest.fixture(name='sync_db')
-def fix_sync_db(db_conn, loop):
-    return SyncDb(db_conn, loop)
+@pytest.fixture(autouse=True)
+def _reset_task_counter():
+    _TASK_COUNTER['count'] = 0
+    yield
 
 
-@pytest.fixture(name='cli')
-def fix_client(glove, settings: Settings, sync_db, worker):
-    app = settings.create_app()
-    app.user_middleware = []
-    app.add_middleware(PgMiddleware)
-    app.middleware_stack = app.build_middleware_stack()
-    app.state.webhook_auth_key = b'testing'
-    glove._settings = settings
-    with TestClient(app) as client:
-        yield client
+@pytest.fixture(autouse=True)
+def _patch_task_counter(monkeypatch):
+    """Wrap each registered Celery task so we can count invocations."""
+    from app.core.celery import celery_app
+
+    originals = {}
+    for task_name, task in list(celery_app.tasks.items()):
+        if not task_name.startswith('app.'):
+            continue
+        original_run = task.run
+        originals[task_name] = original_run
+
+        def make_wrapped(orig):
+            def _w(*args, **kwargs):
+                _TASK_COUNTER['count'] += 1
+                return orig(*args, **kwargs)
+
+            return _w
+
+        task.run = make_wrapped(original_run)
+
+    yield
+
+    for task_name, original_run in originals.items():
+        celery_app.tasks[task_name].run = original_run
 
 
-class CustomAsyncClient(AsyncClient):
-    def __init__(self, *args, settings, local_server, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.settings: Settings = settings
-        self.scheme, host_port = local_server.split('://')
-        self.host, port = host_port.split(':')
-        self.port = int(port)
+@pytest.fixture(autouse=True)
+def _clean_redis():
+    from app.messages.tasks import get_redis
 
-    def request(self, method, url, **kwargs):
-        new_url = URL(url).copy_with(scheme=self.scheme, host=self.host, port=self.port)
-        return super().request(method, new_url, **kwargs)
+    redis = get_redis()
+    redis.flushdb()
+    yield
+    redis.flushdb()
+
+
+class _SyncLoop:
+    """Compatibility shim: tests use `loop.run_until_complete(coro)` extensively.
+
+    The new app is sync, but legacy worker tests still build coroutines. This shim runs them inline.
+    """
+
+    def run_until_complete(self, awaitable):
+        import asyncio
+
+        if asyncio.iscoroutine(awaitable) or asyncio.isfuture(awaitable):
+            return asyncio.get_event_loop().run_until_complete(awaitable)
+        return awaitable
+
+
+@pytest.fixture
+def loop():
+    return _SyncLoop()
+
+
+class _LegacyRetry(Exception):
+    """Raised by run_send_email when the SendEmail logic asks for a retry.
+
+    Mimics the legacy arq.Retry shape (`defer_score` in ms) so existing test assertions
+    (`assert exc_info.value.defer_score == 5_000`) keep working.
+    """
+
+    def __init__(self, defer_score: int) -> None:
+        self.defer_score = defer_score
+
+
+class _LegacyTask:
+    """Synthetic celery-task stand-in passed to SendEmail in direct-call tests."""
+
+    def __init__(self, job_try: int) -> None:
+        self.request = type('Req', (), {'retries': max(job_try - 1, 0)})()
+
+    def retry(self, exc: Exception | None = None, countdown: int | None = None) -> None:
+        raise _LegacyRetry(int((countdown or 0) * 1000))
+
+
+@pytest.fixture
+def worker_ctx(settings):
+    """Compatibility shim: legacy tests expected an arq-style ctx dict.
+
+    The new Celery worker doesn't use this — but tests still pass it through the
+    `run_send_email` helper, which reads `job_try` from this dict to drive retry behaviour.
+    """
+    return {'job_try': 1, 'redis': None}
+
+
+def _run_send_email(ctx, group_id, company_id, recipient, m):
+    """Execute the SendEmail logic synchronously, mimicking the legacy worker function signature."""
+    from app.messages.tasks import SendEmail
+
+    task = _LegacyTask(job_try=ctx.get('job_try', 1))
+    SendEmail(task, group_id, company_id, recipient, m).run()
+
+
+@pytest.fixture
+def worker_send_email():
+    return _run_send_email
+
+
+@pytest.fixture
+def settings(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_settings, 'test_output', tmp_path)
+    monkeypatch.setattr(app_settings, 'mandrill_url', 'http://dummy/mandrill/')
+    monkeypatch.setattr(app_settings, 'messagebird_url', 'http://dummy/messagebird/')
+    monkeypatch.setattr(app_settings, 'mandrill_key', 'good-mandrill-testing-key')
+    monkeypatch.setattr(app_settings, 'mandrill_webhook_key', 'testing-mandrill-api-key')
+    monkeypatch.setattr(app_settings, 'messagebird_key', 'good-messagebird-testing-key')
+    monkeypatch.setattr(app_settings, 'auth_key', 'testing-key')
+    monkeypatch.setattr(app_settings, 'host_name', 'localhost')
+    monkeypatch.setattr(app_settings, 'click_host_name', 'click.example.com')
+    monkeypatch.setattr(app_settings, 'delete_old_emails', True)
+    monkeypatch.setattr(app_settings, 'update_aggregation_view', True)
+    return app_settings
+
+
+class _DummyServer:
+    """Wraps the mock transport state and provides a `.log` of formatted request strings.
+
+    Legacy aiohttp test server exposed log via `dummy_server.app['log']`. We mimic that.
+    """
+
+    def __init__(self) -> None:
+        self.state = dummy_server.DummyState()
+        self.log: list[str] = []
+        self.server_name = 'http://dummy'
+        self.app: dict[str, Any] = {'log': self.log, 'mandrill_subaccounts': self.state.mandrill_subaccounts}
+
+    def record(self, method: str, path: str, status: int) -> None:
+        self.log.append(f'{method} {path} > {status}')
+
+
+@pytest.fixture
+def dummy_state(_dummy_server) -> dummy_server.DummyState:
+    return _dummy_server.state
 
 
 @pytest.fixture(name='dummy_server')
-def _fix_dummy_server(loop, settings):
-    ctx = {'mandrill_subaccounts': {}}
-    ds = loop.run_until_complete(create_dummy_server(loop, extra_routes=dummy_server.routes, extra_context=ctx))
-
-    custom_client = CustomAsyncClient(settings=settings, local_server=ds.server_name)
-    glove._http = custom_client
-    yield ds
-
-    loop.run_until_complete(ds.stop())
+def _dummy_server_fixture(_dummy_server):
+    return _dummy_server
 
 
-class Worker4Testing(Worker):
-    def test_run(self, max_jobs: int = None) -> int:
-        return self.loop.run_until_complete(self.run_check(max_burst_jobs=max_jobs))
-
-    def test_close(self) -> None:
-        # pool is closed by glove, so don't want to mess with it here
-        self._pool = None
-        self.loop.run_until_complete(self.close())
+@pytest.fixture
+def _dummy_server():
+    return _DummyServer()
 
 
-@pytest.fixture(name='glove')
-def fix_glove(db_conn, await_: Callable[..., Any]):
-    glove.pg = db_conn
+@pytest.fixture(autouse=True)
+def _patch_http_clients(_dummy_server, monkeypatch):
+    """Replace the shared httpx.Client with one routed to the dummy mock transport."""
+    handler = dummy_server.make_handler(_dummy_server.state)
 
-    async def start():
-        await glove.startup(run_migrations=False)
-        await glove.redis.flushdb()
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        response = handler(request)
+        _dummy_server.record(request.method, request.url.path, response.status_code)
+        return response
 
-    await_(start())
-
-    yield glove
-
-    await_(glove.shutdown())
-
-
-@pytest.fixture(name='worker_ctx')
-def _fix_worker_ctx(loop, settings):
-    ctx = dict(settings=settings)
-    loop.run_until_complete(startup(ctx))
-    yield ctx
+    transport = httpx.MockTransport(wrapped)
+    mock_client = httpx.Client(transport=transport)
+    monkeypatch.setattr(clients_module, '_default_client', mock_client)
+    yield
+    mock_client.close()
 
 
-@pytest.fixture(name='worker')
-def fix_worker(db_conn, glove, worker_ctx):
-    functions = worker_settings['functions']
-    worker = Worker4Testing(
-        functions=functions,
-        redis_pool=glove.redis,
-        on_startup=startup,
-        on_shutdown=shutdown,
-        burst=True,
-        poll_delay=0.001,
-        ctx=worker_ctx,
-    )
-
-    yield worker
-
-    worker.test_close()
+@pytest.fixture
+def db(settings):
+    """Per-test database session. Truncates tables on entry, leaves DB clean on exit."""
+    with engine.begin() as conn:
+        _truncate_all(conn)
+    session = SessionLocal()
+    yield session
+    session.close()
+    with engine.begin() as conn:
+        _truncate_all(conn)
 
 
-@pytest.fixture()
-def send_email(cli, worker, loop):
+@pytest.fixture
+def cli(settings, db):
+    """Sync TestClient with `db` overriding the get_db dependency."""
+
+    def _override():
+        try:
+            yield db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = _override
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.pop(get_db, None)
+
+
+def _stringify_json(value: Any) -> Any:
+    """Mimic the legacy SyncDb behaviour: JSONB columns come back as text strings, not dicts."""
+    import json as _json
+
+    if isinstance(value, dict):
+        return _json.dumps(value)
+    return value
+
+
+class SyncDb:
+    """Lightweight test helper that mimics the old foxglove SyncDb shape using a fresh session per call."""
+
+    def fetchval(self, sql: str, *args) -> Any:
+        with SessionLocal() as s:
+            row = s.execute(text(_pg_to_named(sql)), _named_args(args)).first()
+            if row is None:
+                return None
+            return _stringify_json(row[0])
+
+    def fetchrow(self, sql: str, *args) -> Any:
+        with SessionLocal() as s:
+            row = s.execute(text(_pg_to_named(sql)), _named_args(args)).mappings().first()
+            if row is None:
+                return None
+            return {k: _stringify_json(v) for k, v in dict(row).items()}
+
+    def fetch(self, sql: str, *args) -> list:
+        with SessionLocal() as s:
+            return [
+                {k: _stringify_json(v) for k, v in dict(r).items()}
+                for r in s.execute(text(_pg_to_named(sql)), _named_args(args)).mappings()
+            ]
+
+    def execute(self, sql: str, *args) -> int:
+        with SessionLocal() as s:
+            res = s.execute(text(_pg_to_named(sql)), _named_args(args))
+            s.commit()
+            return res.rowcount
+
+
+def _pg_to_named(sql: str) -> str:
+    """Translate `$1, $2 ...` placeholders to `:p1, :p2 ...` for SQLAlchemy `text()`."""
+    return re.sub(r'\$(\d+)', lambda m: f':p{m.group(1)}', sql)
+
+
+def _named_args(args: tuple) -> dict:
+    return {f'p{i + 1}': v for i, v in enumerate(args)}
+
+
+@pytest.fixture
+def sync_db(db):
+    return SyncDb()
+
+
+@pytest.fixture
+def worker():
+    """Compatibility shim: Celery is eager so jobs run synchronously when enqueued.
+
+    `test_run()` returns the number of tasks the test expected to run; we just return that count.
+    Tests use it to assert work happened — since tasks are inline already, it's a no-op count.
+    """
+
+    class _EagerWorker:
+        def test_run(self, max_jobs: int | None = None) -> int:
+            return _TASK_COUNTER['count']
+
+    return _EagerWorker()
+
+
+@pytest.fixture
+def send_email(cli, worker):
     def _send_email(status_code=201, **extra):
         data = dict(
             uid=str(uuid.uuid4()),
@@ -216,18 +330,17 @@ def send_email(cli, worker, loop):
         )
         data.update(**extra)
         r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-        assert r.status_code == status_code
+        assert r.status_code == status_code, r.text
         worker.test_run()
         if len(data['recipients']) != 1:
             return NotImplemented
-        else:
-            return re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
+        return re.sub(r'[^a-zA-Z0-9\-]', '', f'{data["uid"]}-{data["recipients"][0]["address"]}')
 
     return _send_email
 
 
 @pytest.fixture
-def send_sms(cli, worker, loop):
+def send_sms(cli, worker):
     def _send_message(**extra):
         data = dict(
             uid=str(uuid.uuid4()),
@@ -240,7 +353,7 @@ def send_sms(cli, worker, loop):
         )
         data.update(**extra)
         r = cli.post('/send/sms/', json=data, headers={'Authorization': 'testing-key'})
-        assert r.status_code == 201
+        assert r.status_code == 201, r.text
         worker.test_run()
         return data['uid'] + '-447896541236'
 
@@ -248,7 +361,7 @@ def send_sms(cli, worker, loop):
 
 
 @pytest.fixture
-def send_webhook(cli, worker, loop):
+def send_webhook(cli, worker):
     def _send_webhook(ext_id, price, **extra):
         url_args = {
             'id': ext_id,
@@ -259,72 +372,40 @@ def send_webhook(cli, worker, loop):
             'price[amount]': price,
             'test': True,
         }
-
         url_args.update(**extra)
         r = cli.get(f'/webhook/messagebird/?{urlencode(url_args)}')
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         worker.test_run()
 
     return _send_webhook
 
 
-@pytest.fixture(name='call_send_emails')
-def _fix_call_send_emails(glove, sync_db):
+@pytest.fixture
+def call_send_emails(db):
     def run(**kwargs):
         base_kwargs = dict(
             uid=str(uuid.uuid4()),
             subject_template='hello',
             company_code='test',
             from_address='testing@example.com',
-            method=SendMethod.email_mandrill,
+            method='email-mandrill',
             recipients=[],
         )
         m = EmailSendModel(**dict(base_kwargs, **kwargs))
-        company_id = sync_db.fetchval('insert into companies (code) values ($1) returning id', m.company_code)
-        group_id = sync_db.fetchval_b(
-            'insert into message_groups (:values__names) values :values returning id',
-            values=Values(
-                uuid=m.uid,
-                company_id=company_id,
-                message_method=m.method.value,
-                from_email=m.from_address.email,
-                from_name=m.from_address.name,
-            ),
+        company = Company(code=m.company_code)
+        db.add(company)
+        db.commit()
+        db.refresh(company)
+        group = MessageGroup(
+            uuid=m.uid,
+            company_id=company.id,
+            message_method=m.method.value,
+            from_email=m.from_address.email,
+            from_name=m.from_address.name,
         )
-        return group_id, company_id, m
+        db.add(group)
+        db.commit()
+        db.refresh(group)
+        return group.id, company.id, m
 
     return run
-
-
-@pytest.fixture(autouse=True)
-def patch_spam_detection(request, settings: Settings, glove):
-    # Create a fake response object
-    class FakeResponse:
-        output_parsed = (
-            SpamCheckResult(spam=True, reason='This is spam for testing purposes')
-            if 'spam' in request.keywords
-            else SpamCheckResult(spam=False, reason='Not spam')
-        )
-
-    # Create a fake client with a mocked responses.parse method
-    fake_client = AsyncMock()
-    if 'spam_service_error' in request.keywords:
-        # This will RAISE OpenAIError when fake_client.responses.parse() is called
-        from openai import OpenAIError
-
-        fake_client.responses.parse.side_effect = OpenAIError('Openai test error')
-    else:
-        fake_client.responses.parse.return_value = FakeResponse()
-
-    fake_service = OpenAISpamEmailService(client=fake_client)
-    fake_cache = SpamCacheService(glove.redis)
-    fake_checker = EmailSpamChecker(fake_service, fake_cache)
-
-    from src.views.email import get_spam_checker
-
-    app.dependency_overrides[get_spam_checker] = lambda: fake_checker
-
-    yield  # let the test run
-
-    # Clean up after the test
-    app.dependency_overrides.pop(get_spam_checker, None)
