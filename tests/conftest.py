@@ -28,6 +28,9 @@ def _truncate_all(conn) -> None:
     conn.execute(text(
         'TRUNCATE TABLE links, events, messages, message_groups, companies RESTART IDENTITY CASCADE'
     ))
+    # The materialized view caches per-company message counts. Without this, tests that
+    # re-use auto-incremented company IDs see stale aggregation data from earlier tests.
+    conn.execute(text('REFRESH MATERIALIZED VIEW message_aggregation'))
 
 
 @pytest.fixture(scope='session', autouse=True)

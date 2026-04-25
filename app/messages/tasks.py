@@ -14,6 +14,7 @@ import chevron
 import httpx
 import redis as redis_lib
 from celery import Task
+from celery.exceptions import MaxRetriesExceededError
 from chevron import ChevronError
 from phonenumbers import (
     NumberParseException,
@@ -83,7 +84,34 @@ def utcnow() -> datetime:
 # ---------------- Email ----------------
 
 
-@celery_app.task(name='app.messages.tasks.send_email', bind=True, max_retries=len(EMAIL_RETRYING))
+class _SendEmailTask(Task):
+    """Celery Task subclass so we can catch retry exhaustion and write a failed Message row.
+
+    Celery raises MaxRetriesExceededError instead of re-running the task body after the final
+    retry, so the in-body `if job_try > len(EMAIL_RETRYING)` branch can never store the failure.
+    on_failure runs after retry exhaustion (and any other unhandled exception).
+    """
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):  # noqa: D401
+        if not isinstance(exc, MaxRetriesExceededError):
+            return
+        try:
+            group_id, company_id, recipient_payload, m_payload = args
+            recipient = EmailRecipientModel.model_validate(recipient_payload)
+            m = EmailSendModel.model_validate(m_payload)
+        except Exception:
+            main_logger.exception('failed to record send_email exhaustion for task %s', task_id)
+            return
+        sender = SendEmail(self, group_id, company_id, recipient, m)
+        sender._store_email_failed(MessageStatus.send_request_failed.value, 'upstream error')
+
+
+@celery_app.task(
+    name='app.messages.tasks.send_email',
+    base=_SendEmailTask,
+    bind=True,
+    max_retries=len(EMAIL_RETRYING),
+)
 def send_email(self: Task, group_id: int, company_id: int, recipient: dict, m: dict) -> None:
     recipient_model = EmailRecipientModel.model_validate(recipient)
     m_model = EmailSendModel.model_validate(m)
@@ -109,6 +137,10 @@ class SendEmail:
 
     def run(self) -> None:
         main_logger.info('Sending email to %s via %s', self.recipient.address, self.m.method)
+        # Retry exhaustion is normally handled by _SendEmailTask.on_failure (celery raises
+        # MaxRetriesExceededError instead of re-invoking the body once max_retries is reached).
+        # This guard exists for the direct-call path used by worker_send_email tests, which
+        # manually pass job_try beyond the retry budget.
         if self.job_try > len(EMAIL_RETRYING):
             main_logger.error('%s: tried to send email %d times, all failed', self.group_id, self.job_try)
             self._store_email_failed(MessageStatus.send_request_failed.value, 'upstream error')
@@ -513,12 +545,10 @@ def _update_message_status(send_method: SendMethod, m: BaseWebhook, log_each: bo
     h = hashlib.md5(f'{m.message_id}-{_to_unix_ms(m.ts)}-{m.status}-{m.extra_json(sort_keys=True)}'.encode())
     ref = f'event-{h.hexdigest()}'
     redis = get_redis()
-    v = redis.incr(ref)
-    if v > 1:
+    if not redis.set(ref, '1', ex=86400, nx=True):
         if log_each:
             main_logger.info('event already exists %s, ts: %s, status: %s. skipped', m.message_id, m.ts, m.status)
         return 'duplicate'
-    redis.expire(ref, 86400)
 
     with get_session() as db:
         message = db.exec(
@@ -573,10 +603,8 @@ def update_mandrill_webhooks(events: list) -> int:
 def store_click(link_id: int, ip: Optional[str], user_agent: Optional[str], ts: float) -> Optional[str]:
     cache_key = f'click-{link_id}-{ip}'
     redis = get_redis()
-    v = redis.incr(cache_key)
-    if v > 1:
+    if not redis.set(cache_key, '1', ex=60, nx=True):
         return 'recently_clicked'
-    redis.expire(cache_key, 60)
 
     with get_session() as db:
         link = db.exec(select(Link).where(Link.id == link_id)).first()
@@ -610,7 +638,7 @@ def update_aggregation_view() -> None:
         main_logger.info('settings.update_aggregation_view False, not running')
         return
     with get_session() as db:
-        db.exec(text('refresh materialized view message_aggregation'))
+        db.execute(text('refresh materialized view message_aggregation'))
         db.commit()
 
 
@@ -621,9 +649,9 @@ def delete_old_emails() -> None:
         return
     cutoff = datetime.now() - timedelta(days=365)
     with get_session() as db:
-        result = db.exec(
+        result = db.execute(
             text('delete from message_groups where id in (select id from message_groups where created_ts < :cutoff)'),
-            params={'cutoff': cutoff},
+            {'cutoff': cutoff},
         )
         db.commit()
-        main_logger.info('deleted %s old messages', result.rowcount if hasattr(result, 'rowcount') else '?')
+        main_logger.info('deleted %s old messages', result.rowcount)

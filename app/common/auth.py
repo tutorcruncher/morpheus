@@ -1,9 +1,10 @@
 import hashlib
 import hmac
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import Request
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ValidationError, field_validator
 
 from app.common.api.errors import HTTP403
 from app.core.config import settings
@@ -15,26 +16,51 @@ class AdminAuth:
             raise HTTP403('Invalid token')
 
 
-class UserSession(BaseModel):
+class _UserSessionData(BaseModel):
     company: str
     expires: datetime
     signature: str
 
     @field_validator('expires')
     @classmethod
-    def expires_check(cls, v: datetime) -> datetime:
-        now = datetime.now().replace(tzinfo=timezone.utc)
-        if v < now:
-            raise HTTP403('Token expired')
+    def add_tz(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
         return v
 
-    @model_validator(mode='after')
-    def sig_check(self) -> 'UserSession':
+
+class UserSession:
+    """Validates a signed query-string session and exposes `company`/`expires`.
+
+    Implemented as a callable dependency rather than a Pydantic model so that
+    auth failures surface as a 403 with a `{'message': ...}` body, not a
+    Pydantic 422 ValidationError. Pydantic v2 catches HTTPException raised
+    inside validators and re-wraps as ValidationError, which is the wrong
+    failure mode here.
+    """
+
+    def __init__(
+        self,
+        company: Optional[str] = None,
+        expires: Optional[datetime] = None,
+        signature: Optional[str] = None,
+    ):
+        try:
+            data = _UserSessionData(company=company, expires=expires, signature=signature)
+        except ValidationError:
+            raise HTTP403('Invalid token')
+
+        if data.expires < datetime.now(tz=timezone.utc):
+            raise HTTP403('Token expired')
+
         expected_sig = hmac.new(
             settings.user_auth_key,
-            f'{self.company}:{self.expires.timestamp():.0f}'.encode(),
+            f'{data.company}:{data.expires.timestamp():.0f}'.encode(),
             hashlib.sha256,
         ).hexdigest()
-        if self.signature != expected_sig:
+        if not hmac.compare_digest(data.signature, expected_sig):
             raise HTTP403('Invalid token')
-        return self
+
+        self.company = data.company
+        self.expires = data.expires
+        self.signature = data.signature

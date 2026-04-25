@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from sqlalchemy import delete, func
 from sqlmodel import select
 
 from app.common.api.errors import HTTP400, HTTP404, HTTP409
@@ -53,28 +54,21 @@ def create_subaccount(method: SendMethod, m: Optional[SubaccountModel] = None):
 
 @router.post('/delete-subaccount/{method}/')
 def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = Depends(get_db)):
-    """Delete an existing subaccount with Mandrill."""
-    company_ids = [
-        row[0] if isinstance(row, tuple) else row
-        for row in db.exec(select(Company.id).where(Company.code.like(m.company_code + '%'))).all()
-    ]
-    m_count, g_count = 0, 0
+    """Delete an existing subaccount with Mandrill.
+
+    Deletes companies whose code starts with ``m.company_code`` and lets the FK CASCADE
+    chain (companies → message_groups → messages → events/links) wipe their data without
+    loading any rows into memory.
+    """
+    company_ids = db.exec(select(Company.id).where(Company.code.like(m.company_code + '%'))).all()
+    m_count = g_count = 0
     if company_ids:
-        msg_rows = db.exec(select(Message).where(Message.company_id.in_(company_ids))).all()
-        m_count = len(msg_rows)
-        for msg in msg_rows:
-            db.delete(msg)
-        db.flush()
-
-        g_rows = db.exec(select(MessageGroup).where(MessageGroup.company_id.in_(company_ids))).all()
-        g_count = len(g_rows)
-        for g in g_rows:
-            db.delete(g)
-        db.flush()
-
-        c_rows = db.exec(select(Company).where(Company.id.in_(company_ids))).all()
-        for c in c_rows:
-            db.delete(c)
+        m_count = db.exec(select(func.count()).select_from(Message).where(Message.company_id.in_(company_ids))).one()
+        g_count = db.exec(
+            select(func.count()).select_from(MessageGroup).where(MessageGroup.company_id.in_(company_ids))
+        ).one()
+        # FK CASCADE on messages.company_id and message_groups.company_id wipes child rows.
+        db.execute(delete(Company).where(Company.id.in_(company_ids)))
         db.commit()
     msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
     logger.info('deleting company=%s %s', m.company_name, msg_summary)

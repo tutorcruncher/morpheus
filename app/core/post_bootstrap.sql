@@ -9,8 +9,11 @@ DROP TRIGGER IF EXISTS create_tsvector ON messages;
 CREATE TRIGGER create_tsvector BEFORE INSERT ON messages
 FOR EACH ROW EXECUTE PROCEDURE set_message_vector();
 
-DROP MATERIALIZED VIEW IF EXISTS message_aggregation;
-CREATE MATERIALIZED VIEW message_aggregation AS (
+-- The materialized view caches 90 days of per-company/method/status/day counts; it backs
+-- /messages/{method}/aggregation/. Refreshed hourly by the update_aggregation_view celery beat
+-- task. We use IF NOT EXISTS so dyno restarts do NOT wipe the cache; if the view definition
+-- needs to change, drop it manually as part of a deploy.
+CREATE MATERIALIZED VIEW IF NOT EXISTS message_aggregation AS (
   SELECT company_id, method, status, date::date, count(*)
   FROM (
     SELECT company_id, method, status, date_trunc('day', send_ts) AS date
