@@ -31,7 +31,7 @@ async def index(request: Request) -> HTMLResponse:
             'build_time': settings.build_time,
         }.items()
     }
-    ctx['request'] = request
+    ctx['request'] = request  # ty:ignore[invalid-assignment]
     with open(templates_dir / 'index.jinja') as f:
         html = Template(f.read()).render(**ctx)
     return HTMLResponse(html)
@@ -63,7 +63,7 @@ async def click_redirect_view(
             ip_address = ip_address.split(',', 1)[0]
 
         try:
-            ts = float(X_Request_Start)
+            ts = float(X_Request_Start)  # ty:ignore[invalid-argument-type]
         except ValueError:
             ts = time()
 

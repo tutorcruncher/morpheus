@@ -40,14 +40,8 @@ class ApiSession:
     def get(self, uri, *, allowed_statuses=(200,), **data) -> httpx.Response:
         return self._request('GET', uri, allowed_statuses=allowed_statuses, **data)
 
-    def delete(self, uri, *, allowed_statuses=(200,), **data) -> httpx.Response:
-        return self._request('DELETE', uri, allowed_statuses=allowed_statuses, **data)
-
     def post(self, uri, *, allowed_statuses=(200, 201), **data) -> httpx.Response:
         return self._request('POST', uri, allowed_statuses=allowed_statuses, **data)
-
-    def put(self, uri, *, allowed_statuses=(200, 201), **data) -> httpx.Response:
-        return self._request('PUT', uri, allowed_statuses=allowed_statuses, **data)
 
     def _request(self, method, uri, allowed_statuses=(200, 201), **data) -> httpx.Response:
         method, url, data = self._modify_request(method, self.root + str(uri).lstrip('/'), data)
@@ -102,11 +96,3 @@ class MessageBird(ApiSession):
     def _modify_request(self, method, url, data):
         data['headers_'] = {'Authorization': f'AccessKey {self.settings.messagebird_key}'}
         return method, url, data
-
-
-def get_mandrill() -> Mandrill:
-    return Mandrill()
-
-
-def get_messagebird() -> MessageBird:
-    return MessageBird()

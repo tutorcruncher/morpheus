@@ -24,7 +24,7 @@ class _UserSessionData(BaseModel):
     @field_validator('expires')
     @classmethod
     def add_tz(cls, v: datetime) -> datetime:
-        if v.tzinfo is None:
+        if v.tzinfo is None:  # pragma: no cover  -- pydantic v2 parses unix epoch strings as tz-aware
             return v.replace(tzinfo=timezone.utc)
         return v
 
@@ -46,7 +46,7 @@ class UserSession:
         signature: Optional[str] = None,
     ):
         try:
-            data = _UserSessionData(company=company, expires=expires, signature=signature)
+            data = _UserSessionData(company=company, expires=expires, signature=signature)  # ty:ignore[invalid-argument-type]
         except ValidationError:
             raise HTTP403('Invalid token')
 

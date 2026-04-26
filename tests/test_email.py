@@ -2,21 +2,18 @@ import base64
 import hashlib
 import hmac
 import json
-import logging
-import pytest
 import re
-from tests.conftest import _LegacyRetry as Retry
 from datetime import datetime, timedelta, timezone
-from tests.conftest import SyncDb
 from pathlib import Path
-from dirty_equals import IsInt as AnyInt, IsStr
-from fastapi.testclient import TestClient
-from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from app.messages.schemas import EmailRecipientModel, EmailSendModel
-from app.messages.models import MessageStatus
+import pytest
+from dirty_equals import IsInt as AnyInt, IsStr
+from fastapi.testclient import TestClient
+
+from app.messages.schemas import EmailRecipientModel
 from app.messages.tasks import EMAIL_RETRYING as email_retrying, delete_old_emails
+from tests.conftest import SyncDb, _LegacyRetry as Retry
 
 THIS_DIR = Path(__file__).parent.resolve()
 
@@ -304,7 +301,7 @@ def test_markdown_context(send_email, tmpdir):
 
 def test_partials(send_email, tmpdir):
     message_id = send_email(
-        main_template='message: |{{{ message }}}|\n' 'foo: {{ foo }}\n' 'partial: {{> test_p }}',
+        main_template='message: |{{{ message }}}|\nfoo: {{ foo }}\npartial: {{> test_p }}',
         context={'message__render': '{{foo}} {{> test_p }}', 'foo': 'FOO', 'bar': 'BAR'},
         mustache_partials={'test_p': 'foo ({{ foo }}) bar **{{ bar }}**'},
     )
@@ -386,11 +383,11 @@ def test_macro_in_message(send_email, tmpdir):
         context={
             'pay_link': '/pay/now/123/',
             'first_name': 'John',
-            'message__render': '# hello {{ first_name }}\n' 'centered_button(Pay now | {{ pay_link }})\n',
+            'message__render': '# hello {{ first_name }}\ncentered_button(Pay now | {{ pay_link }})\n',
         },
         macros={
             'centered_button(text | link)': (
-                '<div class="button">\n' '  <a href="{{ link }}"><span>{{ text }}</span></a>\n' '</div>\n'
+                '<div class="button">\n  <a href="{{ link }}"><span>{{ text }}</span></a>\n</div>\n'
             )
         },
     )
@@ -440,7 +437,7 @@ def test_standard_sass(cli: TestClient, tmpdir, worker, loop):
 def test_custom_sass(send_email, tmpdir):
     message_id = send_email(
         main_template='{{{ css }}}',
-        context={'css__sass': '.foo {\n  .bar {\n    color: black;\n    width: (60px / 6);\n  }\n' '}'},
+        context={'css__sass': '.foo {\n  .bar {\n    color: black;\n    width: (60px / 6);\n  }\n}'},
     )
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -507,9 +504,7 @@ def test_send_with_other_attachment(send_email, tmpdir, sync_db: SyncDb):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert 'Look this is some test data' in msg_file
-    attachments = sync_db.fetchrow('select * from messages where external_id = $1', message_id)[
-        'attachments'
-    ]
+    attachments = sync_db.fetchrow('select * from messages where external_id = $1', message_id)['attachments']
     assert set(attachments) == {'::calendar.ics'}
 
 
@@ -531,9 +526,7 @@ def test_send_with_other_attachment_pdf(send_email, tmpdir, sync_db: SyncDb):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert f'test_pdf.pdf:{msg}' in msg_file
     assert f'test_pdf_encoded.pdf:{msg}' in msg_file
-    attachments = sync_db.fetchrow('select * from messages where external_id = $1', message_id)[
-        'attachments'
-    ]
+    attachments = sync_db.fetchrow('select * from messages where external_id = $1', message_id)['attachments']
     assert set(attachments) == {'::test_pdf.pdf', '::test_pdf_encoded.pdf'}
 
 
@@ -710,8 +703,7 @@ def test_link_shortening(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, w
         'ip': '54.170.228.0',
         'target': 'https://www.foobar.com',
         'user_agent': (
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/59.0.3071.115 Safari/537.36'
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36'
         ),
         'user_agent_display': 'Chrome 59 on Linux',
     }
@@ -829,12 +821,3 @@ def test_delete_old_messages(cli: TestClient, send_email, sync_db: SyncDb, worke
     assert sync_db.fetchval('select count(*) from messages') == 3
     delete_old_emails()
     assert sync_db.fetchval('select count(*) from messages') == 2
-
-
-
-
-
-
-
-
-

@@ -2,15 +2,16 @@ import hashlib
 import hmac
 import json
 import uuid
-import pytest
 from datetime import date, datetime, timedelta, timezone
-from tests.conftest import SyncDb
 from operator import itemgetter
-from dirty_equals import IsStr
-from fastapi.testclient import TestClient
 from urllib.parse import urlencode
 
+import pytest
+from dirty_equals import IsStr
+from fastapi.testclient import TestClient
+
 from app.messages.models import MessageStatus
+from tests.conftest import SyncDb
 
 
 def modify_url(url, settings, company='foobar'):
@@ -37,9 +38,7 @@ def test_user_list(cli, settings, send_email, sync_db: SyncDb):
     assert msg_ids == list(reversed(expected_msg_ids))
     first_item = data['items'][0]
     assert first_item == {
-        'id': sync_db.fetchrow('select * from messages where external_id = $1', expected_msg_ids[3])[
-            'id'
-        ],
+        'id': sync_db.fetchrow('select * from messages where external_id = $1', expected_msg_ids[3])['id'],
         'external_id': expected_msg_ids[3],
         'to_ext_link': None,
         'to_address': '3@t.com',
@@ -175,6 +174,7 @@ def test_user_aggregate(cli, settings, send_email, sync_db: SyncDb, loop, worker
 
     send_email(uid=str(uuid.uuid4()), company_code='different')
     from app.messages.tasks import update_aggregation_view
+
     update_aggregation_view.delay()
     worker.test_run()
 
@@ -302,6 +302,7 @@ def test_message_details(cli, settings, send_email, sync_db: SyncDb, worker, loo
 def _wkhtml_works() -> bool:
     try:
         import pydf
+
         pydf.generate_pdf('<p>x</p>')
         return True
     except Exception:

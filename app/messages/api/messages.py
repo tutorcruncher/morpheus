@@ -50,21 +50,6 @@ MESSAGE_COLUMN_NAMES = (
     'cost',
 )
 
-max_length = 100
-re_null = re.compile('\x00')
-pg_tsquery_split = ''.join((':', '&', '|', '%', '"', "'", '<', '>', '!', '*', '(', ')', r'\s'))
-re_tsquery = re.compile(f'[^{pg_tsquery_split}]{{2,}}')
-
-
-def prepare_search_query(raw_query: Optional[str]) -> Optional[str]:
-    if raw_query is None:
-        return None
-    query = re_null.sub('', raw_query.lower())[:max_length]
-    words = re_tsquery.findall(query)
-    if not words:
-        return None
-    return ' & '.join(words) + ':*'
-
 
 def _row_to_message(row) -> Message:
     return Message(**dict(zip(MESSAGE_COLUMN_NAMES, row)))
@@ -83,18 +68,18 @@ def messages_list(
     company = _get_or_create_company(db, user_session.company)
     where_clauses = [Message.method == method.value, Message.company_id == company.id]
     if tags:
-        where_clauses.append(Message.tags.op('@>')(tags))
+        where_clauses.append(Message.tags.op('@>')(tags))  # ty:ignore[unresolved-attribute]
     if q:
-        where_clauses.append(Message.vector.op('@@')(func.plainto_tsquery(q.strip())))
+        where_clauses.append(Message.vector.op('@@')(func.plainto_tsquery(q.strip())))  # ty:ignore[unresolved-attribute]
 
     full_count = db.exec(
         select(func.count()).select_from(select(Message.id).where(*where_clauses).limit(10000).subquery())
     ).first()
 
     items_rows = db.exec(
-        select(*MESSAGE_COLUMNS)
+        select(*MESSAGE_COLUMNS)  # ty:ignore[no-matching-overload]
         .where(*where_clauses)
-        .order_by(Message.id.desc())
+        .order_by(Message.id.desc())  # ty:ignore[unresolved-attribute]
         .limit(LIST_PAGE_SIZE)
         .offset(offset or 0)
     ).all()
@@ -102,13 +87,13 @@ def messages_list(
 
     data = {'items': [m.parsed_details for m in items], 'count': full_count}
     this_url = str(request.url_for('messages_list', method=method.value))
-    if (offset + len(items)) < full_count:
-        data['next'] = f'{this_url}?offset={offset + len(items)}'
+    if (offset + len(items)) < full_count:  # ty:ignore[unsupported-operator]
+        data['next'] = f'{this_url}?offset={offset + len(items)}'  # ty:ignore[invalid-assignment, unsupported-operator]
     if offset:
-        data['previous'] = f'{this_url}?offset={max(offset - LIST_PAGE_SIZE, 0)}'
+        data['previous'] = f'{this_url}?offset={max(offset - LIST_PAGE_SIZE, 0)}'  # ty:ignore[invalid-assignment]
     if 'sms' in method.value:
         start, end = month_interval()
-        data['spend'] = _get_sms_spend(db, company_id=company.id, start=start, end=end, method=method.value) or 0
+        data['spend'] = _get_sms_spend(db, company_id=company.id, start=start, end=end, method=method.value) or 0  # ty:ignore[invalid-argument-type, invalid-assignment]
     return data
 
 
@@ -151,7 +136,7 @@ def message_aggregation(
     db: DBSession = Depends(get_db),
 ):
     company = _get_or_create_company(db, user_session.company)
-    raw = db.execute(text(agg_sql), {'method': method.value, 'company_id': company.id}).scalar_one()
+    raw = db.execute(text(agg_sql), {'method': method.value, 'company_id': company.id}).scalar_one()  # ty:ignore[deprecated]
     data = raw if isinstance(raw, dict) else json.loads(raw)
     for item in data['histogram']:
         item['status'] = Message.status_display(item['status'])
@@ -168,7 +153,7 @@ def message_details(
 ):
     company = _get_or_create_company(db, user_session.company)
     m = db.exec(
-        select(*MESSAGE_COLUMNS).where(
+        select(*MESSAGE_COLUMNS).where(  # ty:ignore[no-matching-overload]
             Message.company_id == company.id,
             Message.method == method.value,
             Message.id == id,
@@ -182,12 +167,12 @@ def message_details(
     events = db.exec(
         select(Event.status, Event.message_id, Event.ts, Event.extra)
         .where(Event.message_id == id)
-        .order_by(Event.id)
+        .order_by(Event.id)  # ty:ignore[invalid-argument-type]
         .limit(51)
     ).all()
     events_data = [Event(**dict(zip(('status', 'message_id', 'ts', 'extra'), e))).parsed_details for e in events[:50]]
     if len(events) > 50:
-        extra = db.exec(select(func.count()).select_from(Event).where(Event.message_id == id)).first() - 50
+        extra = db.exec(select(func.count()).select_from(Event).where(Event.message_id == id)).first() - 50  # ty:ignore[unsupported-operator]
         events_data.append(
             dict(
                 status=f'{extra} more',

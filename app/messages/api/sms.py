@@ -20,12 +20,7 @@ router = APIRouter(dependencies=[Depends(AdminAuth)])
 
 
 def _get_or_create_company(db: DBSession, company_code: str) -> Company:
-    company = db.exec(select(Company).where(Company.code == company_code)).first()
-    if not company:
-        company = Company(code=company_code)
-        db.add(company)
-        db.commit()
-        db.refresh(company)
+    company, _ = db.get_or_create(Company, code=company_code)
     return company
 
 
@@ -52,7 +47,7 @@ def sms_billing_view(
         raise HTTP404('company not found')
     start = datetime.strptime(data['start'], '%Y-%m-%d')
     end = datetime.strptime(data['end'], '%Y-%m-%d')
-    spend = _get_sms_spend(db, company_id=company.id, method=method.value, start=start, end=end)
+    spend = _get_sms_spend(db, company_id=company.id, method=method.value, start=start, end=end)  # ty:ignore[invalid-argument-type]
     return {
         'company': company_code,
         'start': start.strftime('%Y-%m-%d'),
@@ -62,7 +57,7 @@ def sms_billing_view(
 
 
 def month_interval() -> tuple[datetime, datetime]:
-    n = datetime.utcnow().replace(tzinfo=timezone.utc)
+    n = datetime.utcnow().replace(tzinfo=timezone.utc)  # ty:ignore[deprecated]
     return n.replace(day=1, hour=0, minute=0, second=0, microsecond=0), n
 
 
@@ -77,15 +72,15 @@ def send_sms_view(m: SmsSendModel, db: DBSession = Depends(get_db)):
     company = _get_or_create_company(db, m.company_code)
     if m.cost_limit is not None:
         start, end = month_interval()
-        month_spend = _get_sms_spend(db, company_id=company.id, start=start, end=end, method=m.method.value) or 0
+        month_spend = _get_sms_spend(db, company_id=company.id, start=start, end=end, method=m.method.value) or 0  # ty:ignore[invalid-argument-type]
         if month_spend >= m.cost_limit:
             return JSONResponse(
                 content={'status': 'send limit exceeded', 'cost_limit': m.cost_limit, 'spend': month_spend},
                 status_code=402,
             )
     group = MessageGroup(
-        uuid=m.uid,
-        company_id=company.id,
+        uuid=m.uid,  # ty:ignore[invalid-argument-type]
+        company_id=company.id,  # ty:ignore[invalid-argument-type]
         message_method=m.method.value,
         from_name=m.from_name,
     )

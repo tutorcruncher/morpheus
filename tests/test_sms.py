@@ -1,10 +1,10 @@
 import re
 from datetime import datetime, timedelta
-from tests.conftest import SyncDb
 from urllib.parse import urlencode
 from uuid import uuid4
 
 from app.core.config import settings
+from tests.conftest import SyncDb
 
 
 def test_send_message(cli, tmpdir, worker, loop):

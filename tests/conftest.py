@@ -9,25 +9,21 @@ import pytest
 from celery import current_app as celery_current_app
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlmodel import select
 
 from app.core import database as db_module
 from app.core.config import settings as app_settings
 from app.core.database import SessionLocal, engine, get_db
 from app.ext import clients as clients_module
 from app.main import app
-from app.messages.models import Company, Event, Link, Message, MessageGroup
+from app.messages.models import Company, MessageGroup
 from app.messages.schemas import EmailSendModel
 from tests import dummy_server
-
 
 THIS_DIR = Path(__file__).parent.resolve()
 
 
 def _truncate_all(conn) -> None:
-    conn.execute(text(
-        'TRUNCATE TABLE links, events, messages, message_groups, companies RESTART IDENTITY CASCADE'
-    ))
+    conn.execute(text('TRUNCATE TABLE links, events, messages, message_groups, companies RESTART IDENTITY CASCADE'))
     # The materialized view caches per-company message counts. Without this, tests that
     # re-use auto-incremented company IDs see stale aggregation data from earlier tests.
     conn.execute(text('REFRESH MATERIALIZED VIEW message_aggregation'))

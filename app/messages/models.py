@@ -113,7 +113,8 @@ class MessageGroup(SQLModel, table=True):
     company_id: int = Field(sa_column=Column(ForeignKey('companies.id', ondelete='CASCADE'), nullable=False))
     message_method: str = Field(sa_column=Column(SEND_METHODS_PG, nullable=False))
     created_ts: datetime = Field(
-        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP'))
+        default_factory=utcnow,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP')),
     )
     from_email: Optional[str] = Field(default=None, sa_column=Column(String(255)))
     from_name: Optional[str] = Field(default=None, sa_column=Column(String(255)))
@@ -139,10 +140,12 @@ class Message(SQLModel, table=True):
     company_id: int = Field(sa_column=Column(ForeignKey('companies.id', ondelete='CASCADE'), nullable=False))
     method: str = Field(sa_column=Column(SEND_METHODS_PG, nullable=False))
     send_ts: datetime = Field(
-        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP'))
+        default_factory=utcnow,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP')),
     )
     update_ts: datetime = Field(
-        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP'))
+        default_factory=utcnow,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP')),
     )
     status: str = Field(sa_column=Column(MESSAGE_STATUSES_PG, nullable=False, server_default='send'))
     to_first_name: Optional[str] = Field(default=None, sa_column=Column(String(255)))
@@ -155,7 +158,12 @@ class Message(SQLModel, table=True):
     attachments: Optional[list[str]] = Field(default=None, sa_column=Column(ARRAY(String(255))))
     cost: Optional[float] = Field(default=None)
     extra: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
-    vector: Optional[str] = Field(default=None, sa_column=Column(TSVECTOR, nullable=False))
+    # Populated by the set_message_vector BEFORE INSERT trigger; the empty-tsvector server_default
+    # is a defensive backup so an INSERT still succeeds if the trigger ever goes missing.
+    vector: Optional[str] = Field(
+        default=None,
+        sa_column=Column(TSVECTOR, nullable=False, server_default=sa_text("''::tsvector")),
+    )
 
     @staticmethod
     def status_display(v: str) -> str:
@@ -213,7 +221,8 @@ class Event(SQLModel, table=True):
     message_id: int = Field(sa_column=Column(ForeignKey('messages.id', ondelete='CASCADE'), nullable=False))
     status: str = Field(sa_column=Column(MESSAGE_STATUSES_PG, nullable=False))
     ts: datetime = Field(
-        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP'))
+        default_factory=utcnow,
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=False, server_default=sa_text('CURRENT_TIMESTAMP')),
     )
     extra: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
 

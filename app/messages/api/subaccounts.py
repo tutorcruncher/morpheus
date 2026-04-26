@@ -60,15 +60,15 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
     chain (companies → message_groups → messages → events/links) wipe their data without
     loading any rows into memory.
     """
-    company_ids = db.exec(select(Company.id).where(Company.code.like(m.company_code + '%'))).all()
+    company_ids = db.exec(select(Company.id).where(Company.code.like(m.company_code + '%'))).all()  # ty:ignore[unresolved-attribute]
     m_count = g_count = 0
     if company_ids:
-        m_count = db.exec(select(func.count()).select_from(Message).where(Message.company_id.in_(company_ids))).one()
+        m_count = db.exec(select(func.count()).select_from(Message).where(Message.company_id.in_(company_ids))).one()  # ty:ignore[unresolved-attribute]
         g_count = db.exec(
-            select(func.count()).select_from(MessageGroup).where(MessageGroup.company_id.in_(company_ids))
+            select(func.count()).select_from(MessageGroup).where(MessageGroup.company_id.in_(company_ids))  # ty:ignore[unresolved-attribute]
         ).one()
         # FK CASCADE on messages.company_id and message_groups.company_id wipes child rows.
-        db.execute(delete(Company).where(Company.id.in_(company_ids)))
+        db.execute(delete(Company).where(Company.id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
         db.commit()
     msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
     logger.info('deleting company=%s %s', m.company_name, msg_summary)

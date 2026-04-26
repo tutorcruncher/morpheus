@@ -2,11 +2,11 @@ import logging
 
 from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
-from sqlmodel import select
 
 from app.common.api.errors import HTTP409
 from app.core.database import DBSession, get_db
-from app.messages.models import Company, MessageGroup
+from app.messages.api.sms import _get_or_create_company
+from app.messages.models import MessageGroup
 from app.messages.schemas import EmailSendModel
 from app.messages.tasks import get_redis, send_email
 
@@ -32,16 +32,11 @@ def email_send_view(
         m.company_code,
     )
 
-    company = db.exec(select(Company).where(Company.code == m.company_code)).first()
-    if not company:
-        company = Company(code=m.company_code)
-        db.add(company)
-        db.commit()
-        db.refresh(company)
+    company = _get_or_create_company(db, m.company_code)
 
     group = MessageGroup(
         uuid=m.uid,
-        company_id=company.id,
+        company_id=company.id,  # ty:ignore[invalid-argument-type]
         message_method=m.method.value,
         from_email=m.from_address.email,
         from_name=m.from_address.name,

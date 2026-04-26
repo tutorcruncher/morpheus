@@ -55,7 +55,7 @@ def mandrill_webhook_view(
 def messagebird_webhook_view(request: Request):
     """Update messages sent with messagebird."""
     try:
-        event = MessageBirdWebHook(**dict(request.query_params))
+        event = MessageBirdWebHook(**dict(request.query_params))  # ty:ignore[invalid-argument-type]
     except ValidationError as e:
         raise HTTP422(str(e))
     if event.error_code is not None:

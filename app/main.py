@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     init_sentry()
     configure_logfire()
-    if settings.logfire_token:
+    if settings.logfire_token:  # pragma: no cover  -- prod-only instrumentation
         import logfire
 
         logfire.instrument_fastapi(app)
@@ -43,8 +43,8 @@ app = FastAPI(
     redoc_url='/redoc' if (settings.dev_mode or settings.testing) else None,
     openapi_url='/openapi.json' if (settings.dev_mode or settings.testing) else None,
 )
-app.add_middleware(CORSMiddleware, allow_origins=['*'])
-app.add_exception_handler(HttpMessageError, http_message_error_handler)
+app.add_middleware(CORSMiddleware, allow_origins=['*'])  # ty:ignore[invalid-argument-type]
+app.add_exception_handler(HttpMessageError, http_message_error_handler)  # ty:ignore[invalid-argument-type]
 
 app.include_router(common_api.router, tags=['common'])
 app.include_router(email_api.router, tags=['email'])

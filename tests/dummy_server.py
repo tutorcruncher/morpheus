@@ -1,7 +1,7 @@
 """Sync httpx.MockTransport routes for Mandrill / Messagebird stand-in."""
+
 import json
 import re
-import time
 
 import httpx
 

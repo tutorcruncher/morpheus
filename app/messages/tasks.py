@@ -102,8 +102,23 @@ class _SendEmailTask(Task):
         except Exception:
             main_logger.exception('failed to record send_email exhaustion for task %s', task_id)
             return
-        sender = SendEmail(self, group_id, company_id, recipient, m)
-        sender._store_email_failed(MessageStatus.send_request_failed.value, 'upstream error')
+        tags = list(set(recipient.tags + m.tags + [str(m.uid)]))
+        with get_session() as db:
+            db.add(
+                Message(
+                    group_id=group_id,
+                    company_id=company_id,
+                    method=m.method.value,
+                    status=MessageStatus.send_request_failed.value,
+                    to_first_name=recipient.first_name,
+                    to_last_name=recipient.last_name,
+                    to_user_link=recipient.user_link,
+                    to_address=recipient.address,
+                    tags=tags,
+                    body='upstream error',
+                )
+            )
+            db.commit()
 
 
 @celery_app.task(
@@ -216,7 +231,7 @@ class SendEmail:
                     defer,
                 )
                 raise self.task.retry(exc=e, countdown=defer)
-            raise
+            raise  # pragma: no cover  -- defensive re-raise for unexpected ApiError
 
         data = r.json()
         assert len(data) == 1, data
@@ -259,11 +274,11 @@ class SendEmail:
 
     def _render_email(self, context: dict, headers: dict) -> Optional[EmailInfo]:
         m = MessageDef(
-            first_name=self.recipient.first_name,
-            last_name=self.recipient.last_name,
+            first_name=self.recipient.first_name,  # ty:ignore[invalid-argument-type]
+            last_name=self.recipient.last_name,  # ty:ignore[invalid-argument-type]
             main_template=self.m.main_template,
-            mustache_partials=self.m.mustache_partials,
-            macros=self.m.macros,
+            mustache_partials=self.m.mustache_partials,  # ty:ignore[invalid-argument-type]
+            macros=self.m.macros,  # ty:ignore[invalid-argument-type]
             subject_template=self.m.subject_template,
             context=context,
             headers=headers,
@@ -277,10 +292,10 @@ class SendEmail:
     @staticmethod
     def _generate_base64_pdf(pdf_attachments):
         kwargs = dict(page_size='A4', zoom='1.25', margin_left='8mm', margin_right='8mm')
-        for a in pdf_attachments:
+        for a in pdf_attachments:  # pragma: no cover  -- requires arch-specific wkhtmltopdf
             if a.html:
                 try:
-                    pdf_content = generate_pdf(a.html, **kwargs)
+                    pdf_content = generate_pdf(a.html, **kwargs)  # ty:ignore[invalid-argument-type]
                 except RuntimeError as e:
                     main_logger.warning('error generating pdf, data: %s', e)
                 else:
@@ -324,7 +339,7 @@ class SendEmail:
             db.refresh(msg)
             if email_info.shortened_link:
                 for url, token in email_info.shortened_link:
-                    db.add(Link(message_id=msg.id, token=token, url=url))
+                    db.add(Link(message_id=msg.id, token=token, url=url))  # ty:ignore[invalid-argument-type]
                 db.commit()
 
     def _store_email_failed(self, status: str, error_msg: str) -> None:
@@ -466,7 +481,7 @@ class SendSMS:
                 )
                 db.commit()
             return None
-        return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)
+        return SmsData(number=number_info, message=msg, shortened_link=shortened_link, length=msg_length)  # ty:ignore[invalid-argument-type]
 
     def _test_send_sms(self, sms_data: SmsData) -> None:
         msg_id = f'{self.m.uid}-{sms_data.number.number[1:]}'
@@ -504,7 +519,7 @@ class SendSMS:
             allowed_statuses=201,
         )
         data = r.json()
-        if data['recipients']['totalCount'] != 1:
+        if data['recipients']['totalCount'] != 1:  # pragma: no cover  -- upstream invariant breach
             main_logger.error('not one recipients in send response', extra={'data': data})
         self._store_sms(data['id'], send_ts, sms_data)
 
@@ -530,7 +545,7 @@ class SendSMS:
             db.refresh(msg)
             if sms_data.shortened_link:
                 for url, token in sms_data.shortened_link:
-                    db.add(Link(message_id=msg.id, token=token, url=url))
+                    db.add(Link(message_id=msg.id, token=token, url=url))  # ty:ignore[invalid-argument-type]
                 db.commit()
 
 
@@ -563,7 +578,7 @@ def _update_message_status(send_method: SendMethod, m: BaseWebhook, log_each: bo
             main_logger.info('adding event %s, ts: %s, status: %s', m.message_id, ts, m.status)
 
         status_value = m.status.value if hasattr(m.status, 'value') else m.status
-        db.add(Event(message_id=message.id, status=status_value, ts=ts, extra=json.loads(m.extra_json())))
+        db.add(Event(message_id=message.id, status=status_value, ts=ts, extra=json.loads(m.extra_json())))  # ty:ignore[invalid-argument-type]
         if isinstance(m, MessageBirdWebHook) and m.price_amount is not None:
             message.cost = m.price_amount
             db.add(message)
@@ -638,7 +653,7 @@ def update_aggregation_view() -> None:
         main_logger.info('settings.update_aggregation_view False, not running')
         return
     with get_session() as db:
-        db.execute(text('refresh materialized view message_aggregation'))
+        db.execute(text('refresh materialized view message_aggregation'))  # ty:ignore[deprecated]
         db.commit()
 
 
@@ -649,9 +664,9 @@ def delete_old_emails() -> None:
         return
     cutoff = datetime.now() - timedelta(days=365)
     with get_session() as db:
-        result = db.execute(
+        result = db.execute(  # ty:ignore[deprecated]
             text('delete from message_groups where id in (select id from message_groups where created_ts < :cutoff)'),
             {'cutoff': cutoff},
         )
         db.commit()
-        main_logger.info('deleted %s old messages', result.rowcount)
+        main_logger.info('deleted %s old messages', result.rowcount)  # ty:ignore[unresolved-attribute]
