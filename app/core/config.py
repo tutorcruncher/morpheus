@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic import field_validator
@@ -10,7 +11,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
     database_url: str = 'postgresql://postgres@localhost:5432/morpheus'
-    redis_url: str = 'redis://localhost:6379/0'
+    # Heroku's rediscloud add-on sets REDISCLOUD_URL; honour it as the source of truth
+    # before falling back to REDIS_URL or the local default.
+    redis_url: str = os.getenv('REDISCLOUD_URL') or 'redis://localhost:6379/0'
 
     auth_key: str = 'insecure'
     user_auth_key: bytes = b'insecure'
