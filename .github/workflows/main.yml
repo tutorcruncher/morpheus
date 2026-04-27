@@ -89,6 +89,13 @@ jobs:
       - name: install build deps
         run: uv pip install --system setuptools wheel twine
 
+      - name: stage render module under morpheus/ namespace
+        working-directory: packaging/morpheus-mail
+        run: |
+          mkdir -p morpheus
+          cp -r ../../app/render morpheus/render
+          touch morpheus/__init__.py
+
       - name: build morpheus-mail (render submodule)
         # Builds from a subdirectory so the root pyproject.toml (which defines the main
         # app) doesn't get auto-applied to this distribution.

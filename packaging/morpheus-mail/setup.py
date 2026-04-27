@@ -1,10 +1,9 @@
 """Standalone packaging for the rendering submodule, published as `morpheus-mail` on PyPI.
 
 This setup.py lives in its own subdirectory so the root pyproject.toml (which defines
-the main morpheus app) doesn't interfere with the build. It packages `app/render` from
-the repo root as the `morpheus.render` namespace.
-
-Build with: cd packaging/morpheus-mail && python setup.py sdist bdist_wheel
+the main morpheus app) doesn't interfere with the build. The render module is copied
+into ./morpheus/render/ at build time by the GHA publish job (or by hand with
+`cp -r ../../app/render morpheus/render`).
 """
 
 from setuptools import setup
@@ -41,7 +40,6 @@ setup(
     url='https://github.com/tutorcruncher/morpheus',
     license='MIT',
     packages=['morpheus.render'],
-    package_dir={'morpheus.render': '../../app/render'},
     python_requires='>=3.10',
     zip_safe=True,
     install_requires=[
