@@ -39,7 +39,10 @@ class Settings(BaseSettings):
     test_output: Path | None = None
 
     delete_old_emails: bool = False
-    update_aggregation_view: bool = False
+    # Defaults on: the email-analytics aggregation endpoint reads the message_aggregation
+    # materialized view, which is only kept current by the hourly refresh task. With this off
+    # the view goes stale and analytics shows no data.
+    update_aggregation_view: bool = True
 
     sentry_dsn: str | None = None
     logfire_token: str | None = None

@@ -195,6 +195,15 @@ def test_get_or_create_with_defaults_inserts(db):
     assert company.code == 'goc-defaults'
 
 
+def test_aggregation_view_enabled_by_default(monkeypatch):
+    """The aggregation refresh must run unless explicitly disabled, or analytics goes stale."""
+    from app.core.config import Settings
+
+    monkeypatch.delenv('update_aggregation_view', raising=False)
+    monkeypatch.delenv('UPDATE_AGGREGATION_VIEW', raising=False)
+    assert Settings(_env_file=None).update_aggregation_view is True
+
+
 def test_aggregation_view_disabled_setting(monkeypatch):
     """The scheduler task should no-op when settings.update_aggregation_view is False."""
     from app.core.config import settings as app_settings
