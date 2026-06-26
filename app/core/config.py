@@ -1,7 +1,6 @@
-import os
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 THIS_DIR = Path(__file__).parent.parent.resolve()
@@ -11,9 +10,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
     database_url: str = 'postgresql://postgres@localhost:5432/morpheus'
-    # Heroku's rediscloud add-on sets REDISCLOUD_URL; honour it as the source of truth
-    # before falling back to REDIS_URL or the local default.
-    redis_url: str = os.getenv('REDISCLOUD_URL') or 'redis://localhost:6379/0'
+    # Heroku's rediscloud add-on sets REDISCLOUD_URL; honour it as the source of truth and
+    # only fall back to REDIS_URL. AliasChoices checks the names in order, first found wins,
+    # matching the legacy foxglove env=['REDISCLOUD_URL', 'REDIS_URL'] precedence.
+    redis_url: str = Field(
+        default='redis://localhost:6379/0',
+        validation_alias=AliasChoices('REDISCLOUD_URL', 'REDIS_URL'),
+    )
 
     auth_key: str = 'insecure'
     user_auth_key: bytes = b'insecure'

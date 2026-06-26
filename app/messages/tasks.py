@@ -231,7 +231,12 @@ class SendEmail:
                     defer,
                 )
                 raise self.task.retry(exc=e, countdown=defer)
-            raise  # pragma: no cover  -- defensive re-raise for unexpected ApiError
+            # Non-retryable Mandrill error (e.g. 400/401/422): record a failure row so the
+            # send is not silently lost. The old arq path reached send_request_failed via
+            # retry exhaustion; here we store it directly without the wasted retries.
+            main_logger.warning('non-retryable mandrill error group_id=%s status=%s', self.group_id, e.status)
+            self._store_email_failed(MessageStatus.send_request_failed.value, 'upstream error')
+            return
 
         data = r.json()
         assert len(data) == 1, data
@@ -277,7 +282,7 @@ class SendEmail:
             first_name=self.recipient.first_name,  # ty:ignore[invalid-argument-type]
             last_name=self.recipient.last_name,  # ty:ignore[invalid-argument-type]
             main_template=self.m.main_template,
-            mustache_partials=self.m.mustache_partials,  # ty:ignore[invalid-argument-type]
+            mustache_partials=self.m.mustache_partials or {},  # ty:ignore[invalid-argument-type]
             macros=self.m.macros,  # ty:ignore[invalid-argument-type]
             subject_template=self.m.subject_template,
             context=context,
@@ -409,15 +414,61 @@ def validate_number(number: str, country: str, include_description: bool = True)
     )
 
 
-@celery_app.task(name='app.messages.tasks.send_sms')
-def send_sms(group_id: int, company_id: int, recipient: dict, m: dict) -> None:
+SMS_MAX_RETRIES = 4
+SMS_RETRY_DELAY = 60
+
+
+class _SendSMSTask(Task):
+    """Celery Task subclass so a failed Message row is written on retry exhaustion.
+
+    Mirrors _SendEmailTask: without this, a MessageBird outage would silently drop the SMS
+    (arq used to auto-retry any task exception; Celery does not).
+    """
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):  # noqa: D401
+        if not isinstance(exc, MaxRetriesExceededError):
+            return
+        try:
+            group_id, company_id, recipient_payload, m_payload = args
+            recipient = SmsRecipientModel.model_validate(recipient_payload)
+            m = SmsSendModel.model_validate(m_payload)
+        except Exception:
+            main_logger.exception('failed to record send_sms exhaustion for task %s', task_id)
+            return
+        tags = list(set(recipient.tags + m.tags + [str(m.uid)]))
+        with get_session() as db:
+            db.add(
+                Message(
+                    group_id=group_id,
+                    company_id=company_id,
+                    method=m.method.value,
+                    status=MessageStatus.send_request_failed.value,
+                    to_first_name=recipient.first_name,
+                    to_last_name=recipient.last_name,
+                    to_user_link=recipient.user_link,
+                    to_address=recipient.number,
+                    tags=tags,
+                    body='upstream error',
+                )
+            )
+            db.commit()
+
+
+@celery_app.task(
+    name='app.messages.tasks.send_sms',
+    base=_SendSMSTask,
+    bind=True,
+    max_retries=SMS_MAX_RETRIES,
+)
+def send_sms(self: Task, group_id: int, company_id: int, recipient: dict, m: dict) -> None:
     recipient_model = SmsRecipientModel.model_validate(recipient)
     m_model = SmsSendModel.model_validate(m)
-    SendSMS(group_id, company_id, recipient_model, m_model).run()
+    SendSMS(self, group_id, company_id, recipient_model, m_model).run()
 
 
 class SendSMS:
-    def __init__(self, group_id: int, company_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
+    def __init__(self, task: Task, group_id: int, company_id: int, recipient: SmsRecipientModel, m: SmsSendModel):
+        self.task = task
         self.group_id = group_id
         self.company_id = company_id
         self.recipient = recipient
@@ -509,19 +560,49 @@ class SendSMS:
         send_ts = utcnow()
         main_logger.info('sending SMS to %s, parts: %d', sms_data.number.number, sms_data.length.parts)
 
-        r = MessageBird().post(
-            'messages',
-            originator=self.from_name,
-            body=sms_data.message,
-            recipients=[sms_data.number.number],
-            datacoding='auto',
-            reference='morpheus',
-            allowed_statuses=201,
-        )
+        try:
+            r = MessageBird().post(
+                'messages',
+                originator=self.from_name,
+                body=sms_data.message,
+                recipients=[sms_data.number.number],
+                datacoding='auto',
+                reference='morpheus',
+                allowed_statuses=201,
+            )
+        except (ConnectionError, TimeoutError, httpx.ConnectError, httpx.ReadTimeout) as e:
+            main_logger.info('messagebird connection error group_id=%s', self.group_id)
+            raise self.task.retry(exc=e, countdown=SMS_RETRY_DELAY)
+        except ApiError as e:
+            if e.status is None or e.status >= 500:
+                main_logger.info('temporary messagebird error group_id=%s status=%s', self.group_id, e.status)
+                raise self.task.retry(exc=e, countdown=SMS_RETRY_DELAY)
+            # Non-retryable (4xx) error: record a failure row instead of silently dropping the SMS.
+            main_logger.warning('non-retryable messagebird error group_id=%s status=%s', self.group_id, e.status)
+            self._store_sms_failed('upstream error', address=sms_data.number.number_formatted)
+            return
         data = r.json()
         if data['recipients']['totalCount'] != 1:  # pragma: no cover  -- upstream invariant breach
             main_logger.error('not one recipients in send response', extra={'data': data})
         self._store_sms(data['id'], send_ts, sms_data)
+
+    def _store_sms_failed(self, error_msg: str, *, address: Optional[str] = None) -> None:
+        with get_session() as db:
+            db.add(
+                Message(
+                    group_id=self.group_id,
+                    company_id=self.company_id,
+                    method=self.m.method.value,
+                    status=MessageStatus.send_request_failed.value,
+                    to_first_name=self.recipient.first_name,
+                    to_last_name=self.recipient.last_name,
+                    to_user_link=self.recipient.user_link,
+                    to_address=address or self.recipient.number,
+                    tags=self.tags,
+                    body=error_msg,
+                )
+            )
+            db.commit()
 
     def _store_sms(self, external_id: str, send_ts: datetime, sms_data: SmsData) -> None:
         with get_session() as db:
@@ -638,6 +719,11 @@ def store_click(link_id: int, ip: Optional[str], user_agent: Optional[str], ts: 
                 platform=platform, **ua_dict
             ).strip(' ')
 
+        # Heroku's router sets X-Request-Start in epoch milliseconds. pydantic's old
+        # parse_datetime auto-scaled values above its watershed (~2e10) from ms to s;
+        # fromtimestamp does not, so scale ms→s here to avoid a year-out-of-range crash.
+        if ts > 2e10:
+            ts /= 1000
         ts_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         db.add(Event(message_id=message_id, status='click', ts=ts_dt, extra=extra))
         db.commit()

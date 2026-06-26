@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.common.api.errors import HTTP404, HTTP409
+from app.common.api.errors import HTTP400, HTTP404, HTTP409
 from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.messages.models import Company, Message, MessageGroup, SmsSendMethod
@@ -45,6 +45,8 @@ def sms_billing_view(
     company = db.exec(select(Company).where(Company.code == company_code)).first()
     if not company:
         raise HTTP404('company not found')
+    if not data or 'start' not in data or 'end' not in data:
+        raise HTTP400('request body must include "start" and "end" dates')
     start = datetime.strptime(data['start'], '%Y-%m-%d')
     end = datetime.strptime(data['end'], '%Y-%m-%d')
     spend = _get_sms_spend(db, company_id=company.id, method=method.value, start=start, end=end)  # ty:ignore[invalid-argument-type]

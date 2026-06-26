@@ -47,6 +47,10 @@ def _default_email_template() -> str:
 
 
 class EmailSendModel(BaseModel):
+    # pydantic v1 coerced numeric JSON values to str for str fields; preserve that for callers
+    # that send e.g. a numeric company_code (v2 rejects int→str by default).
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+
     uid: UUID
     main_template: str = Field(default_factory=_default_email_template)
     mustache_partials: Optional[dict[str, str]] = None
@@ -80,6 +84,9 @@ class SmsRecipientModel(BaseModel):
 
 
 class SmsSendModel(BaseModel):
+    # See EmailSendModel: preserve pydantic v1 numeric→str coercion for str fields.
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+
     uid: Annotated[str, StringConstraints(min_length=20, max_length=40)]
     main_template: str
     company_code: str
