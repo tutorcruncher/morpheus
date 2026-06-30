@@ -1,3 +1,5 @@
+import asyncio
+import json
 import re
 import uuid
 from pathlib import Path
@@ -11,12 +13,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.core import database as db_module
+from app.core.celery import celery_app
 from app.core.config import settings as app_settings
 from app.core.database import SessionLocal, engine, get_db
 from app.ext import clients as clients_module
 from app.main import app
 from app.messages.models import Company, MessageGroup
 from app.messages.schemas import EmailSendModel
+from app.messages.tasks import SendEmail, get_redis
 from tests import dummy_server
 
 THIS_DIR = Path(__file__).parent.resolve()
@@ -56,8 +60,6 @@ def _reset_task_counter():
 @pytest.fixture(autouse=True)
 def _patch_task_counter(monkeypatch):
     """Wrap each registered Celery task so we can count invocations."""
-    from app.core.celery import celery_app
-
     originals = {}
     for task_name, task in list(celery_app.tasks.items()):
         if not task_name.startswith('app.'):
@@ -82,8 +84,6 @@ def _patch_task_counter(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _clean_redis():
-    from app.messages.tasks import get_redis
-
     redis = get_redis()
     redis.flushdb()
     yield
@@ -97,8 +97,6 @@ class _SyncLoop:
     """
 
     def run_until_complete(self, awaitable):
-        import asyncio
-
         if asyncio.iscoroutine(awaitable) or asyncio.isfuture(awaitable):
             return asyncio.get_event_loop().run_until_complete(awaitable)
         return awaitable
@@ -142,8 +140,6 @@ def worker_ctx(settings):
 
 def _run_send_email(ctx, group_id, company_id, recipient, m):
     """Execute the SendEmail logic synchronously, mimicking the legacy worker function signature."""
-    from app.messages.tasks import SendEmail
-
     task = _LegacyTask(job_try=ctx.get('job_try', 1))
     SendEmail(task, group_id, company_id, recipient, m).run()
 
@@ -247,10 +243,8 @@ def cli(settings, db):
 
 def _stringify_json(value: Any) -> Any:
     """Mimic the legacy SyncDb behaviour: JSONB columns come back as text strings, not dicts."""
-    import json as _json
-
     if isinstance(value, dict):
-        return _json.dumps(value)
+        return json.dumps(value)
     return value
 
 

@@ -27,12 +27,6 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     create_db_and_tables()
     init_sentry()
-    configure_logfire()
-    if settings.logfire_token:  # pragma: no cover  -- prod-only instrumentation
-        import logfire
-
-        logfire.instrument_fastapi(app)
-        logfire.instrument_sqlalchemy(engine=engine)
     yield
 
 
@@ -54,3 +48,14 @@ app.include_router(messages_api.router, prefix='/messages', tags=['messages'])
 app.include_router(webhooks_api.router, prefix='/webhook', tags=['webhooks'])
 
 app.mount('/', StaticFiles(directory='app/static'), name='static')
+
+# Observability must be configured BEFORE the app starts serving. Instrumenting inside
+# the lifespan runs after Starlette has built the middleware stack, which stops the OTel
+# request-span middleware from wrapping requests and orphans every downstream DB/httpx
+# span into its own trace. See tests/test_parity.py::test_logfire_sql_spans_nest_under_request_span.
+configure_logfire()
+if settings.logfire_token:  # pragma: no cover  -- prod-only instrumentation
+    import logfire
+
+    logfire.instrument_fastapi(app)
+    logfire.instrument_sqlalchemy(engine=engine)

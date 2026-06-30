@@ -6,11 +6,13 @@ from datetime import date, datetime, timedelta, timezone
 from operator import itemgetter
 from urllib.parse import urlencode
 
+import pydf
 import pytest
 from dirty_equals import IsStr
 from fastapi.testclient import TestClient
 
 from app.messages.models import MessageStatus
+from app.messages.tasks import update_aggregation_view
 from tests.conftest import SyncDb
 
 
@@ -173,8 +175,6 @@ def test_user_aggregate(cli, settings, send_email, sync_db: SyncDb, loop, worker
     cli.post('/webhook/test/', json=data)
 
     send_email(uid=str(uuid.uuid4()), company_code='different')
-    from app.messages.tasks import update_aggregation_view
-
     update_aggregation_view.delay()
     worker.test_run()
 
@@ -301,8 +301,6 @@ def test_message_details(cli, settings, send_email, sync_db: SyncDb, worker, loo
 
 def _wkhtml_works() -> bool:
     try:
-        import pydf
-
         pydf.generate_pdf('<p>x</p>')
         return True
     except Exception:

@@ -9,20 +9,32 @@ trigger output, enum round-trip) that the framework swap could plausibly break.
 import base64
 import hashlib
 import hmac
+import sys
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
+import logfire
+from celery.exceptions import MaxRetriesExceededError
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from logfire.testing import TestExporter
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from sqlalchemy import create_engine, text
 
-from app.core.database import engine
+from app import sentry as sentry_pkg
+from app.core import logging as core_logging
+from app.core.config import settings as app_settings
+from app.core.database import engine, get_db
+from app.messages import tasks
 from app.messages.models import (
     Company,
     Message,
     MessageStatus,
     SendMethod,
 )
+from app.messages.schemas import EmailRecipientModel
+from app.messages.tasks import EMAIL_RETRYING, _SendEmailTask, get_redis, store_click
 from tests.conftest import SyncDb
 
 # ---- Cross-cutting invariants ---------------------------------------------------
@@ -197,9 +209,6 @@ def test_get_or_create_with_defaults_inserts(db):
 
 def test_aggregation_view_disabled_setting(monkeypatch):
     """The scheduler task should no-op when settings.update_aggregation_view is False."""
-    from app.core.config import settings as app_settings
-    from app.messages import tasks
-
     monkeypatch.setattr(app_settings, 'update_aggregation_view', False)
     # Should return without attempting to refresh; raises if the function tried to hit DB.
     tasks.update_aggregation_view()
@@ -207,9 +216,6 @@ def test_aggregation_view_disabled_setting(monkeypatch):
 
 def test_delete_old_emails_disabled_setting(monkeypatch):
     """The scheduler task should no-op when settings.delete_old_emails is False."""
-    from app.core.config import settings as app_settings
-    from app.messages import tasks
-
     monkeypatch.setattr(app_settings, 'delete_old_emails', False)
     tasks.delete_old_emails()
 
@@ -223,9 +229,7 @@ def test_send_email_retry_exhaustion_writes_failure_row(
     hook is the prod path; the body guard is the test path.
     """
     group_id, c_id, m = call_send_emails()
-    worker_ctx['job_try'] = len(__import__('app.messages.tasks', fromlist=['EMAIL_RETRYING']).EMAIL_RETRYING) + 1
-    from app.messages.schemas import EmailRecipientModel
-
+    worker_ctx['job_try'] = len(EMAIL_RETRYING) + 1
     worker_send_email(worker_ctx, group_id, c_id, EmailRecipientModel(address='exhausted@example.com'), m)
     msg = sync_db.fetchrow('select * from messages')
     assert msg['status'] == 'send_request_failed'
@@ -241,10 +245,6 @@ def test_get_or_create_defaults(db):
 
 def test_send_email_celery_on_failure_writes_failure_row(call_send_emails, sync_db: SyncDb):
     """Celery's on_failure hook should record the failure row when MaxRetriesExceededError fires."""
-    from celery.exceptions import MaxRetriesExceededError
-
-    from app.messages.tasks import _SendEmailTask
-
     group_id, c_id, m = call_send_emails()
     args = (group_id, c_id, {'address': 'rip@example.com'}, m.model_dump(mode='json'))
     task = _SendEmailTask()
@@ -257,8 +257,6 @@ def test_send_email_celery_on_failure_writes_failure_row(call_send_emails, sync_
 
 def test_send_email_on_failure_swallows_other_exceptions(call_send_emails, sync_db: SyncDb):
     """Non-retry exceptions should not trigger the failure-row write."""
-    from app.messages.tasks import _SendEmailTask
-
     call_send_emails()  # seeds company + group
     task = _SendEmailTask()
     task.on_failure(RuntimeError('something else'), 'task-id', (), {}, None)
@@ -268,10 +266,6 @@ def test_send_email_on_failure_swallows_other_exceptions(call_send_emails, sync_
 
 def test_send_email_on_failure_swallows_bad_args(sync_db: SyncDb):
     """Malformed args during on_failure should be logged, not propagated."""
-    from celery.exceptions import MaxRetriesExceededError
-
-    from app.messages.tasks import _SendEmailTask
-
     task = _SendEmailTask()
     # Args don't unpack into 4 elements → caught and logged.
     task.on_failure(MaxRetriesExceededError(), 'task-id', ('only-one',), {}, None)
@@ -280,9 +274,6 @@ def test_send_email_on_failure_swallows_bad_args(sync_db: SyncDb):
 
 def test_init_sentry_with_dsn(monkeypatch):
     """init_sentry should call sentry_sdk.init when a DSN is configured."""
-    from app import sentry as sentry_pkg
-    from app.core.config import settings as app_settings
-
     monkeypatch.setattr(app_settings, 'sentry_dsn', 'https://example@sentry.io/1')
     called = {}
 
@@ -296,9 +287,6 @@ def test_init_sentry_with_dsn(monkeypatch):
 
 def test_configure_logfire_with_token(monkeypatch):
     """configure_logfire should configure + instrument when a token is set."""
-    from app.core import logging as core_logging
-    from app.core.config import settings as app_settings
-
     monkeypatch.setattr(app_settings, 'logfire_token', 'lgf_test_token')
     configured = {}
 
@@ -311,16 +299,52 @@ def test_configure_logfire_with_token(monkeypatch):
         def instrument_httpx():
             configured['httpx'] = True
 
-    monkeypatch.setitem(__import__('sys').modules, 'logfire', _FakeLogfire)
+    monkeypatch.setitem(sys.modules, 'logfire', _FakeLogfire)
     core_logging.configure_logfire()
     assert configured['token'] == 'lgf_test_token'
     assert configured['httpx'] is True
 
 
+def test_logfire_sql_spans_nest_under_request_span():
+    """Regression: logfire must be instrumented BEFORE the app serves requests.
+
+    If instrumentation is deferred (e.g. to the lifespan, which runs after Starlette
+    has built the middleware stack) the OTel request-span middleware never wraps
+    requests, so DB/httpx spans orphan into their own root traces instead of nesting
+    under the request span. This mirrors the wiring app/main.py must use.
+    """
+    exporter = TestExporter()
+    logfire.configure(send_to_logfire=False, additional_span_processors=[SimpleSpanProcessor(exporter)])
+
+    engine = create_engine('sqlite://')
+    test_app = FastAPI()
+
+    @test_app.get('/q')
+    def q():  # sync endpoint, like the real message-list routes
+        with engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+        return {'ok': True}
+
+    # Instrument before serving — the pattern app/main.py must follow.
+    logfire.instrument_fastapi(test_app)
+    logfire.instrument_sqlalchemy(engine=engine)
+
+    TestClient(test_app).get('/q')
+
+    spans = exporter.exported_spans
+    request_spans = [s for s in spans if s.name == 'GET /q']
+    select_spans = [s for s in spans if s.name == 'SELECT']
+    assert request_spans, 'no request span recorded — instrument_fastapi did not wrap the request'
+    assert select_spans, 'no SQL span recorded'
+
+    request_trace = request_spans[0].context.trace_id
+    for s in select_spans:
+        assert s.context.trace_id == request_trace, 'SQL span orphaned into its own trace (not nested)'
+        assert s.parent is not None, 'SQL span has no parent — not nested under the request span'
+
+
 def test_store_click_with_unknown_link_id_no_ops():
     """If the Link row is missing (race / cleanup), store_click should return None."""
-    from app.messages.tasks import get_redis, store_click
-
     get_redis().flushdb()
     result = store_click(link_id=999_999, ip='127.0.0.1', user_agent=None, ts=0.0)
     assert result is None
@@ -328,8 +352,6 @@ def test_store_click_with_unknown_link_id_no_ops():
 
 def test_get_db_yields_session_and_closes():
     """The get_db generator should yield a usable session and close it on exit."""
-    from app.core.database import get_db
-
     gen = get_db()
     session = next(gen)
     assert session.is_active

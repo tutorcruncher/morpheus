@@ -7,16 +7,21 @@ corresponding fix is applied. See the inline review comments on the PR for conte
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from app.core.config import Settings
-from app.messages.schemas import EmailSendModel, SmsSendModel
+from app.core.database import engine
+from app.ext.clients import ApiError
+from app.messages import tasks
+from app.messages.models import Company, Message, MessageGroup
+from app.messages.schemas import EmailRecipientModel, EmailSendModel, SmsSendModel
+from app.messages.tasks import get_redis, store_click
 from tests.conftest import SyncDb
 from tests.test_email import send_with_link
 
 
 # --- Finding 1: store_click crashes on Heroku's millisecond X-Request-Start ---
 def test_store_click_scales_heroku_millisecond_timestamp(send_email, tmpdir, sync_db: SyncDb):
-    from app.messages.tasks import get_redis, store_click
-
     send_with_link(send_email, tmpdir)
     link = sync_db.fetchrow('select id from links')
     get_redis().flushdb()
@@ -37,10 +42,6 @@ def _set_company_fk_action(action: str) -> None:
     The test schema is built CASCADE, but production carries the legacy ON DELETE RESTRICT
     constraints. Recreating RESTRICT here reproduces the production failure mode.
     """
-    from sqlalchemy import text
-
-    from app.core.database import engine
-
     targets = [
         ('messages', 'messages_company_id_fkey'),
         ('message_groups', 'message_groups_company_id_fkey'),
@@ -57,8 +58,6 @@ def _set_company_fk_action(action: str) -> None:
 
 
 def test_delete_subaccount_with_restrict_fks(cli, db, sync_db: SyncDb):
-    from app.messages.models import Company, Message, MessageGroup
-
     _set_company_fk_action('RESTRICT')
     try:
         company = Company(code='delsub-test')
@@ -99,9 +98,6 @@ def test_delete_subaccount_with_restrict_fks(cli, db, sync_db: SyncDb):
 
 # --- Finding 3: send_sms must not silently drop the SMS on a MessageBird error ---
 def test_send_sms_records_failure_on_messagebird_error(cli, monkeypatch, sync_db: SyncDb):
-    from app.ext.clients import ApiError
-    from app.messages import tasks
-
     def boom(self, *args, **kwargs):
         raise ApiError('POST', 'http://dummy/messagebird/messages', 400, 'bad request')
 
@@ -128,8 +124,6 @@ def test_send_sms_records_failure_on_messagebird_error(cli, monkeypatch, sync_db
 def test_mandrill_non_retryable_error_records_failure_row(
     call_send_emails, worker_send_email, worker_ctx, sync_db: SyncDb
 ):
-    from app.messages.schemas import EmailRecipientModel
-
     group_id, c_id, m = call_send_emails(method='email-mandrill', subject_template='__500__')
     worker_ctx['job_try'] = 1
     # NB: not an @example.com address — that short-circuits the real Mandrill call in tests.
@@ -191,8 +185,6 @@ def test_sms_send_model_coerces_numeric_company_code():
 
 # --- Finding 8: sms billing GET with no body must 400, not 500 ---
 def test_sms_billing_missing_body_returns_400(cli, db):
-    from app.messages.models import Company
-
     db.add(Company(code='billing-empty'))
     db.commit()
     r = cli.get('/billing/sms-test/billing-empty/', headers={'Authorization': 'testing-key'})
