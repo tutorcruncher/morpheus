@@ -103,6 +103,15 @@ class SmsNumbersModel(BaseModel):
     numbers: dict[int, str]
     country_code: Annotated[str, StringConstraints(min_length=2, max_length=2)] = 'GB'
 
+    @field_validator('numbers', mode='before')
+    @classmethod
+    def coerce_pairs_to_dict(cls, v: Any) -> Any:
+        # TC2 sends `numbers` as a list of (id, number) pairs (dict.items()). Pydantic v1
+        # coerced this to a dict via dict(v); v2 does not, so restore that behaviour here.
+        if isinstance(v, (list, tuple)):
+            return dict(v)
+        return v
+
 
 # --- Webhook schemas ---
 

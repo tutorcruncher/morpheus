@@ -125,6 +125,20 @@ def test_validate_number(cli, tmpdir):
     } == data
 
 
+def test_validate_number_list_of_pairs(cli, tmpdir):
+    # TC2 sends `numbers` as dict.items() -> a list of [id, number] pairs.
+    data = {
+        'country_code': 'US',
+        'numbers': [[234, '1 818 337 3095'], [345, '+447891123856']],
+    }
+    r = cli.request('GET', '/validate/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert set(data) == {'234', '345'}
+    assert data['234']['number'] == '+18183373095'
+    assert data['345']['number'] == '+447891123856'
+
+
 def test_repeat_uuid(cli, tmpdir, worker, loop):
     data = {
         'uid': '69eb85e8-1504-40aa-94ff-75bb65fd8d73',
