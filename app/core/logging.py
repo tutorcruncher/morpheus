@@ -19,3 +19,5 @@ def configure_logfire() -> None:
 
     logfire.configure(token=settings.logfire_token, service_name='morpheus')
     logfire.instrument_httpx()
+    # Per-process RSS/VMS so we can see what each web/worker process holds on the dyno
+    logfire.instrument_system_metrics({'process.memory.usage': None, 'process.memory.virtual': None}, base='basic')

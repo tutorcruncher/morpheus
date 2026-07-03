@@ -308,10 +308,18 @@ def test_configure_logfire_with_token(monkeypatch):
         def instrument_httpx():
             configured['httpx'] = True
 
+        @staticmethod
+        def instrument_system_metrics(config, base):
+            configured['system_metrics'] = (config, base)
+
     monkeypatch.setitem(sys.modules, 'logfire', _FakeLogfire)
     core_logging.configure_logfire()
     assert configured['token'] == 'lgf_test_token'
     assert configured['httpx'] is True
+    assert configured['system_metrics'] == (
+        {'process.memory.usage': None, 'process.memory.virtual': None},
+        'basic',
+    )
 
 
 def test_logfire_sql_spans_nest_under_request_span():
