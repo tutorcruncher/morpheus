@@ -119,6 +119,7 @@ class SmsNumbersModel(BaseModel):
 class MandrillMessageStatus(str, Enum):
     send = 'send'
     deferral = 'deferral'
+    delivered = 'delivered'
     hard_bounce = 'hard_bounce'
     soft_bounce = 'soft_bounce'
     open = 'open'
@@ -194,10 +195,6 @@ class MandrillSingleWebhook(BaseWebhook):
             },
             sort_keys=sort_keys,
         )
-
-
-class MandrillWebhook(BaseModel):
-    events: list[MandrillSingleWebhook]
 
 
 class MessageBirdWebHook(BaseWebhook):
