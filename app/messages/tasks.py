@@ -213,7 +213,10 @@ class SendEmail:
         defer = EMAIL_RETRYING[self.job_try - 1]
         try:
             r = Mandrill().post('messages/send.json', **data)
-        except (ConnectionError, TimeoutError, httpx.ConnectError, httpx.ReadTimeout) as e:
+        # httpx.TransportError covers all connection/timeout failures (ConnectTimeout,
+        # ReadTimeout, ConnectError, ...) — previously ConnectTimeout slipped through and
+        # the task failed without retrying, silently dropping the email.
+        except (ConnectionError, TimeoutError, httpx.TransportError) as e:
             main_logger.info(
                 'client connection error group_id=%s job_try=%s defer=%ss',
                 self.group_id,
