@@ -193,6 +193,56 @@ def test_mandrill_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, 
     assert events[0]['status'] == 'open'
 
 
+def test_mandrill_webhook_delivered(cli: TestClient, send_email, sync_db: SyncDb, worker, loop, dummy_server, settings):
+    send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
+
+    messages = [{'ts': 1969660800, 'event': 'delivered', '_id': 'mandrill-testingexampleorg', 'diag': '250 OK'}]
+
+    msg = f'https://localhost/webhook/mandrill/mandrill_events{json.dumps(messages)}'
+    sig = base64.b64encode(
+        hmac.new(settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
+    )
+    r = cli.post(
+        '/webhook/mandrill/',
+        data={'mandrill_events': json.dumps(messages)},
+        headers={'X-Mandrill-Signature': sig.decode()},
+    )
+    assert r.status_code == 200, r.json()
+    assert worker.test_run() == 2
+
+    events = sync_db.fetch('select * from events')
+    assert len(events) == 1
+    assert events[0]['status'] == 'delivered'
+
+
+def test_mandrill_webhook_unknown_event(
+    cli: TestClient, send_email, sync_db: SyncDb, worker, loop, dummy_server, settings
+):
+    """Events with types we don't recognise are skipped without failing the rest of the batch."""
+    send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
+
+    messages = [
+        {'ts': 1969660800, 'event': 'some_future_event', '_id': 'mandrill-testingexampleorg'},
+        {'ts': 1969660800, 'event': 'open', '_id': 'mandrill-testingexampleorg'},
+    ]
+
+    msg = f'https://localhost/webhook/mandrill/mandrill_events{json.dumps(messages)}'
+    sig = base64.b64encode(
+        hmac.new(settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
+    )
+    r = cli.post(
+        '/webhook/mandrill/',
+        data={'mandrill_events': json.dumps(messages)},
+        headers={'X-Mandrill-Signature': sig.decode()},
+    )
+    assert r.status_code == 200, r.json()
+    assert worker.test_run() == 2
+
+    events = sync_db.fetch('select * from events')
+    assert len(events) == 1
+    assert events[0]['status'] == 'open'
+
+
 def test_mandrill_webhook_invalid(cli: TestClient, send_email, sync_db: SyncDb, dummy_server, settings):
     send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]

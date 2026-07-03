@@ -26,6 +26,7 @@ from phonenumbers import (
     parse as parse_number,
 )
 from phonenumbers.geocoder import country_name_for_number, description_for_number
+from pydantic import ValidationError
 from pydf import generate_pdf
 from sqlalchemy import text
 from sqlmodel import select
@@ -41,7 +42,7 @@ from app.messages.schemas import (
     EmailRecipientModel,
     EmailSendMethod,
     EmailSendModel,
-    MandrillWebhook,
+    MandrillSingleWebhook,
     MessageBirdWebHook,
     SendMethod,
     SmsRecipientModel,
@@ -674,8 +675,6 @@ def _update_message_status(send_method: SendMethod, m: BaseWebhook, log_each: bo
 @celery_app.task(name='app.messages.tasks.update_message_status')
 def update_message_status(send_method: str, payload: dict) -> str:
     method = SendMethod(send_method)
-    from app.messages.schemas import MandrillSingleWebhook
-
     if method in (SendMethod.sms_messagebird, SendMethod.sms_test):
         m = MessageBirdWebHook.model_validate(payload)
     else:
@@ -685,17 +684,24 @@ def update_message_status(send_method: str, payload: dict) -> str:
 
 @celery_app.task(name='app.messages.tasks.update_mandrill_webhooks')
 def update_mandrill_webhooks(events: list) -> int:
-    mandrill_webhook = MandrillWebhook(events=events)
     statuses: dict[str, int] = {}
-    for m in mandrill_webhook.events:
+    for event in events:
+        # Validate each event individually so one unrecognised event type (Mandrill adds
+        # them without notice, e.g. 'delivered') doesn't fail the whole batch.
+        try:
+            m = MandrillSingleWebhook.model_validate(event)
+        except ValidationError as e:
+            main_logger.warning('ignoring invalid mandrill webhook event: %s', e)
+            statuses['ignored'] = statuses.get('ignored', 0) + 1
+            continue
         status = _update_message_status(SendMethod.email_mandrill, m, log_each=False)
         statuses[status] = statuses.get(status, 0) + 1
     main_logger.info(
         'updating %d messages: %s',
-        len(mandrill_webhook.events),
+        len(events),
         ' '.join(f'{k}={v}' for k, v in statuses.items()),
     )
-    return len(mandrill_webhook.events)
+    return len(events)
 
 
 @celery_app.task(name='app.messages.tasks.store_click')
