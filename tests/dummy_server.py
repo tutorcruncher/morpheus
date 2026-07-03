@@ -37,6 +37,8 @@ def make_handler(state: DummyState):
             subject = message.get('subject')
             if subject == '__slow__':
                 raise httpx.ReadTimeout('simulated timeout', request=request)
+            elif subject == '__connect_timeout__':
+                raise httpx.ConnectTimeout('simulated handshake timeout', request=request)
             elif subject == '__502__':
                 return _text('', 502)
             elif subject == '__500_nginx__':

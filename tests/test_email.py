@@ -571,6 +571,27 @@ def test_mandrill_send_client_error(sync_db: SyncDb, worker_ctx, call_send_email
     assert sync_db.fetchval('select count(*) from messages') == 0
 
 
+def test_mandrill_send_connect_timeout(sync_db: SyncDb, worker_ctx, call_send_emails, loop, worker_send_email):
+    group_id, c_id, m = call_send_emails(subject_template='__connect_timeout__')
+
+    assert sync_db.fetchval('select count(*) from messages') == 0
+    worker_ctx['job_try'] = 1
+
+    with pytest.raises(Retry) as exc_info:
+        loop.run_until_complete(
+            worker_send_email(
+                worker_ctx,
+                group_id,
+                c_id,
+                EmailRecipientModel(address='testing@recipient.com'),
+                m,
+            )
+        )
+    assert exc_info.value.defer_score == 5_000
+
+    assert sync_db.fetchval('select count(*) from messages') == 0
+
+
 def test_mandrill_send_many_errors(sync_db: SyncDb, worker_ctx, call_send_emails, loop, worker_send_email):
     group_id, c_id, m = call_send_emails()
 
