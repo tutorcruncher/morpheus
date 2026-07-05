@@ -312,10 +312,15 @@ def test_configure_logfire_with_token(monkeypatch):
         def instrument_system_metrics(config, base):
             configured['system_metrics'] = (config, base)
 
+        @staticmethod
+        def instrument_celery():
+            configured['celery'] = True
+
     monkeypatch.setitem(sys.modules, 'logfire', _FakeLogfire)
     core_logging.configure_logfire()
     assert configured['token'] == 'lgf_test_token'
     assert configured['httpx'] is True
+    assert configured['celery'] is True
     assert configured['system_metrics'] == (
         {'process.memory.usage': None, 'process.memory.virtual': None},
         'basic',
