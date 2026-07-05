@@ -9,6 +9,7 @@ trigger output, enum round-trip) that the framework swap could plausibly break.
 import base64
 import hashlib
 import hmac
+import logging
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -316,8 +317,18 @@ def test_configure_logfire_with_token(monkeypatch):
         def instrument_celery():
             configured['celery'] = True
 
+        class LoggingHandler(logging.NullHandler):
+            pass
+
     monkeypatch.setitem(sys.modules, 'logfire', _FakeLogfire)
-    core_logging.configure_logfire()
+    root_logger = logging.getLogger()
+    try:
+        core_logging.configure_logfire()
+        logfire_handlers = [h for h in root_logger.handlers if isinstance(h, _FakeLogfire.LoggingHandler)]
+        assert len(logfire_handlers) == 1
+    finally:
+        for handler in [h for h in root_logger.handlers if isinstance(h, _FakeLogfire.LoggingHandler)]:
+            root_logger.removeHandler(handler)
     assert configured['token'] == 'lgf_test_token'
     assert configured['httpx'] is True
     assert configured['celery'] is True
