@@ -317,17 +317,17 @@ def test_configure_logfire_with_token(monkeypatch):
         def instrument_celery():
             configured['celery'] = True
 
-        class LoggingHandler(logging.NullHandler):
+        class LogfireLoggingHandler(logging.NullHandler):
             pass
 
     monkeypatch.setitem(sys.modules, 'logfire', _FakeLogfire)
     root_logger = logging.getLogger()
     try:
         core_logging.configure_logfire()
-        logfire_handlers = [h for h in root_logger.handlers if isinstance(h, _FakeLogfire.LoggingHandler)]
+        logfire_handlers = [h for h in root_logger.handlers if isinstance(h, _FakeLogfire.LogfireLoggingHandler)]
         assert len(logfire_handlers) == 1
     finally:
-        for handler in [h for h in root_logger.handlers if isinstance(h, _FakeLogfire.LoggingHandler)]:
+        for handler in [h for h in root_logger.handlers if isinstance(h, _FakeLogfire.LogfireLoggingHandler)]:
             root_logger.removeHandler(handler)
     assert configured['token'] == 'lgf_test_token'
     assert configured['httpx'] is True
