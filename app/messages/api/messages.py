@@ -88,12 +88,12 @@ def messages_list(
     data = {'items': [m.parsed_details for m in items], 'count': full_count}
     this_url = str(request.url_for('messages_list', method=method.value))
     if (offset + len(items)) < full_count:  # ty:ignore[unsupported-operator]
-        data['next'] = f'{this_url}?offset={offset + len(items)}'  # ty:ignore[invalid-assignment, unsupported-operator]
+        data['next'] = f'{this_url}?offset={offset + len(items)}'  # ty:ignore[unsupported-operator]
     if offset:
-        data['previous'] = f'{this_url}?offset={max(offset - LIST_PAGE_SIZE, 0)}'  # ty:ignore[invalid-assignment]
+        data['previous'] = f'{this_url}?offset={max(offset - LIST_PAGE_SIZE, 0)}'
     if 'sms' in method.value:
         start, end = month_interval()
-        data['spend'] = _get_sms_spend(db, company_id=company.id, start=start, end=end, method=method.value) or 0  # ty:ignore[invalid-argument-type, invalid-assignment]
+        data['spend'] = _get_sms_spend(db, company_id=company.id, start=start, end=end, method=method.value) or 0  # ty:ignore[invalid-argument-type]
     return data
 
 
