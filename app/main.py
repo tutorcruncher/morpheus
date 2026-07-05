@@ -37,7 +37,7 @@ app = FastAPI(
     redoc_url='/redoc' if (settings.dev_mode or settings.testing) else None,
     openapi_url='/openapi.json' if (settings.dev_mode or settings.testing) else None,
 )
-app.add_middleware(CORSMiddleware, allow_origins=['*'])  # ty:ignore[invalid-argument-type]
+app.add_middleware(CORSMiddleware, allow_origins=['*'])
 app.add_exception_handler(HttpMessageError, http_message_error_handler)  # ty:ignore[invalid-argument-type]
 
 app.include_router(common_api.router, tags=['common'])
