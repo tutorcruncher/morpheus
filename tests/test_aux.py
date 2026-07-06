@@ -1,12 +1,14 @@
 import base64
-import pytest
-from foxglove.db.helpers import SyncDb
-from foxglove.test_server import DummyServer
-from foxglove.testing import Client
-from starlette.testclient import TestClient
 
-from src.ext import ApiError, ApiSession
+import pytest
+from fastapi.testclient import TestClient
+
+from app.ext.clients import ApiError, ApiSession
+from tests.conftest import SyncDb
 from tests.test_user_display import modify_url
+
+DummyServer = object  # legacy type alias for fixture annotations
+Client = TestClient
 
 
 def test_index(cli: TestClient):
@@ -28,7 +30,7 @@ def test_robots(cli: TestClient):
 
 
 def test_favicon(cli: TestClient):
-    r = cli.get('/favicon.ico', allow_redirects=False)
+    r = cli.get('/favicon.ico', follow_redirects=False)
     assert r.status_code == 200
     assert 'image' in r.headers['Content-Type']  # value can vary
 
@@ -247,20 +249,20 @@ def test_missing_link(cli: TestClient):
 
 def test_missing_url_with_arg(cli: TestClient):
     url = 'https://example.com/foobar'
-    r = cli.get('/lxxx?u=' + base64.urlsafe_b64encode(url.encode()).decode(), allow_redirects=False)
+    r = cli.get('/lxxx?u=' + base64.urlsafe_b64encode(url.encode()).decode(), follow_redirects=False)
     assert r.status_code == 307, r.text
     assert r.headers['Location'] == url
 
 
 def test_missing_url_with_arg_bad(cli: TestClient):
-    r = cli.get('/lxxx?u=xxx', allow_redirects=False)
+    r = cli.get('/lxxx?u=xxx', follow_redirects=False)
     assert r.status_code == 404, r.text
 
 
-def test_api_error(settings, loop, dummy_server: DummyServer):
+def test_api_error(settings, dummy_server: DummyServer):
     s = ApiSession(dummy_server.server_name, settings)
     with pytest.raises(ApiError) as exc_info:
-        loop.run_until_complete(s.get('/foobar'))
+        s.get('/foobar')
     assert str(exc_info.value) == f'GET {dummy_server.server_name}/foobar, unexpected response 404'
 
 

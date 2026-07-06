@@ -1,38 +1,36 @@
-black = black -S -l 120 --target-version py38
-isort = isort -w 120
-
-PHONY: install
+.PHONY: install
 install:
-	pip install -r requirements.txt
-	pip install -r tests/requirements.txt
+	uv sync
 
 .PHONY: format
 format:
-	$(isort) src tests
-	$(black) src tests
+	uv run ruff format app tests
+	uv run ruff check --fix app tests
 
 .PHONY: lint
 lint:
-	flake8 src tests
-	$(isort) --check-only src tests
-	$(black) --check src tests
+	uv run ruff check app tests
+	uv run ruff format --check app tests
+	uv run ty check app
 
 .PHONY: test
 test:
-	pytest tests/ --cov=src
+	uv run pytest tests/ --cov=app
 
 .PHONY: reset-db
 reset-db:
 	psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS morpheus"
 	psql -h localhost -U postgres -c "CREATE DATABASE morpheus"
-	psql -h localhost -U postgres -d morpheus -f src/models.sql
-	foxglove patch add_aggregation_view --live --patch-args ':'
-	foxglove patch add_spam_status_and_reason_to_messages --live --patch-args ':'
+	uv run python -c "from app.core.database import create_db_and_tables; create_db_and_tables()"
 
-# Run a specific patch by name:
-#   make run_patch PATCH=patch_function_name
-#   make run_patch PATCH=patch_function_name LIVE=1
-.PHONY: run_patch
-run_patch:
-	foxglove patch $(PATCH) $(if $(LIVE),--live,) --patch-args ':'
+.PHONY: dev
+dev:
+	uv run uvicorn app.main:app --reload
 
+.PHONY: worker
+worker:
+	uv run celery -A app.worker worker --loglevel=info
+
+.PHONY: beat
+beat:
+	uv run celery -A app.worker beat --loglevel=info

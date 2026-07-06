@@ -14,7 +14,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:12
+        image: postgres:15
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -29,29 +29,32 @@ jobs:
         options: --entrypoint redis-server
 
     env:
-      TEST_DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/morpheus_test'
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/morpheus_test'
+      REDIS_URL: 'redis://localhost:6379/4'
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
-    - name: set up python
-      uses: actions/setup-python@v1
+    - name: install uv
+      uses: astral-sh/setup-uv@v3
       with:
-        python-version: '3.9'
+        python-version: '3.12'
 
     - name: install dependencies
-      run: |
-        make install
-        pip freeze
+      run: uv sync --all-extras --dev
+
     - name: lint
       run: make lint
+
     - name: test
-      run: make test
+      run: uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term
 
     - name: codecov
-      run: bash <(curl -s https://codecov.io/bash)
-      env:
-        CODECOV_TOKEN: '1b5eacd0-b422-4654-970d-84acdb03cf53'
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage.xml
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
 
   deploy:
     needs:
@@ -64,7 +67,7 @@ jobs:
       HEROKU_APP: tc-morpheus
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - run: git fetch --unshallow
       - run: git switch master
       - run: git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/$HEROKU_APP.git
@@ -74,25 +77,37 @@ jobs:
     needs: test
     if: "success() && startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - name: set up python
-        uses: actions/setup-python@v1
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
         with:
-          python-version: '3.9'
+          python-version: '3.12'
 
-      - name: install
+      - name: install build deps
+        run: uv pip install --system setuptools wheel twine
+
+      - name: stage render module under morpheus/ namespace
+        working-directory: packaging/morpheus-mail
         run: |
-          make install
-          pip install -U wheel twine
+          mkdir -p morpheus
+          cp -r ../../app/render morpheus/render
+          touch morpheus/__init__.py
 
-      - name: build
+      - name: build morpheus-mail (render submodule)
+        # Builds from a subdirectory so the root pyproject.toml (which defines the main
+        # app) doesn't get auto-applied to this distribution.
+        working-directory: packaging/morpheus-mail
         run: python setup.py sdist bdist_wheel
 
-      - run: twine check dist/*
+      - name: twine check
+        working-directory: packaging/morpheus-mail
+        run: twine check dist/*
 
       - name: upload to pypi
+        working-directory: packaging/morpheus-mail
         run: twine upload dist/*
         env:
           TWINE_USERNAME: __token__

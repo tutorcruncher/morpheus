@@ -1,0 +1,113 @@
+[project]
+name = "morpheus"
+version = "0.1.0"
+description = "TutorCruncher's email and SMS dispatch service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]==0.139.0",
+    "sqlmodel==0.0.39",
+    "uvicorn==0.50.0",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.2",
+    "python-multipart==0.0.32",
+    "celery==5.6.3",
+    "redis==8.0.1",
+    "logfire[celery,fastapi,httpx,requests,sqlalchemy,system-metrics]==4.37.0",
+    "sentry-sdk==2.64.0",
+    "python-dotenv==1.2.2",
+    "psycopg2-binary==2.9.12",
+    "httpx==0.28.1",
+    "gunicorn==26.0.0",
+    "chevron==0.14.0",
+    "libsass==0.23.0",
+    "python-pdf==0.40",
+    "phonenumbers==9.0.34",
+    "ua-parser==1.0.2",
+    "MarkupSafe==3.0.3",
+    "jinja2==3.1.6",
+    "pydantic[email]",
+    "misaka>=2.1.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.15.20",
+    "ty==0.0.56",
+    "pytest==9.1.1",
+    "pytest-sugar==1.1.1",
+    "pre-commit==4.6.0",
+    "coverage==7.15.0",
+    "pytest-cov==7.1.0",
+    "pytest-env==1.6.0",
+    "pytest-timeout==2.4.0",
+    "dirty-equals==0.11",
+    "ipython==9.15.0",
+    "toml==0.10.2",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = ["I"]
+ignore = ['E402']
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "app/worker.py",  # celery boot-strap entry point, exercised end-to-end via deploy
+]
+
+[tool.coverage.report]
+precision = 2
+exclude_lines = [
+    'pragma: no cover',
+    'def __repr__',
+    'def __str__',
+    'raise NotImplementedError',
+    'raise NotImplemented',
+    'print',
+    'if TYPE_CHECKING',
+    "if __name__ == '__main__':",
+]
+
+[tool.pytest.ini_options]
+addopts = "--tb=native"
+timeout = 30
+env = [
+    "TZ=UTC",
+    "TESTING=True",
+    # `D:` = default; lets the GHA workflow override DATABASE_URL/REDIS_URL with credentialed values.
+    "D:DATABASE_URL=postgresql://postgres@localhost:5432/morpheus_test",
+    "D:REDIS_URL=redis://localhost:6379/4",
+    "AUTH_KEY=testing",
+    "USER_AUTH_KEY=insecure",
+    "MANDRILL_KEY=good-mandrill-testing-key",
+    "MANDRILL_WEBHOOK_KEY=testing-mandrill-webhook-key",
+    "MESSAGEBIRD_KEY=testing-mb-key",
+    "HOST_NAME=testing.example.com",
+    "CLICK_HOST_NAME=click.example.com",
+]
+filterwarnings = [
+    'error',
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore::logfire._internal.config.LogfireNotConfiguredWarning",
+    "ignore::DeprecationWarning",
+]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["app/"]
+exclude = ["tests/", ".venv/", "__pycache__/", "src/"]
+
+[tool.ty.analysis]
+respect-type-ignore-comments = true

@@ -1,12 +1,10 @@
 import re
-from buildpg import V
-from buildpg.clauses import Where
 from datetime import datetime, timedelta
-from foxglove.db.helpers import SyncDb
 from urllib.parse import urlencode
 from uuid import uuid4
 
-from src.main import settings
+from app.core.config import settings
+from tests.conftest import SyncDb
 
 
 def test_send_message(cli, tmpdir, worker, loop):
@@ -97,7 +95,7 @@ def test_validate_number(cli, tmpdir):
             567: '+12001230101',  # not possible
         },
     }
-    r = cli.get('/validate/sms/', json=data, headers={'Authorization': 'testing-key'})
+    r = cli.request('GET', '/validate/sms/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
     data = r.json()
     assert {
@@ -125,6 +123,20 @@ def test_validate_number(cli, tmpdir):
         },
         '567': None,
     } == data
+
+
+def test_validate_number_list_of_pairs(cli, tmpdir):
+    # TC2 sends `numbers` as dict.items() -> a list of [id, number] pairs.
+    data = {
+        'country_code': 'US',
+        'numbers': [[234, '1 818 337 3095'], [345, '+447891123856']],
+    }
+    r = cli.request('GET', '/validate/sms/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert set(data) == {'234', '345'}
+    assert data['234']['number'] == '+18183373095'
+    assert data['345']['number'] == '+447891123856'
 
 
 def test_repeat_uuid(cli, tmpdir, worker, loop):
@@ -180,15 +192,13 @@ def test_exceed_cost_limit(cli, tmpdir, worker, loop, sync_db, send_sms, send_we
         'recipients': [{'number': f'0789112385{i}'} for i in range(4)],
     }
 
-    where = Where(V('company_id') == 1)
-
     r = cli.post('/send/sms/', json=dict(uid=str(uuid4()), **d), headers={'Authorization': 'testing-key'})
     assert r.status_code == 201, r.text
     assert worker.test_run() == 4
     assert {'status': 'enqueued', 'spend': 0.0} == r.json()
     assert len(tmpdir.listdir()) == 4
 
-    msg_ext_ids = sync_db.fetchval_b('select array_agg(external_id) from messages :where', where=where)
+    msg_ext_ids = sync_db.fetchval('select array_agg(external_id) from messages where company_id = $1', 1)
     for ext_id in msg_ext_ids:
         send_webhook(ext_id, 0.03)
 
@@ -235,7 +245,7 @@ def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, wor
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
 
-    msg = sync_db.fetchrow_b('select * from messages join message_groups g on g.id = messages.id')
+    msg = sync_db.fetchrow('select * from messages join message_groups g on g.id = messages.id')
     assert msg['status'] == 'send'
     assert msg['to_first_name'] == 'John'
     assert msg['to_last_name'] == 'Doe'
@@ -258,7 +268,7 @@ def test_messagebird_webhook_sms_pricing(cli, sync_db: SyncDb, dummy_server, wor
     assert r.status_code == 200, r.text
     assert worker.test_run() == 2
 
-    msg = sync_db.fetchrow_b('select * from messages')
+    msg = sync_db.fetchrow('select * from messages')
     assert msg['status'] == 'delivered'
     assert msg['cost'] == 0.07
 
@@ -276,7 +286,7 @@ def test_messagebird_webhook_carrier_failed(cli, sync_db: SyncDb, dummy_server, 
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
 
-    msg = sync_db.fetchrow_b('select * from messages join message_groups g on g.id = messages.id')
+    msg = sync_db.fetchrow('select * from messages join message_groups g on g.id = messages.id')
     assert msg['status'] == 'send'
     assert msg['to_first_name'] == 'John'
     assert msg['to_last_name'] == 'Doe'
@@ -301,7 +311,7 @@ def test_messagebird_webhook_carrier_failed(cli, sync_db: SyncDb, dummy_server, 
     assert r.status_code == 200, r.text
     assert worker.test_run() == 2
 
-    msg = sync_db.fetchrow_b('select * from messages')
+    msg = sync_db.fetchrow('select * from messages')
     assert msg['status'] == 'delivery_failed'
     assert msg['cost'] is None
 
@@ -319,7 +329,7 @@ def test_messagebird_webhook_other_delivery_failed(cli, sync_db: SyncDb, dummy_s
     assert r.status_code == 201, r.text
     assert worker.test_run() == 1
 
-    msg = sync_db.fetchrow_b('select * from messages join message_groups g on g.id = messages.id')
+    msg = sync_db.fetchrow('select * from messages join message_groups g on g.id = messages.id')
     assert msg['status'] == 'send'
     assert msg['to_first_name'] == 'John'
     assert msg['to_last_name'] == 'Doe'
@@ -344,7 +354,7 @@ def test_messagebird_webhook_other_delivery_failed(cli, sync_db: SyncDb, dummy_s
     assert r.status_code == 200, r.text
     assert worker.test_run() == 2
 
-    msg = sync_db.fetchrow_b('select * from messages')
+    msg = sync_db.fetchrow('select * from messages')
     assert msg['status'] == 'delivery_failed'
     assert msg['cost'] is None
 
@@ -363,7 +373,7 @@ def test_failed_render(cli, tmpdir, sync_db: SyncDb, worker, loop):
     assert worker.test_run() == 1
     assert len(tmpdir.listdir()) == 0
 
-    assert sync_db.fetchrow_b('select * from messages')['status'] == 'render_failed'
+    assert sync_db.fetchrow('select * from messages')['status'] == 'render_failed'
 
 
 def test_link_shortening(cli, tmpdir, sync_db: SyncDb, worker, loop):
@@ -386,15 +396,15 @@ def test_link_shortening(cli, tmpdir, sync_db: SyncDb, worker, loop):
     token = re.search('message click.example.com/l(.+?)\n', msg_file).groups()[0]
     assert len(token) == 12
 
-    link = sync_db.fetchrow_b('select * from links')
+    link = sync_db.fetchrow('select * from links')
     assert link['url'] == 'http://whatever.com/foo/bar'
     assert link['token'] == token
 
-    r = cli.get(f'/l{token}', allow_redirects=False)
+    r = cli.get(f'/l{token}', follow_redirects=False)
     assert r.status_code == 307, r.text
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
 
-    r = cli.get(f'/l{token}.', allow_redirects=False)
+    r = cli.get(f'/l{token}.', follow_redirects=False)
     assert r.status_code == 307, r.text
     assert r.headers['location'] == 'http://whatever.com/foo/bar'
 
@@ -443,8 +453,11 @@ def test_sms_billing(cli, send_sms, send_webhook, sync_db):
     start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
     end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
     data = dict(start=start, end=end, company_code='billing-test')
-    r = cli.get(
-        '/billing/sms-test/billing-test/', json=dict(uid=str(uuid4()), **data), headers={'Authorization': 'testing-key'}
+    r = cli.request(
+        'GET',
+        '/billing/sms-test/billing-test/',
+        json=dict(uid=str(uuid4()), **data),
+        headers={'Authorization': 'testing-key'},
     )
     assert r.status_code == 200, r.text
     assert {'company': 'billing-test', 'start': start, 'end': end, 'spend': 0.048} == r.json()

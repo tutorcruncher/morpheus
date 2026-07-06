@@ -2,23 +2,18 @@ import base64
 import hashlib
 import hmac
 import json
-import logging
-import pytest
 import re
-from arq import Retry
-from buildpg import V
 from datetime import datetime, timedelta, timezone
-from foxglove.db.helpers import SyncDb
 from pathlib import Path
-from pytest_toolbox.comparison import RegexStr
-from starlette.testclient import TestClient
-from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from src.schemas.messages import EmailRecipientModel, EmailSendModel, MessageStatus
-from src.spam.services import OpenAISpamEmailService, SpamCacheService, SpamCheckResult
-from src.views.email import get_spam_checker
-from src.worker import delete_old_emails, email_retrying, send_email as worker_send_email
+import pytest
+from dirty_equals import IsInt as AnyInt, IsStr
+from fastapi.testclient import TestClient
+
+from app.messages.schemas import EmailRecipientModel
+from app.messages.tasks import EMAIL_RETRYING as email_retrying, delete_old_emails
+from tests.conftest import SyncDb, _LegacyRetry as Retry
 
 THIS_DIR = Path(__file__).parent.resolve()
 
@@ -61,7 +56,7 @@ def test_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     uuid = str(uuid4())
     message_id = send_email(uid=uuid)
 
-    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)
+    message = sync_db.fetchrow('select * from messages where external_id = $1', message_id)
     assert message['status'] == 'send'
     first_update_ts = message['update_ts']
 
@@ -73,13 +68,13 @@ def test_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     assert r.status_code == 200, r.text
     assert worker.test_run() == 2
 
-    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)
+    message = sync_db.fetchrow('select * from messages where external_id = $1', message_id)
     assert message['status'] == 'open'
     assert message['update_ts'] > first_update_ts
-    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 1
-    event = sync_db.fetchrow_b('select * from events where :where', where=V('message_id') == message['id'])
+    assert sync_db.fetchval('select count(*) from events where message_id = $1', message['id']) == 1
+    event = sync_db.fetchrow('select * from events where message_id = $1', message['id'])
     assert event['ts'] == datetime(2033, 5, 18, 3, 33, 20, tzinfo=timezone.utc)
-    assert event['extra'] == RegexStr('{.*}')
+    assert event['extra'] == IsStr(regex='{.*}')
     extra = json.loads(event['extra'])
     assert extra['diag'] is None
     assert extra['opens'] is None
@@ -87,25 +82,25 @@ def test_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
 
 def test_webhook_old(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     msg_id = send_email()
-    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    message = sync_db.fetchrow('select * from messages where external_id = $1', msg_id)
     assert message['status'] == 'send'
     first_update_ts = message['update_ts']
-    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 0
+    assert sync_db.fetchval('select count(*) from events where message_id = $1', message['id']) == 0
     data = {'ts': int(1.4e9), 'event': 'open', '_id': msg_id}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
     assert worker.test_run() == 2
 
     assert message['status'] == 'send'
-    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 1
+    assert sync_db.fetchval('select count(*) from events where message_id = $1', message['id']) == 1
     assert message['update_ts'] == first_update_ts
 
 
 def test_webhook_repeat(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
     msg_id = send_email()
-    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    message = sync_db.fetchrow('select * from messages where external_id = $1', msg_id)
     assert message['status'] == 'send'
-    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 0
+    assert sync_db.fetchval('select count(*) from events where message_id = $1', message['id']) == 0
     data = {'ts': '2032-06-06T12:10', 'event': 'open', '_id': msg_id}
     for _ in range(3):
         r = cli.post('/webhook/test/', json=data)
@@ -115,9 +110,9 @@ def test_webhook_repeat(cli: TestClient, send_email, sync_db: SyncDb, worker, lo
     assert r.status_code == 200, r.text
     assert worker.test_run() == 5
 
-    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    message = sync_db.fetchrow('select * from messages where external_id = $1', msg_id)
     assert message['status'] == 'open'
-    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 2
+    assert sync_db.fetchval('select count(*) from events where message_id = $1', message['id']) == 2
 
 
 def test_webhook_missing(cli: TestClient, send_email, sync_db: SyncDb):
@@ -126,18 +121,16 @@ def test_webhook_missing(cli: TestClient, send_email, sync_db: SyncDb):
     data = {'ts': int(1e10), 'event': 'open', '_id': 'missing', 'foobar': ['hello', 'world']}
     r = cli.post('/webhook/test/', json=data)
     assert r.status_code == 200, r.text
-    message = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == msg_id)
+    message = sync_db.fetchrow('select * from messages where external_id = $1', msg_id)
     assert message['status'] == 'send'
-    assert sync_db.fetchval_b('select count(*) from events where :where', where=V('message_id') == message['id']) == 0
+    assert sync_db.fetchval('select count(*) from events where message_id = $1', message['id']) == 0
 
 
 def test_mandrill_send(send_email, sync_db: SyncDb, dummy_server):
     assert sync_db.fetchval('select count(*) from messages') == 0
     send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@testing.com'}])
 
-    m = sync_db.fetchrow_b(
-        'select * from messages where :where', where=V('external_id') == 'mandrill-foobaratestingcom'
-    )
+    m = sync_db.fetchrow('select * from messages where external_id = $1', 'mandrill-foobaratestingcom')
     assert m['to_address'] == 'foobar_a@testing.com'
     assert dummy_server.app['log'] == ['POST /mandrill/messages/send.json > 200']
 
@@ -159,9 +152,7 @@ def test_send_mandrill_with_other_attachments(send_email, sync_db: SyncDb, dummy
             }
         ],
     )
-    m = sync_db.fetchrow_b(
-        'select * from messages where :where', where=V('external_id') == 'mandrill-foobarctestingcom'
-    )
+    m = sync_db.fetchrow('select * from messages where external_id = $1', 'mandrill-foobarctestingcom')
     assert m['to_address'] == 'foobar_c@testing.com'
     assert set(m['attachments']) == {'::calendar.ics', '::testing.pdf'}
 
@@ -170,9 +161,7 @@ def test_example_email_address(send_email, sync_db: SyncDb, dummy_server):
     assert sync_db.fetchval('select count(*) from messages') == 0
     send_email(method='email-mandrill', recipients=[{'address': 'foobar_a@example.com'}])
 
-    m = sync_db.fetchrow_b(
-        'select * from messages where :where', where=V('external_id') == 'mandrill-foobaraexamplecom'
-    )
+    m = sync_db.fetchrow('select * from messages where external_id = $1', 'mandrill-foobaraexamplecom')
     assert m['to_address'] == 'foobar_a@example.com'
     assert m['status'] == 'send'
 
@@ -204,6 +193,56 @@ def test_mandrill_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, 
     assert events[0]['status'] == 'open'
 
 
+def test_mandrill_webhook_delivered(cli: TestClient, send_email, sync_db: SyncDb, worker, loop, dummy_server, settings):
+    send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
+
+    messages = [{'ts': 1969660800, 'event': 'delivered', '_id': 'mandrill-testingexampleorg', 'diag': '250 OK'}]
+
+    msg = f'https://localhost/webhook/mandrill/mandrill_events{json.dumps(messages)}'
+    sig = base64.b64encode(
+        hmac.new(settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
+    )
+    r = cli.post(
+        '/webhook/mandrill/',
+        data={'mandrill_events': json.dumps(messages)},
+        headers={'X-Mandrill-Signature': sig.decode()},
+    )
+    assert r.status_code == 200, r.json()
+    assert worker.test_run() == 2
+
+    events = sync_db.fetch('select * from events')
+    assert len(events) == 1
+    assert events[0]['status'] == 'delivered'
+
+
+def test_mandrill_webhook_unknown_event(
+    cli: TestClient, send_email, sync_db: SyncDb, worker, loop, dummy_server, settings
+):
+    """Events with types we don't recognise are skipped without failing the rest of the batch."""
+    send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
+
+    messages = [
+        {'ts': 1969660800, 'event': 'some_future_event', '_id': 'mandrill-testingexampleorg'},
+        {'ts': 1969660800, 'event': 'open', '_id': 'mandrill-testingexampleorg'},
+    ]
+
+    msg = f'https://localhost/webhook/mandrill/mandrill_events{json.dumps(messages)}'
+    sig = base64.b64encode(
+        hmac.new(settings.mandrill_webhook_key.encode(), msg=msg.encode(), digestmod=hashlib.sha1).digest()
+    )
+    r = cli.post(
+        '/webhook/mandrill/',
+        data={'mandrill_events': json.dumps(messages)},
+        headers={'X-Mandrill-Signature': sig.decode()},
+    )
+    assert r.status_code == 200, r.json()
+    assert worker.test_run() == 2
+
+    events = sync_db.fetch('select * from events')
+    assert len(events) == 1
+    assert events[0]['status'] == 'open'
+
+
 def test_mandrill_webhook_invalid(cli: TestClient, send_email, sync_db: SyncDb, dummy_server, settings):
     send_email(method='email-mandrill', recipients=[{'address': 'testing@example.org'}])
     messages = [{'ts': 1969660800, 'event': 'open', '_id': 'e587306</div></body><meta name=', 'foobar': ['x']}]
@@ -227,7 +266,7 @@ def test_mandrill_send_bad_template(cli: TestClient, send_email, sync_db: SyncDb
     send_email(
         method='email-mandrill', main_template='{{ foo } test message', recipients=[{'address': 'foobar_b@testing.com'}]
     )
-    message = sync_db.fetchrow_b('select * from messages')
+    message = sync_db.fetchrow('select * from messages')
     assert message['status'] == 'render_failed'
 
 
@@ -312,7 +351,7 @@ def test_markdown_context(send_email, tmpdir):
 
 def test_partials(send_email, tmpdir):
     message_id = send_email(
-        main_template='message: |{{{ message }}}|\n' 'foo: {{ foo }}\n' 'partial: {{> test_p }}',
+        main_template='message: |{{{ message }}}|\nfoo: {{ foo }}\npartial: {{> test_p }}',
         context={'message__render': '{{foo}} {{> test_p }}', 'foo': 'FOO', 'bar': 'BAR'},
         mustache_partials={'test_p': 'foo ({{ foo }}) bar **{{ bar }}**'},
     )
@@ -394,11 +433,11 @@ def test_macro_in_message(send_email, tmpdir):
         context={
             'pay_link': '/pay/now/123/',
             'first_name': 'John',
-            'message__render': '# hello {{ first_name }}\n' 'centered_button(Pay now | {{ pay_link }})\n',
+            'message__render': '# hello {{ first_name }}\ncentered_button(Pay now | {{ pay_link }})\n',
         },
         macros={
             'centered_button(text | link)': (
-                '<div class="button">\n' '  <a href="{{ link }}"><span>{{ text }}</span></a>\n' '</div>\n'
+                '<div class="button">\n  <a href="{{ link }}"><span>{{ text }}</span></a>\n</div>\n'
             )
         },
     )
@@ -448,7 +487,7 @@ def test_standard_sass(cli: TestClient, tmpdir, worker, loop):
 def test_custom_sass(send_email, tmpdir):
     message_id = send_email(
         main_template='{{{ css }}}',
-        context={'css__sass': '.foo {\n  .bar {\n    color: black;\n    width: (60px / 6);\n  }\n' '}'},
+        context={'css__sass': '.foo {\n  .bar {\n    color: black;\n    width: (60px / 6);\n  }\n}'},
     )
 
     msg_file = tmpdir.join(f'{message_id}.txt').read()
@@ -464,7 +503,7 @@ def test_invalid_mustache_subject(send_email, tmpdir, sync_db: SyncDb):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert '\nsubject: {{ foo } test message\n' in msg_file
 
-    message = sync_db.fetchrow_b('select * from messages')
+    message = sync_db.fetchrow('select * from messages')
     assert message['status'] == 'send'
     assert message['subject'] == '{{ foo } test message'
     assert message['body'] == '<body>\n\n</body>'
@@ -473,7 +512,7 @@ def test_invalid_mustache_subject(send_email, tmpdir, sync_db: SyncDb):
 def test_invalid_mustache_body(send_email, sync_db: SyncDb):
     send_email(main_template='{{ foo } test message', context={'foo': 'FOO'}, company_code='test_invalid_mustache_body')
 
-    m = sync_db.fetchrow_b('select * from messages')
+    m = sync_db.fetchrow('select * from messages')
     assert m['status'] == 'render_failed'
     assert m['subject'] is None
     assert m['body'] == 'Error rendering email: unclosed tag at line 1'
@@ -495,7 +534,7 @@ def test_invalid_mustache_body(send_email, sync_db: SyncDb):
 #     msg_file = tmpdir.join(f'{message_id}.txt').read()
 #     assert 'testing.pdf' in msg_file
 #
-#     attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
+#     attachments = sync_db.fetchrow('select * from messages where external_id = $1', message_id)[
 #         'attachments'
 #     ]
 #     assert set(attachments) == {'123::testing.pdf', '::different.pdf'}
@@ -515,9 +554,7 @@ def test_send_with_other_attachment(send_email, tmpdir, sync_db: SyncDb):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert 'Look this is some test data' in msg_file
-    attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
-        'attachments'
-    ]
+    attachments = sync_db.fetchrow('select * from messages where external_id = $1', message_id)['attachments']
     assert set(attachments) == {'::calendar.ics'}
 
 
@@ -539,9 +576,7 @@ def test_send_with_other_attachment_pdf(send_email, tmpdir, sync_db: SyncDb):
     msg_file = tmpdir.join(f'{message_id}.txt').read()
     assert f'test_pdf.pdf:{msg}' in msg_file
     assert f'test_pdf_encoded.pdf:{msg}' in msg_file
-    attachments = sync_db.fetchrow_b('select * from messages where :where', where=V('external_id') == message_id)[
-        'attachments'
-    ]
+    attachments = sync_db.fetchrow('select * from messages where external_id = $1', message_id)['attachments']
     assert set(attachments) == {'::test_pdf.pdf', '::test_pdf_encoded.pdf'}
 
 
@@ -565,7 +600,7 @@ def test_pdf_empty(send_email, tmpdir, dummy_server):
     assert '\n  "attachments": []\n' in msg_file
 
 
-def test_mandrill_send_client_error(sync_db: SyncDb, worker_ctx, call_send_emails, loop):
+def test_mandrill_send_client_error(sync_db: SyncDb, worker_ctx, call_send_emails, loop, worker_send_email):
     group_id, c_id, m = call_send_emails(subject_template='__slow__')
 
     assert sync_db.fetchval('select count(*) from messages') == 0
@@ -579,7 +614,6 @@ def test_mandrill_send_client_error(sync_db: SyncDb, worker_ctx, call_send_email
                 c_id,
                 EmailRecipientModel(address='testing@recipient.com'),
                 m,
-                SpamCheckResult(spam=False, reason=''),
             )
         )
     assert exc_info.value.defer_score == 5_000
@@ -587,7 +621,28 @@ def test_mandrill_send_client_error(sync_db: SyncDb, worker_ctx, call_send_email
     assert sync_db.fetchval('select count(*) from messages') == 0
 
 
-def test_mandrill_send_many_errors(sync_db: SyncDb, worker_ctx, call_send_emails, loop):
+def test_mandrill_send_connect_timeout(sync_db: SyncDb, worker_ctx, call_send_emails, loop, worker_send_email):
+    group_id, c_id, m = call_send_emails(subject_template='__connect_timeout__')
+
+    assert sync_db.fetchval('select count(*) from messages') == 0
+    worker_ctx['job_try'] = 1
+
+    with pytest.raises(Retry) as exc_info:
+        loop.run_until_complete(
+            worker_send_email(
+                worker_ctx,
+                group_id,
+                c_id,
+                EmailRecipientModel(address='testing@recipient.com'),
+                m,
+            )
+        )
+    assert exc_info.value.defer_score == 5_000
+
+    assert sync_db.fetchval('select count(*) from messages') == 0
+
+
+def test_mandrill_send_many_errors(sync_db: SyncDb, worker_ctx, call_send_emails, loop, worker_send_email):
     group_id, c_id, m = call_send_emails()
 
     assert sync_db.fetchval('select count(*) from messages') == 0
@@ -600,16 +655,15 @@ def test_mandrill_send_many_errors(sync_db: SyncDb, worker_ctx, call_send_emails
             c_id,
             EmailRecipientModel(address='testing@recipient.com'),
             m,
-            SpamCheckResult(spam=False, reason=''),
         )
     )
 
-    m = sync_db.fetchrow_b('select * from messages')
+    m = sync_db.fetchrow('select * from messages')
     assert m['status'] == 'send_request_failed'
     assert m['body'] == 'upstream error'
 
 
-def test_mandrill_send_502(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
+def test_mandrill_send_502(sync_db: SyncDb, call_send_emails, loop, worker_ctx, worker_send_email):
     group_id, c_id, m = call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = 1
@@ -622,7 +676,6 @@ def test_mandrill_send_502(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
                 c_id,
                 EmailRecipientModel(address='testing@recipient.com'),
                 m,
-                SpamCheckResult(spam=False, reason=''),
             )
         )
     assert exc_info.value.defer_score == 5_000
@@ -630,7 +683,7 @@ def test_mandrill_send_502(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
     assert sync_db.fetchval('select count(*) from messages') == 0
 
 
-def test_mandrill_send_502_last(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
+def test_mandrill_send_502_last(sync_db: SyncDb, call_send_emails, loop, worker_ctx, worker_send_email):
     group_id, c_id, m = call_send_emails(subject_template='__502__')
 
     worker_ctx['job_try'] = len(email_retrying)
@@ -643,7 +696,6 @@ def test_mandrill_send_502_last(sync_db: SyncDb, call_send_emails, loop, worker_
                 c_id,
                 EmailRecipientModel(address='testing@recipient.com'),
                 m,
-                SpamCheckResult(spam=False, reason=''),
             )
         )
     assert exc_info.value.defer_score == 43_200_000
@@ -651,7 +703,7 @@ def test_mandrill_send_502_last(sync_db: SyncDb, call_send_emails, loop, worker_
     assert sync_db.fetchval('select count(*) from messages') == 0
 
 
-def test_mandrill_send_500_nginx(sync_db: SyncDb, call_send_emails, loop, worker_ctx):
+def test_mandrill_send_500_nginx(sync_db: SyncDb, call_send_emails, loop, worker_ctx, worker_send_email):
     group_id, c_id, m = call_send_emails(subject_template='__500_nginx__')
 
     worker_ctx['job_try'] = 2
@@ -664,7 +716,6 @@ def test_mandrill_send_500_nginx(sync_db: SyncDb, call_send_emails, loop, worker
                 c_id,
                 EmailRecipientModel(address='testing@recipient.com'),
                 m,
-                SpamCheckResult(spam=False, reason=''),
             )
         )
     assert exc_info.value.defer_score == 10_000
@@ -687,78 +738,75 @@ def send_with_link(send_email, tmpdir):
     return token
 
 
-# def test_link_shortening(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop):
-#     token = send_with_link(send_email, tmpdir)
-#
-#     m = sync_db.fetchrow_b('select * from messages')
-#     assert m['status'] == 'send'
-#
-#     link = sync_db.fetchrow_b('select * from links')
-#     assert link['id'] == AnyInt()
-#     assert link['message_id'] == m['id']
-#     assert link['token'] == token
-#     assert link['url'] == 'https://www.foobar.com'
-#
-#     r = cli.get(
-#         '/l' + token,
-#         allow_redirects=False,
-#         headers={
-#             'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
-#             'X-Request-Start': '1969660800',
-#             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-#             'Chrome/59.0.3071.115 Safari/537.36',
-#         },
-#     )
-#     assert r.status_code == 307, r.text
-#     assert r.headers['location'] == 'https://www.foobar.com'
-#     assert worker.test_run() == 2
-#
-#     m = sync_db.fetchrow_b('select * from messages where :where', where=V('id') == m['id'])
-#     assert m['status'] == 'click'
-#     event = sync_db.fetchrow_b('select * from events')
-#     assert event['status'] == 'click'
-#     assert event['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
-#     extra = json.loads(event['extra'])
-#     assert extra == {
-#         'ip': '54.170.228.0',
-#         'target': 'https://www.foobar.com',
-#         'user_agent': (
-#             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-#             'Chrome/59.0.3071.115 Safari/537.36'
-#         ),
-#         'user_agent_display': 'Chrome 59 on Linux',
-#     }
+def test_link_shortening(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop):
+    token = send_with_link(send_email, tmpdir)
+
+    m = sync_db.fetchrow('select * from messages')
+    assert m['status'] == 'send'
+
+    link = sync_db.fetchrow('select * from links')
+    assert link['id'] == AnyInt()
+    assert link['message_id'] == m['id']
+    assert link['token'] == token
+    assert link['url'] == 'https://www.foobar.com'
+
+    r = cli.get(
+        '/l' + token,
+        follow_redirects=False,
+        headers={
+            'X-Forwarded-For': '54.170.228.0, 141.101.88.55',
+            'X-Request-Start': '1969660800',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/59.0.3071.115 Safari/537.36',
+        },
+    )
+    assert r.status_code == 307, r.text
+    assert r.headers['location'] == 'https://www.foobar.com'
+    assert worker.test_run() == 2
+
+    m = sync_db.fetchrow('select * from messages where id = $1', m['id'])
+    assert m['status'] == 'click'
+    event = sync_db.fetchrow('select * from events')
+    assert event['status'] == 'click'
+    assert event['ts'] == datetime(2032, 6, 1, 0, 0, tzinfo=timezone.utc)
+    extra = json.loads(event['extra'])
+    assert extra == {
+        'ip': '54.170.228.0',
+        'target': 'https://www.foobar.com',
+        'user_agent': (
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36'
+        ),
+        'user_agent_display': 'Chrome 59 on Linux',
+    }
 
 
 def test_link_shortening_wrong_url(send_email, tmpdir, cli, dummy_server):
     token = send_with_link(send_email, tmpdir)
     # check we use the right url with a valid token but a different url arg
-    r = cli.get('/l' + token + '?u=' + base64.urlsafe_b64encode(b'different').decode(), allow_redirects=False)
+    r = cli.get('/l' + token + '?u=' + base64.urlsafe_b64encode(b'different').decode(), follow_redirects=False)
     assert r.status_code == 307, r.text
     assert r.headers['location'] == 'https://www.foobar.com'
 
 
 def test_link_shortening_wrong_url_missing(send_email, tmpdir, cli, dummy_server):
     token = send_with_link(send_email, tmpdir)
-    r = cli.get('/lx' + token + '?u=' + base64.urlsafe_b64encode(b'different').decode(), allow_redirects=False)
+    r = cli.get('/lx' + token + '?u=' + base64.urlsafe_b64encode(b'different').decode(), follow_redirects=False)
     assert r.status_code == 307, r.text
     assert r.headers['location'] == 'different'
 
 
-#
-#
-# def test_link_shortening_repeat(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop, dummy_server):
-#     token = send_with_link(send_email, tmpdir)
-#     r = cli.get('/l' + token, allow_redirects=False)
-#     assert r.status_code == 307, r.text
-#     assert worker.test_run() == 2
-#     assert r.headers['location'] == 'https://www.foobar.com'
-#     assert sync_db.fetchval('select count(*) from events') == 1
-#
-#     r = cli.get('/l' + token, allow_redirects=False)
-#     assert r.status_code == 307, r.text
-#     assert r.headers['location'] == 'https://www.foobar.com'
-#     assert sync_db.fetchval('select count(*) from events') == 1
+def test_link_shortening_repeat(send_email, tmpdir, cli: TestClient, sync_db: SyncDb, worker, loop, dummy_server):
+    token = send_with_link(send_email, tmpdir)
+    r = cli.get('/l' + token, follow_redirects=False)
+    assert r.status_code == 307, r.text
+    assert worker.test_run() == 2
+    assert r.headers['location'] == 'https://www.foobar.com'
+    assert sync_db.fetchval('select count(*) from events') == 1
+
+    r = cli.get('/l' + token, follow_redirects=False)
+    assert r.status_code == 307, r.text
+    assert r.headers['location'] == 'https://www.foobar.com'
+    assert sync_db.fetchval('select count(*) from events') == 1
 
 
 def test_link_shortening_in_render(send_email, tmpdir, sync_db: SyncDb):
@@ -772,7 +820,7 @@ def test_link_shortening_in_render(send_email, tmpdir, sync_db: SyncDb):
     assert m, msg_file
     token, enc_url = m.groups()
 
-    link = sync_db.fetchrow_b('select * from links')
+    link = sync_db.fetchrow('select * from links')
     assert link['url'] == 'http://example.com/foobar'
     assert link['token'] == token
     assert base64.urlsafe_b64decode(enc_url).decode() == 'http://example.com/foobar'
@@ -819,9 +867,9 @@ def test_invalid_json(cli: TestClient, tmpdir):
     }
     r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 422
-    assert {
-        'detail': [{'loc': ['body', 'uid'], 'msg': 'value is not a valid uuid', 'type': 'type_error.uuid'}]
-    } == r.json()
+    body = r.json()
+    assert body['detail'][0]['loc'] == ['body', 'uid']
+    assert 'uuid' in body['detail'][0]['msg'].lower()
 
 
 def test_delete_old_messages(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
@@ -842,424 +890,5 @@ def test_delete_old_messages(cli: TestClient, send_email, sync_db: SyncDb, worke
     )
 
     assert sync_db.fetchval('select count(*) from messages') == 3
-    loop.run_until_complete(delete_old_emails({'pg': sync_db}))
+    delete_old_emails()
     assert sync_db.fetchval('select count(*) from messages') == 2
-
-
-@pytest.mark.spam
-def test_send_spam_email(cli: TestClient, sync_db: SyncDb, worker):
-    # Prepare the spammy message
-    spammy_message = 'Buy now! This is not a drill! Click here for free money!'
-    context = {'main_message__render': spammy_message}
-
-    # Send the first email
-    uuid1 = str(uuid4())
-    recipients = []
-    for i in range(21):
-        recipients.append(
-            {
-                'first_name': f'First Name User {i}',
-                'last_name': f'Last Name User {i}',
-                'address': f'user{i}@example.org',
-                'tags': ['test'],
-            }
-        )
-
-    data1 = {
-        'uid': uuid1,
-        'company_code': 'foobar',
-        'from_address': 'Spammer <spam@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Spam offer',
-        'main_template': '{{{ main_message }}}',
-        'context': context,
-        'recipients': recipients,
-    }
-    r1 = cli.post('/send/email/', json=data1, headers={'Authorization': 'testing-key'})
-    assert r1.status_code == 201, r1.text
-    assert worker.test_run() == len(recipients)
-
-    # get the group form the message_groups table
-    message_group = sync_db.fetchrow_b('select * from message_groups where :where', where=V('uuid') == uuid1)
-    assert str(message_group['uuid']) == uuid1
-    assert message_group['company_id'] == 1
-    assert message_group['message_method'] == 'email-test'
-    assert message_group['from_email'] == 'spam@example.com'
-    assert message_group['from_name'] == 'Spammer'
-
-    message = sync_db.fetchrow_b('select * from messages where :where', where=V('group_id') == message_group['id'])
-    assert message['spam_status']
-    assert message['spam_reason'] == 'This is spam for testing purposes'
-    assert message['status'] == MessageStatus.send
-    assert spammy_message in message['body']
-
-
-@pytest.mark.spam
-def test_send_multiple_spam_emails(cli: TestClient, sync_db: SyncDb, worker):
-    # Prepare the spammy message
-    spammy_message = 'Buy now! This is not a drill! Click here for free money!'
-    context = {'main_message__render': spammy_message}
-
-    # Send the first spam email
-    uuid1 = str(uuid4())
-    recipients = []
-    for i in range(21):
-        recipients.append(
-            {
-                'first_name': f'First Name User {i}',
-                'last_name': f'Last Name User {i}',
-                'address': f'user{i}@example.org',
-                'tags': ['test'],
-            }
-        )
-    data1 = {
-        'uid': uuid1,
-        'company_code': 'foobar',
-        'from_address': 'Spammer <spam@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Spam offer',
-        'main_template': '{{{ main_message }}}',
-        'context': context,  # same spammy content
-        'recipients': recipients,
-    }
-    r1 = cli.post('/send/email/', json=data1, headers={'Authorization': 'testing-key'})
-    assert r1.status_code == 201, r1.text
-
-    # Send the second spam email with the same content
-    uuid2 = str(uuid4())
-    data2 = {
-        'uid': uuid2,
-        'company_code': 'foobar',
-        'from_address': 'Spammer <spam@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Spam offer',
-        'main_template': '{{{ main_message }}}',
-        'context': context,  # same spammy content
-        'recipients': recipients,
-    }
-    r2 = cli.post('/send/email/', json=data2, headers={'Authorization': 'testing-key'})
-    assert r2.status_code == 201, r2.text
-    assert worker.test_run() == len(recipients) * 2
-
-    # Check both emails are logged in the database and have status 'send'
-    for uid in (uuid1, uuid2):
-        group = sync_db.fetchrow_b('select * from message_groups where :where', where=V('uuid') == uid)
-        assert str(group['uuid']) == uid
-        message = sync_db.fetchrow_b('select * from messages where :where', where=V('group_id') == group['id'])
-        assert message['spam_status']
-        assert message['spam_reason'] == 'This is spam for testing purposes'
-        assert message['status'] == MessageStatus.send
-        assert spammy_message in message['body']
-
-
-@pytest.mark.spam
-def test_spam_check_only_for_more_than_20_recipients(cli, monkeypatch):
-    called = {}
-
-    async def fake_is_spam_email(self, email_info, company_name):
-        called['called'] = True
-        return SpamCheckResult(spam=False, reason='')
-
-    monkeypatch.setattr(OpenAISpamEmailService, 'is_spam_email', fake_is_spam_email)
-
-    # Case 1: 20 recipients (should NOT call spam check)
-    called.clear()
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'from_address': 'Tester <tester@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Test',
-        'context': {'message': 'test'},
-        'recipients': [{'address': f'{i}@example.com'} for i in range(20)],
-    }
-    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert not called.get('called', False)
-
-    # Case 2: 21 recipients (should call spam check)
-    called.clear()
-    data['uid'] = str(uuid4())
-    data['recipients'] = [{'address': f'{i}@example.com'} for i in range(21)]
-    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert called.get('called', False)
-
-
-@pytest.mark.spam
-def test_non_spam_emails_are_cached(cli, monkeypatch):
-    """Test that non-spam emails are cached and reused on subsequent identical requests."""
-    call_count = {'count': 0}
-
-    async def fake_is_spam_email(self, email_info, company_name):
-        call_count['count'] += 1
-        return SpamCheckResult(spam=False, reason='This is a legitimate email')
-
-    monkeypatch.setattr(OpenAISpamEmailService, 'is_spam_email', fake_is_spam_email)
-
-    context = {'main_message__render': 'Welcome to our tutoring service! Your lesson is scheduled.'}
-
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'from_address': 'Tutor Agency <admin@tutoragency.com>',
-        'method': 'email-test',
-        'subject_template': 'Welcome to our service',
-        'main_template': '{{{ main_message }}}',
-        'context': context,
-        'recipients': [{'address': f'student{i}@example.com'} for i in range(21)],
-    }
-
-    # First request should call spam check
-    r1 = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r1.status_code == 201, r1.text
-    assert call_count['count'] == 1  # Spam check called once
-
-    # Second request with identical content should use cache
-    data['uid'] = str(uuid4())  # Different UID but same content
-    r2 = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r2.status_code == 201, r2.text
-    assert call_count['count'] == 1  # Spam check NOT called again (cached result used)
-
-
-def test_get_spam_checker():
-    """Test that get_spam_checker creates and returns the correct EmailSpamChecker instance."""
-
-    mock_cache_service = Mock()
-    mock_spam_service = Mock()
-    mock_checker = Mock()
-    mock_openai_client = Mock()
-
-    # Patch the service constructors to return our mocks
-    with patch('src.views.email.SpamCacheService', return_value=mock_cache_service) as mock_cache_class, patch(
-        'src.views.email.OpenAISpamEmailService', return_value=mock_spam_service
-    ) as mock_spam_class, patch(
-        'src.views.email.EmailSpamChecker', return_value=mock_checker
-    ) as mock_checker_class, patch(
-        'src.views.email.glove'
-    ) as mock_glove, patch(
-        'src.views.email.get_openai_client', return_value=mock_openai_client
-    ) as mock_get_client:
-        mock_glove.redis = Mock()
-
-        result = get_spam_checker()
-
-        mock_cache_class.assert_called_once_with(mock_glove.redis)
-        mock_get_client.assert_called_once()
-        mock_spam_class.assert_called_once_with(mock_openai_client)
-
-        mock_checker_class.assert_called_once_with(mock_spam_service, mock_cache_service)
-
-        assert result == mock_checker
-
-
-def test_get_cache_key_with_emojis_and_special_chars():
-    """
-    Test that SpamCacheService.get_cache_key correctly generates cache keys
-    for messages containing various character types.
-
-    Verifies that the cache key generation handles:
-    - Emoji characters (e.g. 👋, 🎉)
-    - Unicode special characters and accents (e.g. é, ç)
-    - Asian language characters (Chinese, Japanese, Korean)
-    - Mixed content with multiple character types
-    - Empty messages
-    - HTML entities
-    - Various line ending formats
-
-    This ensures the caching system works reliably across all possible message content.
-    """
-
-    # Create a mock redis client
-    mock_redis = Mock()
-    cache_service = SpamCacheService(mock_redis)
-
-    # Test cases with various special characters and emojis
-    test_cases = [
-        {
-            'name': 'basic_emojis',
-            'message': 'Hello! 👋 Welcome to our service! 🎉',
-            'company_code': 'test_company',
-            'expected_prefix': 'spam_content:',
-        },
-        {
-            'name': 'unicode_special_chars',
-            'message': 'Café résumé naïve façade',
-            'company_code': 'accent_company',
-            'expected_prefix': 'spam_content:',
-        },
-        {
-            'name': 'asian_characters',
-            'message': '你好世界！こんにちは世界！안녕하세요 세계!',
-            'company_code': 'asian_company',
-            'expected_prefix': 'spam_content:',
-        },
-        {
-            'name': 'mixed_content',
-            'message': '🎓 Education + 📚 Learning = 💡 Success! 你好!',
-            'company_code': 'mixed_company',
-            'expected_prefix': 'spam_content:',
-        },
-        {'name': 'empty_message', 'message': '', 'company_code': 'empty_company', 'expected_prefix': 'spam_content:'},
-        {
-            'name': 'html_entities',
-            'message': '&lt;script&gt;alert("Hello")&lt;/script&gt;',
-            'company_code': 'html_company',
-            'expected_prefix': 'spam_content:',
-        },
-        {
-            'name': 'newlines_and_tabs',
-            'message': 'Line 1\nLine 2\tTabbed content\r\nWindows line',
-            'company_code': 'format_company',
-            'expected_prefix': 'spam_content:',
-        },
-    ]
-
-    for test_case in test_cases:
-        # Create EmailSendModel with the test message
-        email_model = EmailSendModel(
-            uid=str(uuid4()),
-            company_code=test_case['company_code'],
-            from_address='Test User <test@example.com>',
-            method='email-test',
-            subject_template='Test Subject',
-            context={'main_message__render': test_case['message']},
-            recipients=[],
-        )
-
-        # Get the cache key
-        cache_key = cache_service.get_cache_key(email_model)
-
-        # Verify the key format
-        assert cache_key.startswith(test_case['expected_prefix'])
-        assert cache_key.endswith(f":{test_case['company_code']}")
-
-        # Verify it contains a hash (64 hex characters)
-        parts = cache_key.split(':')
-        assert len(parts) == 3
-        assert len(parts[1]) == 64  # SHA256 hash is 64 hex characters
-        assert all(c in '0123456789abcdef' for c in parts[1])  # Valid hex
-
-        # Verify that different messages produce different hashes
-        if test_case['name'] != 'empty_message':
-            # Create another model with slightly different message
-            email_model2 = EmailSendModel(
-                uid=str(uuid4()),
-                company_code=test_case['company_code'],
-                from_address='Test User <test@example.com>',
-                method='email-test',
-                subject_template='Test Subject',
-                context={'main_message__render': test_case['message'] + 'extra'},
-                recipients=[],
-            )
-            cache_key2 = cache_service.get_cache_key(email_model2)
-            assert (
-                cache_key != cache_key2
-            ), f"Different messages should produce different cache keys for {test_case['name']}"
-
-        # Verify that same message with different company code produces different keys
-        email_model3 = EmailSendModel(
-            uid=str(uuid4()),
-            company_code=test_case['company_code'] + '_different',
-            from_address='Test User <test@example.com>',
-            method='email-test',
-            subject_template='Test Subject',
-            context={'main_message__render': test_case['message']},
-            recipients=[],
-        )
-        cache_key3 = cache_service.get_cache_key(email_model3)
-        assert (
-            cache_key != cache_key3
-        ), f"Different company codes should produce different cache keys for {test_case['name']}"
-
-
-@pytest.mark.spam
-def test_spam_logging_includes_body(cli: TestClient, sync_db: SyncDb, worker, caplog):
-    caplog.set_level(logging.ERROR, logger='spam.email_checker')
-
-    recipients = []
-    for i in range(21):
-        recipients.append(
-            {
-                'first_name': f'User{i}',
-                'last_name': f'Last{i}',
-                'address': f'user{i}@example.org',
-                'tags': ['test'],
-            }
-        )
-
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'from_address': 'Spammer <spam@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Urgent: {{ company_name }} Alert!',
-        'main_template': '{{{ main_message }}}',
-        'context': {
-            'main_message__render': 'Hi {{ recipient_first_name }},\n\nDont miss out on <b>FREE MONEY</b>! '
-            'Click [here]({{ login_link }}) now!\n\nRegards,\n{{ company_name }}',
-            'company_name': 'TestCorp',
-            'login_link': 'https://spam.example.com/click',
-        },
-        'recipients': recipients,
-    }
-
-    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == len(recipients)
-
-    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
-    assert len(records) == 1
-    body = getattr(records[0], 'email_main_body')
-    assert (
-        body == 'Hi {{ recipient_first_name }}, Dont miss out on FREE MONEY! '
-        'Click [here]({{ login_link }}) now! Regards, {{ company_name }}'
-    )
-
-
-@pytest.mark.spam_service_error
-def test_openai_service_error(cli: TestClient, sync_db: SyncDb, worker, caplog):
-    caplog.set_level(logging.ERROR, logger='spam.email_checker')
-
-    recipients = []
-    for i in range(21):
-        recipients.append(
-            {
-                'first_name': f'User{i}',
-                'last_name': f'Last{i}',
-                'address': f'user{i}@example.org',
-                'tags': ['test'],
-            }
-        )
-
-    data = {
-        'uid': str(uuid4()),
-        'company_code': 'foobar',
-        'from_address': 'Spammer <spam@example.com>',
-        'method': 'email-test',
-        'subject_template': 'Urgent: {{ company_name }} Alert!',
-        'main_template': '{{{ main_message }}}',
-        'context': {
-            'main_message__render': 'Hi {{ recipient_first_name }},\n\nDont miss out on <b>FREE MONEY</b>! '
-            'Click [here]({{ login_link }}) now!\n\nRegards,\n{{ company_name }}',
-            'company_name': 'TestCorp',
-            'login_link': 'https://spam.example.com/click',
-        },
-        'recipients': recipients,
-    }
-
-    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
-    assert r.status_code == 201, r.text
-    assert worker.test_run() == len(recipients)
-
-    records = [r for r in caplog.records if r.name == 'spam.email_checker' and r.levelno == logging.ERROR]
-    assert len(records) == 1
-    record = records[0]
-    assert record.reason == 'Openai test error'
-    assert record.subject == 'Urgent: TestCorp Alert!'
-    assert (
-        record.email_main_body == 'Hi {{ recipient_first_name }}, Dont miss out on FREE MONEY! '
-        'Click [here]({{ login_link }}) now! Regards, {{ company_name }}'
-    )
-    assert record.company == 'TestCorp'
-    assert record.company_code == 'foobar'
