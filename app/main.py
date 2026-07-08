@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_db_and_tables()
+    # Bootstrap DDL is off by default in production: it takes ACCESS EXCLUSIVE locks on the hot
+    # messages/events tables, and running it on every boot turned one stuck lock holder into a
+    # site-wide outage (issue #511). Schema changes run as a deliberate one-off instead.
+    if settings.db_bootstrap_on_startup:
+        create_db_and_tables()
     init_sentry()
     # Sync endpoints run in Starlette's thread pool (default 40 threads). Each holds one DB
     # connection for its duration, so with more threads than connections a burst leaves surplus

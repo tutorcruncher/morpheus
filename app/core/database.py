@@ -13,6 +13,12 @@ T = TypeVar('T', bound=SQLModel)
 BOOTSTRAP_SQL_PATH = Path(__file__).parent / 'bootstrap.sql'
 POST_BOOTSTRAP_SQL_PATH = Path(__file__).parent / 'post_bootstrap.sql'
 
+# The bootstrap DDL takes ACCESS EXCLUSIVE locks on messages/events. Scope a short lock_timeout to
+# these connections only (NOT the app engine, whose queries legitimately wait for locks) so a
+# conflicting lock holder makes bootstrap fail loudly with a traceback rather than hang for the full
+# boot deadline and dam the lock queue behind a waiting exclusive request (issue #511).
+BOOTSTRAP_LOCK_TIMEOUT = '5s'
+
 
 class DBSession(Session):
     """SQLModel session with Django-like helpers (matches tc-ai-backend's DBSession)."""
@@ -89,6 +95,7 @@ def create_db_and_tables() -> None:
     raw_conn = engine.raw_connection()
     try:
         with raw_conn.cursor() as cur:
+            cur.execute(f"SET lock_timeout = '{BOOTSTRAP_LOCK_TIMEOUT}'")
             cur.execute('CREATE EXTENSION IF NOT EXISTS btree_gin')
             cur.execute(BOOTSTRAP_SQL_PATH.read_text())
         raw_conn.commit()
@@ -98,11 +105,15 @@ def create_db_and_tables() -> None:
     # Import models so they're registered with SQLModel.metadata before create_all.
     from app.messages import models  # noqa: F401
 
-    SQLModel.metadata.create_all(engine)
+    with engine.connect() as conn:
+        conn.exec_driver_sql(f"SET lock_timeout = '{BOOTSTRAP_LOCK_TIMEOUT}'")
+        SQLModel.metadata.create_all(conn)
+        conn.commit()
 
     raw_conn = engine.raw_connection()
     try:
         with raw_conn.cursor() as cur:
+            cur.execute(f"SET lock_timeout = '{BOOTSTRAP_LOCK_TIMEOUT}'")
             cur.execute(POST_BOOTSTRAP_SQL_PATH.read_text())
         raw_conn.commit()
     finally:
