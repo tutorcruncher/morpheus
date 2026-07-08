@@ -40,13 +40,37 @@ class DBSession(Session):
             return instance, False
 
 
-engine = create_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-    connect_args={'options': '-c timezone=UTC'},
-)
+def _make_engine(pool_size: int, max_overflow: int):
+    return create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+        connect_args={'options': '-c timezone=UTC'},
+    )
+
+
+engine = _make_engine(settings.db_pool_size, settings.db_max_overflow)
 SessionLocal = sessionmaker(class_=DBSession, autocommit=False, autoflush=False, bind=engine)
 SessionCls = SessionLocal
+
+
+def configure_worker_engine() -> None:
+    """Rebuild the engine with the small worker pool. Called post-fork from a celery prefork
+    child's worker_process_init.
+
+    Each child processes one task at a time (worker_prefetch_multiplier=1) via a single
+    get_session(), so it needs only a couple of connections. Leaving it on the web pool (20+10)
+    multiplied per child × per worker dyno and, next to both blue-green web colours, threatened
+    RDS max_connections during cutover (MORPHEUS-3DNG). Rebuilding here also drops the pool the
+    child inherited across fork instead of sharing the parent's connections.
+    """
+    global engine, SessionLocal, SessionCls
+    engine.dispose()
+    engine = _make_engine(settings.db_worker_pool_size, settings.db_worker_max_overflow)
+    SessionLocal = sessionmaker(class_=DBSession, autocommit=False, autoflush=False, bind=engine)
+    SessionCls = SessionLocal
 
 
 def get_session() -> DBSession:
@@ -64,7 +88,7 @@ def get_db():
 def create_db_and_tables() -> None:
     raw_conn = engine.raw_connection()
     try:
-        with raw_conn.cursor() as cur:  # ty:ignore[invalid-context-manager]
+        with raw_conn.cursor() as cur:
             cur.execute('CREATE EXTENSION IF NOT EXISTS btree_gin')
             cur.execute(BOOTSTRAP_SQL_PATH.read_text())
         raw_conn.commit()
@@ -78,7 +102,7 @@ def create_db_and_tables() -> None:
 
     raw_conn = engine.raw_connection()
     try:
-        with raw_conn.cursor() as cur:  # ty:ignore[invalid-context-manager]
+        with raw_conn.cursor() as cur:
             cur.execute(POST_BOOTSTRAP_SQL_PATH.read_text())
         raw_conn.commit()
     finally:

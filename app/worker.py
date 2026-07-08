@@ -8,12 +8,16 @@ from app.messages import tasks  # noqa: F401  -- registers tasks with celery
 
 @worker_process_init.connect
 def init_worker_process(**kwargs):
-    """Initialise Sentry and Logfire post-fork."""
+    """Initialise Sentry and Logfire, and shrink the DB pool, post-fork."""
+    from app.core.database import configure_worker_engine
     from app.core.logging import configure_logfire
     from app.sentry.setup import init_sentry
 
     init_sentry()
     configure_logfire()
+    # A prefork child needs only a couple of connections; rebuild the engine off the parent's
+    # web-sized pool so many children don't exhaust RDS max_connections (MORPHEUS-3DNG).
+    configure_worker_engine()
 
 
 app = celery_app

@@ -33,10 +33,11 @@ def email_send_view(
     )
 
     company = _get_or_create_company(db, m.company_code)
+    company_id = company.id
 
     group = MessageGroup(
         uuid=m.uid,
-        company_id=company.id,  # ty:ignore[invalid-argument-type]
+        company_id=company_id,  # ty:ignore[invalid-argument-type]
         message_method=m.method.value,
         from_email=m.from_address.email,
         from_name=m.from_address.name,
@@ -44,9 +45,14 @@ def email_send_view(
     db.add(group)
     db.commit()
     db.refresh(group)
+    group_id = group.id
+    # Release the pooled connection before the per-recipient enqueue loop: each send_email.delay()
+    # is a broker round-trip and previously held a scarce connection open for the whole fan-out,
+    # widening pool-exhaustion windows (MORPHEUS-3DNG).
+    db.close()
 
     recipients = m.recipients
     m_base = m.model_copy(update={'recipients': []}).model_dump(mode='json')
     for recipient in recipients:
-        send_email.delay(group.id, company.id, recipient.model_dump(mode='json'), m_base)
+        send_email.delay(group_id, company_id, recipient.model_dump(mode='json'), m_base)
     return JSONResponse({'message': '201 job enqueued'}, status_code=201)

@@ -80,21 +80,26 @@ def send_sms_view(m: SmsSendModel, db: DBSession = Depends(get_db)):
                 content={'status': 'send limit exceeded', 'cost_limit': m.cost_limit, 'spend': month_spend},
                 status_code=402,
             )
+    company_id = company.id
     group = MessageGroup(
         uuid=m.uid,  # ty:ignore[invalid-argument-type]
-        company_id=company.id,  # ty:ignore[invalid-argument-type]
+        company_id=company_id,  # ty:ignore[invalid-argument-type]
         message_method=m.method.value,
         from_name=m.from_name,
     )
     db.add(group)
     db.commit()
     db.refresh(group)
-    logger.info('%s sending %d SMSs', company.id, len(m.recipients))
+    group_id = group.id
+    logger.info('%s sending %d SMSs', company_id, len(m.recipients))
+    # Release the pooled connection before the per-recipient enqueue loop below (see email.py /
+    # MORPHEUS-3DNG): the broker fan-out should not hold a scarce DB connection open.
+    db.close()
 
     recipients = m.recipients
     m_base = m.model_copy(update={'recipients': []}).model_dump(mode='json')
     for recipient in recipients:
-        send_sms.delay(group.id, company.id, recipient.model_dump(mode='json'), m_base)
+        send_sms.delay(group_id, company_id, recipient.model_dump(mode='json'), m_base)
 
     return JSONResponse(content={'status': 'enqueued', 'spend': month_spend}, status_code=201)
 
