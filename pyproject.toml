@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "TutorCruncher's email and SMS dispatch service"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi[standard]==0.139.0",
+    # Held at 0.136.3 (last release before FastAPI 0.137's _IncludedRouter refactor).
+    # 0.137+ keeps an internal _IncludedRouter object (no `.path`) in app.routes, which
+    # crashes opentelemetry-instrumentation-fastapi's span-naming on a partial route match
+    # (e.g. a HEAD to a GET-only route) -> 500 while logfire is active. See tutorcruncher/
+    # bobbin-api#960. Unpin once a fixed opentelemetry-instrumentation-fastapi ships via logfire.
+    "fastapi[standard]==0.136.3",
     "sqlmodel==0.0.39",
     "uvicorn==0.50.0",
     "pydantic==2.13.4",
