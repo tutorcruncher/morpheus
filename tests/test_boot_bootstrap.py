@@ -12,10 +12,10 @@ carries a lock_timeout so it fails loudly instead of hanging.
 import anyio
 import psycopg2
 import pytest
+from sqlmodel import SQLModel
 
 from app import main as app_main
 from app.core import database as db_module
-from app.core.config import settings
 
 
 def _enter_lifespan() -> None:
@@ -26,22 +26,16 @@ def _enter_lifespan() -> None:
     anyio.run(_run)
 
 
-def test_lifespan_skips_bootstrap_when_flag_off(monkeypatch):
-    """Default production config: the lifespan must not touch the DB before binding the port."""
-    called = []
-    monkeypatch.setattr(app_main, 'create_db_and_tables', lambda: called.append(True))
-    monkeypatch.setattr(settings, 'db_bootstrap_on_startup', False)
-    _enter_lifespan()
-    assert called == []
+def test_lifespan_runs_no_bootstrap_ddl(monkeypatch):
+    """Web boot must not run schema DDL (issue #511). If create_db_and_tables is ever re-added to
+    the lifespan it calls SQLModel.metadata.create_all, which trips this guard however it's
+    imported. Schema is created out-of-band (make reset-db / a deliberate one-off)."""
 
+    def _fail(*args, **kwargs):
+        raise AssertionError('lifespan ran bootstrap DDL — schema must be created out-of-band (issue #511)')
 
-def test_lifespan_runs_bootstrap_when_flag_on(monkeypatch):
-    """With the flag on (first-time/dev setup) the lifespan runs the bootstrap."""
-    called = []
-    monkeypatch.setattr(app_main, 'create_db_and_tables', lambda: called.append(True))
-    monkeypatch.setattr(settings, 'db_bootstrap_on_startup', True)
+    monkeypatch.setattr(SQLModel.metadata, 'create_all', _fail)
     _enter_lifespan()
-    assert called == [True]
 
 
 @pytest.mark.timeout(15)

@@ -31,8 +31,7 @@ Set up your environment, run `make install`, create your database with `make res
 
 `make reset-db` runs the schema bootstrap (`create_db_and_tables`) directly. The app does **not**
 create tables on web boot (that took ACCESS EXCLUSIVE locks on hot tables every deploy — see issue
-#511); set `db_bootstrap_on_startup=true` only if you want a boot to bootstrap. Production schema
-changes run as a deliberate one-off, e.g.
+#511). Production schema changes run as a deliberate one-off, e.g.
 `heroku run python -c "from app.core.database import create_db_and_tables; create_db_and_tables()"`.
 
 You can run the web worker with

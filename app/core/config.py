@@ -35,13 +35,6 @@ class Settings(BaseSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
-    # Bootstrap DDL (create_db_and_tables) runs DROP/CREATE TRIGGER on the hot messages/events
-    # tables, taking ACCESS EXCLUSIVE locks. Running it on every web boot against the shared prod
-    # DB meant one long-lived lock holder turned a dyno boot into a site-wide lock-queue dam
-    # (see issue #511). Off by default: production schema changes go through a deliberate one-off
-    # (e.g. `heroku run python -c "from app.core.database import create_db_and_tables; create_db_and_tables()"`),
-    # not implicitly on dyno start. Set true for first-time local/dev setup.
-    db_bootstrap_on_startup: bool = False
     # Celery prefork children each run ONE task at a time (worker_prefetch_multiplier=1) and open
     # one session at a time, so a child needs only a couple of connections. The web pool is per
     # process; a worker sized at the web pool would multiply (children × dynos) and, next to both
