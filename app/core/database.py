@@ -88,7 +88,7 @@ def get_db():
 def create_db_and_tables() -> None:
     raw_conn = engine.raw_connection()
     try:
-        with raw_conn.cursor() as cur:  # ty:ignore[invalid-context-manager]
+        with raw_conn.cursor() as cur:
             cur.execute('CREATE EXTENSION IF NOT EXISTS btree_gin')
             cur.execute(BOOTSTRAP_SQL_PATH.read_text())
         raw_conn.commit()
@@ -102,7 +102,7 @@ def create_db_and_tables() -> None:
 
     raw_conn = engine.raw_connection()
     try:
-        with raw_conn.cursor() as cur:  # ty:ignore[invalid-context-manager]
+        with raw_conn.cursor() as cur:
             cur.execute(POST_BOOTSTRAP_SQL_PATH.read_text())
         raw_conn.commit()
     finally:
