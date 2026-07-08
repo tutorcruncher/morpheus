@@ -49,6 +49,11 @@ def click_redirect_view(
 ):
     token = token.rstrip('.')
     link = db.exec(select(Link.id, Link.url).where(Link.token == token).limit(1)).first()
+    # Release the pooled connection before the store_click.delay() broker round-trip and the
+    # redirect/template render below (see email.py / sms.py, MORPHEUS-3DNG): this is the
+    # highest-volume endpoint and must not hold a scarce DB connection idle for the rest of the
+    # request. `link` is already a materialised (id, url) row, so it survives the close.
+    db.close()
     arg_url: Optional[str] = u
     if arg_url:
         try:
