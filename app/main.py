@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     # threads blocked on checkout for the full pool_timeout, which under the comms retry storm
     # collapsed the service (MORPHEUS-3DNG). Bound the thread pool to the pool capacity so excess
     # requests queue cheaply for a thread instead of holding nothing while stuck on a 30s checkout.
-    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter = anyio.to_thread.current_default_thread_limiter()  # ty:ignore[unresolved-attribute]
     limiter.total_tokens = settings.db_pool_size + settings.db_max_overflow
     yield
 
