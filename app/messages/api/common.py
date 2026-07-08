@@ -38,7 +38,7 @@ async def index(request: Request) -> HTMLResponse:
 
 
 @router.get('/l{token}', response_class=HTMLResponse)
-async def click_redirect_view(
+def click_redirect_view(
     token: str,
     request: Request,
     u: Optional[str] = None,

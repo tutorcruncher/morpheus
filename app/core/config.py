@@ -27,6 +27,15 @@ class Settings(BaseSettings):
 
     log_level: str = 'INFO'
 
+    # DB connection pool. The old defaults (pool_size=5 + max_overflow=10 = 15) sat far below the
+    # request concurrency of the sync endpoints (Starlette's thread pool defaults to 40), so cutover
+    # bursts exhausted the pool and connection checkout blocked for pool_timeout seconds before
+    # failing (MORPHEUS-3DNG). These are env-tunable: size them against RDS max_connections given the
+    # number of web + worker processes sharing the database.
+    db_pool_size: int = 20
+    db_max_overflow: int = 10
+    db_pool_timeout: int = 30
+
     mandrill_key: str = ''
     mandrill_url: str = 'https://mandrillapp.com/api/1.0'
     mandrill_webhook_key: str = ''
