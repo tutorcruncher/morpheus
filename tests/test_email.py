@@ -11,7 +11,7 @@ import pytest
 from dirty_equals import IsInt as AnyInt, IsStr
 from fastapi.testclient import TestClient
 
-from app.messages.schemas import EmailRecipientModel
+from app.messages.schemas import EmailRecipientModel, EmailSendModel
 from app.messages.tasks import EMAIL_RETRYING as email_retrying, delete_old_emails
 from tests.conftest import SyncDb, _LegacyRetry as Retry
 
@@ -50,6 +50,46 @@ def test_send_email(cli: TestClient, worker, tmpdir, loop):
     assert data['to_user_link'] == '/user/profile/42/'
     assert data['attachments'] == []
     assert set(data['tags']) == {uuid, 'foobar'}
+
+
+def test_email_send_model_from_address_round_trips():
+    # A quoted, punctuated display name must survive model_dump(mode='json') -> model_validate,
+    # the web -> broker -> worker hop. Regression for #516 (silent email loss).
+    payload = {
+        'uid': str(uuid4()),
+        'subject_template': 'Hi',
+        'company_code': 'acme',
+        'from_address': '"Acme Tutoring, Ltd." <hi@acme.com>',
+        'method': 'email-mandrill',
+        'recipients': [],
+    }
+    m = EmailSendModel.model_validate(payload)
+    m2 = EmailSendModel.model_validate(m.model_dump(mode='json'))
+    assert m2.from_address.name == 'Acme Tutoring, Ltd.'
+    assert m2.from_address.email == 'hi@acme.com'
+
+
+def test_send_email_punctuated_from_name(cli: TestClient, worker, tmpdir, loop):
+    # End-to-end: a punctuated from-name previously crashed the worker on re-validation and
+    # silently dropped the email (#516). It should now send cleanly.
+    uuid = str(uuid4())
+    data = {
+        'uid': uuid,
+        'company_code': 'foobar',
+        'from_address': '"Acme Tutoring, Ltd." <hi@acme.com>',
+        'method': 'email-test',
+        'subject_template': 'test email',
+        'context': {'message__render': '# hello\n'},
+        'recipients': [{'address': 'foobar@example.org', 'tags': ['foobar']}],
+    }
+    r = cli.post('/send/email/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+    assert worker.test_run() == 1
+    assert len(tmpdir.listdir()) == 1
+    msg_file = tmpdir.join(uuid + '-foobarexampleorg.txt').read()
+    data = json.loads(re.search(r'data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
+    assert data['from_email'] == 'hi@acme.com'
+    assert data['from_name'] == 'Acme Tutoring, Ltd.'
 
 
 def test_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):

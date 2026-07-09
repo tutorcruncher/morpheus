@@ -1,12 +1,13 @@
 import json
 import re
 from datetime import datetime, timezone
+from email.utils import formataddr
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, NameEmail, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, NameEmail, StringConstraints, field_serializer, field_validator
 from typing_extensions import Annotated
 
 from app.messages.models import EmailSendMethod, MessageStatus, SendMethod, SmsSendMethod  # noqa: F401
@@ -65,6 +66,13 @@ class EmailSendModel(BaseModel):
     headers: dict = {}
     important: bool = False
     recipients: list[EmailRecipientModel]
+
+    @field_serializer('from_address')
+    def _serialize_from_address(self, v: NameEmail) -> str:
+        # NameEmail's default serialization emits the display name unquoted, so a name containing
+        # '.', ',' or '"' fails re-validation on the worker side of the web -> broker -> worker hop
+        # and silently drops the email (#516). formataddr RFC-quotes only when needed.
+        return formataddr((v.name, v.email))
 
 
 class SubaccountModel(BaseModel):
