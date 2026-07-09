@@ -295,6 +295,25 @@ def test_init_sentry_with_dsn(monkeypatch):
     assert called['dsn'] == 'https://example@sentry.io/1'
 
 
+def test_sentry_initialised_on_worker_startup_before_fork(monkeypatch):
+    """Sentry must init on the pre-fork worker_init signal, not only post-fork worker_process_init.
+
+    Sentry's CeleryIntegration captures task exceptions by patching celery.app.trace.build_tracer
+    at sentry_sdk.init() time. Initialised in the post-fork worker_process_init (issue #514), the
+    patch lands after the task tracer is already built, so worker task exceptions never reach
+    Sentry. Firing worker_init (which fires in the main process before the pool forks) must
+    initialise Sentry.
+    """
+    from celery.signals import worker_init
+
+    import app.worker  # noqa: F401  -- ensure the signal receivers are registered
+
+    calls = []
+    monkeypatch.setattr('app.sentry.setup.init_sentry', lambda: calls.append('sentry'))
+    worker_init.send(sender=None)
+    assert calls == ['sentry']
+
+
 def test_configure_logfire_with_token(monkeypatch):
     """configure_logfire should configure + instrument when a token is set."""
     monkeypatch.setattr(app_settings, 'logfire_token', 'lgf_test_token')
