@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.common.api.errors import HttpMessageError, http_message_error_handler
 from app.core.config import settings
-from app.core.database import create_db_and_tables, engine
+from app.core.database import engine
 from app.core.logging import configure_logfire, configure_logging
 from app.messages.api import (
     common as common_api,
@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_db_and_tables()
+    # Schema is created out-of-band (make reset-db / a deliberate one-off), never on boot: boot-time
+    # DDL took ACCESS EXCLUSIVE locks on the hot messages/events tables and turned one stuck lock
+    # holder into a site-wide outage (issue #511). Do NOT re-add create_db_and_tables() here.
     init_sentry()
     # Sync endpoints run in Starlette's thread pool (default 40 threads). Each holds one DB
     # connection for its duration, so with more threads than connections a burst leaves surplus

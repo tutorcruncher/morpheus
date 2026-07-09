@@ -29,6 +29,11 @@ to access a Postgres database and some really handy tools from [foxglove](https:
 
 Set up your environment, run `make install`, create your database with `make reset-db` and you're ready to go.
 
+`make reset-db` runs the schema bootstrap (`create_db_and_tables`) directly. The app does **not**
+create tables on web boot (that took ACCESS EXCLUSIVE locks on hot tables every deploy — see issue
+#511). Production schema changes run as a deliberate one-off, e.g.
+`heroku run python -c "from app.core.database import create_db_and_tables; create_db_and_tables()"`.
+
 You can run the web worker with
 
 ```
