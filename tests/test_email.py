@@ -69,6 +69,33 @@ def test_email_send_model_from_address_round_trips():
     assert m2.from_address.email == 'hi@acme.com'
 
 
+@pytest.mark.parametrize(
+    'from_address,expected_name',
+    [
+        ('"Acme Tutoring, Ltd." <hi@acme.com>', 'Acme Tutoring, Ltd.'),  # punctuated
+        ('Samuel <s@muelcolvin.com>', 'Samuel'),  # plain ASCII, unchanged
+        ('Jörg Müller <j@x.com>', 'Jörg Müller'),  # unicode must NOT be MIME-encoded (#516 review)
+        ('"Jörg, Müller" <j@x.com>', 'Jörg, Müller'),  # unicode + punctuation
+        ('a@b.com', 'a'),  # bare address -> NameEmail uses the local part as the name
+    ],
+)
+def test_email_send_model_from_address_round_trips_preserving_name(from_address, expected_name):
+    # The serializer must round-trip through model_dump(mode='json') without corrupting the display
+    # name. formataddr RFC2047-encodes non-ASCII names (=?utf-8?b?...?=), which reaches Mandrill as
+    # gibberish (#516 review finding) — the name must survive verbatim.
+    payload = {
+        'uid': str(uuid4()),
+        'subject_template': 'Hi',
+        'company_code': 'acme',
+        'from_address': from_address,
+        'method': 'email-mandrill',
+        'recipients': [],
+    }
+    m = EmailSendModel.model_validate(payload)
+    m2 = EmailSendModel.model_validate(m.model_dump(mode='json'))
+    assert m2.from_address.name == expected_name
+
+
 def test_send_email_punctuated_from_name(cli: TestClient, worker, tmpdir, loop):
     # End-to-end: a punctuated from-name previously crashed the worker on re-validation and
     # silently dropped the email (#516). It should now send cleanly.

@@ -1,7 +1,6 @@
 import json
 import re
 from datetime import datetime, timezone
-from email.utils import formataddr
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -13,6 +12,9 @@ from typing_extensions import Annotated
 from app.messages.models import EmailSendMethod, MessageStatus, SendMethod, SmsSendMethod  # noqa: F401
 
 THIS_DIR = Path(__file__).parent.parent.resolve()
+
+# RFC 5322 specials that force a display name to be a quoted-string (email.utils.specialsre).
+_EMAIL_NAME_SPECIALS = re.compile(r'[][\\()<>@,:;".]')
 
 
 class PDFAttachmentModel(BaseModel):
@@ -67,12 +69,19 @@ class EmailSendModel(BaseModel):
     important: bool = False
     recipients: list[EmailRecipientModel]
 
-    @field_serializer('from_address')
+    @field_serializer('from_address', when_used='json')
     def _serialize_from_address(self, v: NameEmail) -> str:
-        # NameEmail's default serialization emits the display name unquoted, so a name containing
-        # '.', ',' or '"' fails re-validation on the worker side of the web -> broker -> worker hop
-        # and silently drops the email (#516). formataddr RFC-quotes only when needed.
-        return formataddr((v.name, v.email))
+        # NameEmail serializes the display name unquoted, so a name containing a special char
+        # ('.', ',', '"', ...) fails re-validation on the worker side of the web -> broker -> worker
+        # hop and silently drops the email (#516). RFC-quote the name only when it needs it. Unlike
+        # email.utils.formataddr, do NOT MIME-encode a non-ASCII name (=?utf-8?b?...?=) — that
+        # corrupts unicode sender names, which already round-trip unquoted; a UTF-8 quoted-string
+        # re-validates cleanly. json-only: python-mode model_dump keeps the NameEmail object.
+        name = v.name
+        if name and _EMAIL_NAME_SPECIALS.search(name):
+            name = name.replace('\\', '\\\\').replace('"', '\\"')
+            return f'"{name}" <{v.email}>'
+        return f'{name} <{v.email}>' if name else v.email
 
 
 class SubaccountModel(BaseModel):
