@@ -33,10 +33,10 @@ jobs:
       REDIS_URL: 'redis://localhost:6379/4'
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: install uv
-      uses: astral-sh/setup-uv@v3
+      uses: astral-sh/setup-uv@v6
       with:
         python-version: '3.12'
 
@@ -50,7 +50,7 @@ jobs:
       run: uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term
 
     - name: codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         files: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -67,7 +67,7 @@ jobs:
       HEROKU_APP: tc-morpheus
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: git fetch --unshallow
       - run: git switch master
       - run: git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/$HEROKU_APP.git
@@ -79,15 +79,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.12'
-
-      - name: install build deps
-        run: uv pip install --system setuptools wheel twine
 
       - name: stage render module under morpheus/ namespace
         working-directory: packaging/morpheus-mail
@@ -97,18 +94,20 @@ jobs:
           touch morpheus/__init__.py
 
       - name: build morpheus-mail (render submodule)
-        # Builds from a subdirectory so the root pyproject.toml (which defines the main
-        # app) doesn't get auto-applied to this distribution.
+        # Build with uvx (isolated, uv-managed Python) rather than `uv pip install --system` +
+        # setup.py: the runner's system Python is PEP 668 externally-managed, so --system installs
+        # are refused (#515). `build` reads this dir's setup.py directly; running from the
+        # subdirectory keeps the root pyproject.toml (the main app) out of this distribution.
         working-directory: packaging/morpheus-mail
-        run: python setup.py sdist bdist_wheel
+        run: uvx --from build pyproject-build --sdist --wheel
 
       - name: twine check
         working-directory: packaging/morpheus-mail
-        run: twine check dist/*
+        run: uvx twine check dist/*
 
       - name: upload to pypi
         working-directory: packaging/morpheus-mail
-        run: twine upload dist/*
+        run: uvx twine upload dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.pypi_password }}
