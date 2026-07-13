@@ -295,6 +295,35 @@ def test_init_sentry_with_dsn(monkeypatch):
     assert called['dsn'] == 'https://example@sentry.io/1'
 
 
+def test_sentry_initialised_on_worker_startup_before_fork(monkeypatch):
+    """Sentry must init on the pre-fork worker_init signal, not only post-fork worker_process_init.
+
+    Sentry's CeleryIntegration captures task exceptions by patching celery.app.trace.build_tracer
+    at sentry_sdk.init() time. Initialised in the post-fork worker_process_init (issue #514), the
+    patch lands after the task tracer is already built, so worker task exceptions never reach
+    Sentry. Firing worker_init (which fires in the main process before the pool forks) must
+    initialise Sentry.
+    """
+    from celery.signals import worker_init, worker_process_init
+
+    import app.worker  # noqa: F401  -- ensure the signal receivers are registered
+
+    calls = []
+    monkeypatch.setattr('app.sentry.setup.init_sentry', lambda: calls.append('sentry'))
+    worker_init.send(sender=None)
+    assert calls == ['sentry']
+
+    # Ordering guard: Sentry must init strictly pre-fork. Re-adding it to the post-fork
+    # worker_process_init (double-init) would reintroduce the #514 fragility, so assert it does
+    # NOT fire there — worker_process_init only sets up Logfire + the per-child DB engine (stubbed
+    # here so firing the signal doesn't rebuild the shared engine).
+    monkeypatch.setattr('app.core.logging.configure_logfire', lambda: None)
+    monkeypatch.setattr('app.core.database.configure_worker_engine', lambda: None)
+    calls.clear()
+    worker_process_init.send(sender=None)
+    assert calls == []
+
+
 def test_configure_logfire_with_token(monkeypatch):
     """configure_logfire should configure + instrument when a token is set."""
     monkeypatch.setattr(app_settings, 'logfire_token', 'lgf_test_token')
