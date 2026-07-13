@@ -23,7 +23,7 @@ def test_send_email(cli: TestClient, worker, tmpdir, loop):
     data = {
         'uid': uuid,
         'company_code': 'foobar',
-        'from_address': 'Samuel <s@muelcolvin.com>',
+        'from_address': 'Sam Sender <sam@example.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
         'context': {'message__render': '# hello\n\nThis is a **{{ b }}**.\n', 'a': 'Apple', 'b': 'Banana'},
@@ -45,7 +45,7 @@ def test_send_email(cli: TestClient, worker, tmpdir, loop):
     assert '\nsubject: test email Apple\n' in msg_file
     assert '\n<p>This is a <strong>Banana</strong>.</p>\n' in msg_file
     data = json.loads(re.search(r'data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
-    assert data['from_email'] == 's@muelcolvin.com'
+    assert data['from_email'] == 'sam@example.com'
     assert data['to_address'] == 'foobar@example.org'
     assert data['to_user_link'] == '/user/profile/42/'
     assert data['attachments'] == []
@@ -58,25 +58,25 @@ def test_email_send_model_from_address_round_trips():
     payload = {
         'uid': str(uuid4()),
         'subject_template': 'Hi',
-        'company_code': 'acme',
-        'from_address': '"Acme Tutoring, Ltd." <hi@acme.com>',
+        'company_code': 'testcorp',
+        'from_address': '"Testcorp Tutoring, Ltd." <hi@example.com>',
         'method': 'email-mandrill',
         'recipients': [],
     }
     m = EmailSendModel.model_validate(payload)
     m2 = EmailSendModel.model_validate(m.model_dump(mode='json'))
-    assert m2.from_address.name == 'Acme Tutoring, Ltd.'
-    assert m2.from_address.email == 'hi@acme.com'
+    assert m2.from_address.name == 'Testcorp Tutoring, Ltd.'
+    assert m2.from_address.email == 'hi@example.com'
 
 
 @pytest.mark.parametrize(
     'from_address,expected_name',
     [
-        ('"Acme Tutoring, Ltd." <hi@acme.com>', 'Acme Tutoring, Ltd.'),  # punctuated
-        ('Samuel <s@muelcolvin.com>', 'Samuel'),  # plain ASCII, unchanged
-        ('Jörg Müller <j@x.com>', 'Jörg Müller'),  # unicode must NOT be MIME-encoded (#516 review)
-        ('"Jörg, Müller" <j@x.com>', 'Jörg, Müller'),  # unicode + punctuation
-        ('a@b.com', 'a'),  # bare address -> NameEmail uses the local part as the name
+        ('"Testcorp Tutoring, Ltd." <hi@example.com>', 'Testcorp Tutoring, Ltd.'),  # punctuated
+        ('Sam Sender <sam@example.com>', 'Sam Sender'),  # plain ASCII, unchanged
+        ('Zoë Förster <zoe@example.com>', 'Zoë Förster'),  # unicode must NOT be MIME-encoded (#516 review)
+        ('"Zoë, Förster" <zoe@example.com>', 'Zoë, Förster'),  # unicode + punctuation
+        ('someone@example.com', 'someone'),  # bare address -> NameEmail uses the local part as the name
     ],
 )
 def test_email_send_model_from_address_round_trips_preserving_name(from_address, expected_name):
@@ -86,7 +86,7 @@ def test_email_send_model_from_address_round_trips_preserving_name(from_address,
     payload = {
         'uid': str(uuid4()),
         'subject_template': 'Hi',
-        'company_code': 'acme',
+        'company_code': 'testcorp',
         'from_address': from_address,
         'method': 'email-mandrill',
         'recipients': [],
@@ -103,7 +103,7 @@ def test_send_email_punctuated_from_name(cli: TestClient, worker, tmpdir, loop):
     data = {
         'uid': uuid,
         'company_code': 'foobar',
-        'from_address': '"Acme Tutoring, Ltd." <hi@acme.com>',
+        'from_address': '"Testcorp Tutoring, Ltd." <hi@example.com>',
         'method': 'email-test',
         'subject_template': 'test email',
         'context': {'message__render': '# hello\n'},
@@ -115,8 +115,8 @@ def test_send_email_punctuated_from_name(cli: TestClient, worker, tmpdir, loop):
     assert len(tmpdir.listdir()) == 1
     msg_file = tmpdir.join(uuid + '-foobarexampleorg.txt').read()
     data = json.loads(re.search(r'data: ({.*?})\ncontent:', msg_file, re.S).groups()[0])
-    assert data['from_email'] == 'hi@acme.com'
-    assert data['from_name'] == 'Acme Tutoring, Ltd.'
+    assert data['from_email'] == 'hi@example.com'
+    assert data['from_name'] == 'Testcorp Tutoring, Ltd.'
 
 
 def test_webhook(cli: TestClient, send_email, sync_db: SyncDb, worker, loop):
@@ -342,7 +342,7 @@ def test_send_email_headers(cli: TestClient, tmpdir, worker, loop, dummy_server)
     data = {
         'uid': uid,
         'company_code': 'foobar',
-        'from_address': 'Samuel <s@muelcolvin.com>',
+        'from_address': 'Sam Sender <sam@example.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
         'context': {'message__render': 'test email {{ a }} {{ b}} {{ c }}.\n', 'a': 'Apple', 'b': 'Banana'},
@@ -926,7 +926,7 @@ def test_invalid_json(cli: TestClient, tmpdir):
     data = {
         'uid': 'xxx',
         'company_code': 'foobar',
-        'from_address': 'Samuel <s@muelcolvin.com>',
+        'from_address': 'Sam Sender <sam@example.com>',
         'method': 'email-test',
         'subject_template': 'test email {{ a }}',
         'context': {},
