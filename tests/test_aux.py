@@ -54,6 +54,23 @@ def test_create_subaccount_new_few_sent(cli: Client, sync_db: SyncDb, dummy_serv
     }
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
+        'POST /mandrill/subaccounts/add.json > 400',
+        'GET /mandrill/subaccounts/info.json > 200',
+    ]
+
+
+def test_create_subaccount_exists_legacy_500(cli: Client, sync_db: SyncDb, dummy_server: DummyServer):
+    data = {'company_code': 'legacy-500'}
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 201, r.text
+
+    r = cli.post('/create-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        'message': 'subaccount already exists with only 42 emails sent, reuse of subaccount id permitted'
+    }
+    assert dummy_server.log == [
+        'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/add.json > 500',
         'GET /mandrill/subaccounts/info.json > 200',
     ]
@@ -71,7 +88,7 @@ def test_create_subaccount_lots(cli: TestClient, sync_db: SyncDb, dummy_server: 
     }
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
-        'POST /mandrill/subaccounts/add.json > 500',
+        'POST /mandrill/subaccounts/add.json > 400',
         'GET /mandrill/subaccounts/info.json > 200',
     ]
 

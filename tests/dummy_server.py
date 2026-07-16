@@ -66,7 +66,18 @@ def make_handler(state: DummyState):
             if sa_id == 'broken':
                 return _json({'error': 'snap something unknown went wrong'}, 500)
             elif sa_id in state.mandrill_subaccounts:
-                return _json({'message': f'A subaccount with id {sa_id} already exists'}, 500)
+                if sa_id == 'legacy-500':
+                    # mandrill's old behaviour: validation errors as 500 with a bare message
+                    return _json({'message': f'A subaccount with id {sa_id} already exists'}, 500)
+                return _json(
+                    {
+                        'status': 'error',
+                        'code': -2,
+                        'name': 'ValidationError',
+                        'message': f'Validation error: {{"id":"A subaccount with id {sa_id} already exists"}}',
+                    },
+                    400,
+                )
             state.mandrill_subaccounts[sa_id] = data
             return _json({'message': "subaccount created (this isn't the same response as mandrill)"})
 

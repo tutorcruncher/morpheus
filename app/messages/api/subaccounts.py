@@ -24,18 +24,20 @@ def create_subaccount(method: SendMethod, m: Optional[SubaccountModel] = None):
         return JSONResponse({'message': f'no subaccount creation required for "{method.value}"'})
     assert m is not None
 
+    # Mandrill used to return validation errors (including "already exists") as 500; it now
+    # returns them as 400 with the detail wrapped in a "Validation error: {...}" message.
+    # Accept both so the already-exists check below works across the changeover.
     r = Mandrill().post(
         'subaccounts/add.json',
         id=m.company_code,
         name=m.company_name,
-        allowed_statuses=(200, 500),
+        allowed_statuses=(200, 400, 500),
         timeout_=12,
     )
     data = r.json()
     if r.status_code == 200:
         return JSONResponse({'message': 'subaccount created'}, status_code=201)
 
-    assert r.status_code == 500, r.status_code
     if f'A subaccount with id {m.company_code} already exists' not in data.get('message', ''):
         return JSONResponse(
             {'message': f'error from mandrill: {json.dumps(data, indent=2)}'},
@@ -79,7 +81,7 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
     if method == SendMethod.email_mandrill:
         r = Mandrill().post(
             'subaccounts/delete.json',
-            allowed_statuses=(200, 500),
+            allowed_statuses=(200, 400, 500),
             id=m.company_code,
             timeout_=12,
         )
