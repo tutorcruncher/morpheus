@@ -64,7 +64,7 @@ jobs:
 
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-      HEROKU_APP: tc-morpheus
+      HEROKU_APP: morpheus
 
     steps:
       - uses: actions/checkout@v5
