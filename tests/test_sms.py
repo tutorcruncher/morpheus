@@ -3,7 +3,10 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from uuid import uuid4
 
+from sqlmodel import select
+
 from app.core.config import settings
+from app.messages.models import Company
 from tests.conftest import SyncDb
 
 
@@ -461,3 +464,25 @@ def test_sms_billing(cli, send_sms, send_webhook, sync_db):
     )
     assert r.status_code == 200, r.text
     assert {'company': 'billing-test', 'start': start, 'end': end, 'spend': 0.048} == r.json()
+
+
+def test_sms_billing_never_sent_company(cli, db):
+    start = (datetime.utcnow() - timedelta(days=5)).strftime('%Y-%m-%d')
+    end = (datetime.utcnow() + timedelta(days=5)).strftime('%Y-%m-%d')
+    r = cli.request(
+        'GET',
+        '/billing/sms-test/never-sent/',
+        json=dict(start=start, end=end),
+        headers={'Authorization': 'testing-key'},
+    )
+    assert r.status_code == 200, r.text
+    assert {'company': 'never-sent', 'start': start, 'end': end, 'spend': 0} == r.json()
+    # the company row is created on first sight, matching the other company-code endpoints
+    assert db.exec(select(Company).where(Company.code == 'never-sent')).one() is not None
+
+
+def test_sms_billing_bad_request_creates_no_company(cli, db):
+    r = cli.request('GET', '/billing/sms-test/never-sent/', headers={'Authorization': 'testing-key'})
+    assert r.status_code == 400, r.text
+    assert r.json() == {'message': 'request body must include "start" and "end" dates'}
+    assert db.exec(select(Company).where(Company.code == 'never-sent')).first() is None

@@ -111,15 +111,17 @@ def test_email_send_duplicate_uid_returns_409(cli: TestClient, send_email):
     assert r.json() == {'message': f'Send group with id "{uid}" already exists\n'}
 
 
-def test_sms_billing_company_not_found(cli: TestClient):
+def test_sms_billing_unknown_company_zero_spend(cli: TestClient):
+    # Deliberate departure from legacy parity (issue #524): an unknown company code means
+    # "never sent" and returns zero spend instead of 404, matching the other company-code endpoints.
     r = cli.request(
         'GET',
         '/billing/sms-test/no-such-company/',
         json={'start': '2032-01-01', 'end': '2032-12-31'},
         headers={'Authorization': 'testing-key'},
     )
-    assert r.status_code == 404, r.text
-    assert r.json() == {'message': 'company not found'}
+    assert r.status_code == 200, r.text
+    assert r.json() == {'company': 'no-such-company', 'start': '2032-01-01', 'end': '2032-12-31', 'spend': 0}
 
 
 def test_mandrill_webhook_invalid_signature(cli: TestClient):
