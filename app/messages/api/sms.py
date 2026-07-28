@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.common.api.errors import HTTP400, HTTP404, HTTP409
+from app.common.api.errors import HTTP400, HTTP409
 from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.messages.models import Company, Message, MessageGroup, SmsSendMethod
@@ -42,13 +42,13 @@ def sms_billing_view(
     data: dict = Body(None),
     db: DBSession = Depends(get_db),
 ):
-    company = db.exec(select(Company).where(Company.code == company_code)).first()
-    if not company:
-        raise HTTP404('company not found')
     if not data or 'start' not in data or 'end' not in data:
         raise HTTP400('request body must include "start" and "end" dates')
     start = datetime.strptime(data['start'], '%Y-%m-%d')
     end = datetime.strptime(data['end'], '%Y-%m-%d')
+    # Company rows are created lazily on first send, so a code TC2 knows about may have no row yet;
+    # "never sent" means zero spend, not 404. Resolve after validation so a bad request writes nothing.
+    company = _get_or_create_company(db, company_code)
     spend = _get_sms_spend(db, company_id=company.id, method=method.value, start=start, end=end)  # ty:ignore[invalid-argument-type]
     return {
         'company': company_code,
