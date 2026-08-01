@@ -40,7 +40,7 @@ dev = [
     "ty==0.0.56",
     "pytest==9.1.1",
     "pytest-sugar==1.1.1",
-    "pre-commit==4.6.0",
+    "pre-commit==4.6.1",
     "coverage==7.15.0",
     "pytest-cov==7.1.0",
     "pytest-env==1.6.0",
