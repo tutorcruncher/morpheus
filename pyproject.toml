@@ -26,7 +26,7 @@ dependencies = [
     "chevron==0.14.0",
     "libsass==0.23.0",
     "python-pdf==0.40",
-    "phonenumbers==9.0.34",
+    "phonenumbers==9.0.35",
     "ua-parser==1.0.2",
     "MarkupSafe==3.0.3",
     "jinja2==3.1.6",
