@@ -184,6 +184,25 @@ def test_delete_subaccount_multiple_branches(cli: TestClient, sync_db: SyncDb, d
     assert sync_db.fetchval('select count(*) from companies') == 1
 
 
+def test_delete_subaccount_does_not_match_longer_codes(
+    cli: TestClient, sync_db: SyncDb, send_email, dummy_server: DummyServer
+):
+    """Deleting 'simply-learn' must not touch 'simply-learning-tuition' (code-prefix collision)."""
+    send_email(company_code='simply-learn:1')
+    send_email(company_code='simply-learn')
+    send_email(company_code='simply-learning-tuition:7664')
+    assert sync_db.fetchval('select count(*) from companies') == 3
+    assert sync_db.fetchval('select count(*) from messages') == 3
+
+    data = {'company_code': 'simply-learn'}
+    r = cli.post('/delete-subaccount/email-test/', json=data, headers={'Authorization': 'testing-key'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'deleted_messages=2 deleted_message_groups=2'}
+
+    assert sync_db.fetchval('select code from companies') == 'simply-learning-tuition:7664'
+    assert sync_db.fetchval('select count(*) from messages') == 1
+
+
 def test_delete_subaccount_wrong_response(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
     data = {'company_code': 'broken1'}
     _create_test_subaccount(cli, data)
