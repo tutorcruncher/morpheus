@@ -58,13 +58,16 @@ def create_subaccount(method: SendMethod, m: Optional[SubaccountModel] = None):
 def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = Depends(get_db)):
     """Delete an existing subaccount with Mandrill.
 
-    Deletes companies whose code starts with ``m.company_code`` along with their child rows.
+    Company codes are either the bare subaccount code or ``<code>:<branch_id>``, so match on the
+    part before the first colon. A plain prefix match must NOT be used here: it also matches
+    companies whose code merely starts with ``m.company_code`` (deleting ``simply-learn`` used to
+    wipe ``simply-learning-tuition:7664``'s entire message history).
     The production schema was built by the legacy migrations with ON DELETE RESTRICT on
     messages.company_id / message_groups.company_id, so we cannot rely on a CASCADE from
     companies — we delete messages (events/links cascade off messages) then message_groups
     then companies, matching the old delete order.
     """
-    company_ids = db.exec(select(Company.id).where(Company.code.like(m.company_code + '%'))).all()  # ty:ignore[unresolved-attribute]
+    company_ids = db.exec(select(Company.id).where(func.split_part(Company.code, ':', 1) == m.company_code)).all()
     m_count = g_count = 0
     if company_ids:
         m_count = db.exec(select(func.count()).select_from(Message).where(Message.company_id.in_(company_ids))).one()  # ty:ignore[unresolved-attribute]
