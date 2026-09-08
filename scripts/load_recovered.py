@@ -12,10 +12,13 @@ to_address, first_name, last_name, user_id, role_type, trigger, tags, subject, b
 reply_to, sources, context_keys).
 
 What it does, one agency at a time:
+  0. input: rows identical on group uuid + address + send_ts are collapsed to one before anything is
+     written (the rendered files carry ~10% such duplicates from merging papertrail with bigquery).
   1. companies: ensures a row per "<agency>:<branch>" code (the codes TC2 sends with).
   2. message_groups: one per group uuid (rows without a uuid get a deterministic uuid5 per code+minute),
      created_ts = earliest send in the group, message_method 'email-mandrill', from_email from the style.
-     Groups whose uuid already exists are reused, never modified.
+     Groups whose uuid already exists are reused, never modified — and the load refuses to start if such
+     a group belongs to a different company than its rows do.
   3. messages: COPY into a TEMP staging table, then INSERT … SELECT in batches of --batch-size, skipping
      rows that already exist for the same group uuid + address + send_ts. Every row is stamped
      extra.recovered_batch = <batch-id> (plus recovered_from, trigger, sources) so a batch can be removed
@@ -76,6 +79,49 @@ def group_uuid_for(r: dict) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f'recovered:{r["company_code"]}:{r["branch_id"]}:{minute}'))
 
 
+def dedupe_rows(rows: list[dict]) -> list[dict]:
+    """Collapse rows identical on (group, to_address, send_ts), keeping the first of each.
+
+    The insert guard in load() skips staged rows that already exist in `messages`, but it cannot see
+    rows inserted by its own statement. Duplicates are adjacent once rows are sorted by send_ts, and
+    COPY preserves that order into the staging heap, so a duplicate pair almost always lands in the
+    same --batch-size chunk and both rows would be written. The key matches the guard's exactly —
+    subject is deliberately excluded so the two passes agree on what a duplicate is.
+    """
+    seen: set[tuple[str, str, str]] = set()
+    deduped = []
+    for r in rows:
+        key = (group_uuid_for(r), r['to_address'], r['send_ts'])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+    return deduped
+
+
+def existing_group_conflicts(
+    groups: dict[str, dict], group_company: dict[str, int], company_id: dict[str, int]
+) -> list[tuple[str, int, int]]:
+    """Group uuids already in the database whose company is not the one the rows belong to.
+
+    An existing group is reused untouched, but messages.company_id comes from the CSV row, so a
+    mismatch would file one agency's mail under another agency's group. Returns (uuid, db, expected).
+    """
+    conflicts = []
+    for u, g in groups.items():
+        db_company = group_company.get(u)
+        if db_company is not None and db_company != company_id[g['code']]:
+            conflicts.append((u, db_company, company_id[g['code']]))
+    return conflicts
+
+
+def positive_int(v: str) -> int:
+    """--batch-size 0 makes `limit 0` drain nothing from staging, so the insert loop never ends."""
+    n = int(v)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f'must be 1 or more, got {n}')
+    return n
+
+
 def rollback_batch(cur, batch_id: str, dry_run: bool) -> None:
     """Remove a batch: its messages, and any group that exists only because of it.
 
@@ -134,7 +180,7 @@ def main() -> int:
     ap.add_argument('--batch-id', help='label stamped on every inserted row (extra.recovered_batch)')
     ap.add_argument('--start', type=dt.date.fromisoformat)
     ap.add_argument('--end', type=dt.date.fromisoformat)
-    ap.add_argument('--batch-size', type=int, default=5000)
+    ap.add_argument('--batch-size', type=positive_int, default=5000)
     ap.add_argument('--method', default=METHOD,
                     help=f'message method to store (default {METHOD}). Use email-test to view a batch in a local '
                          'dev TC2, whose test email backend queries Morpheus for email-test — never for production.')
@@ -173,6 +219,10 @@ def load(conn, cur, args) -> int:
         log(f'no rows for {args.agency} in {args.input}')
         return 0
     rows.sort(key=lambda r: r['send_ts'])
+    deduped = dedupe_rows(rows)
+    if len(deduped) != len(rows):
+        log(f'input: dropped {len(rows) - len(deduped)} duplicate rows (same group, address and send time)')
+    rows = deduped
     log(f'{args.agency}: {len(rows)} rows from {rows[0]["send_ts"][:10]} to {rows[-1]["send_ts"][:10]}')
 
     # 1. companies
@@ -198,9 +248,18 @@ def load(conn, cur, args) -> int:
             ),
         )
         g['ts'] = min(g['ts'], r['send_ts'])
-    cur.execute('select uuid::text, id from message_groups where uuid = any(%s::uuid[])', (list(groups),))
-    group_id = dict(cur.fetchall())
+    cur.execute('select uuid::text, id, company_id from message_groups where uuid = any(%s::uuid[])', (list(groups),))
+    existing = cur.fetchall()
+    group_id = {u: gid for u, gid, _ in existing}
     existing_groups = len(group_id)
+    conflicts = existing_group_conflicts(groups, {u: cid for u, _, cid in existing}, company_id)
+    if conflicts:
+        for u, db_company, expected in conflicts[:10]:
+            log(f'  group {u} belongs to company {db_company}, but its rows are company {expected}')
+        sys.exit(
+            f'{len(conflicts)} existing group(s) belong to a different company than the rows claim — refusing to '
+            'load. Check --agency and --as-code against the target database.'
+        )
     new_groups = [(u, g) for u, g in groups.items() if u not in group_id]
     for u, g in new_groups:
         cur.execute(
