@@ -1,7 +1,18 @@
 version: 2
 updates:
-- package-ecosystem: pip
+- package-ecosystem: uv
   directory: "/"
   schedule:
     interval: monthly
-  open-pull-requests-limit: 20
+  open-pull-requests-limit: 15
+  labels:
+    - 'dependencies'
+  groups:
+    python-packages:
+      patterns:
+        - "*"
+  ignore:
+    # Held at 0.136.3 while opentelemetry-instrumentation-fastapi cannot name spans
+    # against FastAPI 0.137+'s _IncludedRouter objects -> 500s under logfire. See the
+    # comment on the pin in pyproject.toml. Drop this entry when the pin is lifted.
+    - dependency-name: "fastapi"

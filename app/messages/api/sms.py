@@ -82,7 +82,7 @@ def send_sms_view(m: SmsSendModel, db: DBSession = Depends(get_db)):
             )
     company_id = company.id
     group = MessageGroup(
-        uuid=m.uid,  # ty:ignore[invalid-argument-type]
+        uuid=m.uid,
         company_id=company_id,  # ty:ignore[invalid-argument-type]
         message_method=m.method.value,
         from_name=m.from_name,

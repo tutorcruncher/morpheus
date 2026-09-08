@@ -11,14 +11,14 @@ dependencies = [
     # bobbin-api#960. Unpin once a fixed opentelemetry-instrumentation-fastapi ships via logfire.
     "fastapi[standard]==0.136.3",
     "sqlmodel==0.0.39",
-    "uvicorn==0.50.0",
+    "uvicorn==0.52.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.14.2",
     "python-multipart==0.0.32",
     "celery==5.6.3",
     "redis==8.0.1",
-    "logfire[celery,fastapi,httpx,requests,sqlalchemy,system-metrics]==4.37.0",
-    "sentry-sdk==2.64.0",
+    "logfire[celery,fastapi,httpx,requests,sqlalchemy,system-metrics]==4.39.0",
+    "sentry-sdk==2.66.1",
     "python-dotenv==1.2.2",
     "psycopg2-binary==2.9.12",
     "httpx==0.28.1",
@@ -26,7 +26,7 @@ dependencies = [
     "chevron==0.14.0",
     "libsass==0.23.0",
     "python-pdf==0.40",
-    "phonenumbers==9.0.34",
+    "phonenumbers==9.0.35",
     "ua-parser==1.0.2",
     "MarkupSafe==3.0.3",
     "jinja2==3.1.6",
@@ -36,14 +36,14 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.15.20",
-    "ty==0.0.56",
+    "ruff==0.16.0",
+    "ty==0.0.64",
     "pytest==9.1.1",
     "pytest-sugar==1.1.1",
-    "pre-commit==4.6.0",
-    "coverage==7.15.0",
+    "pre-commit==4.6.1",
+    "coverage==7.15.2",
     "pytest-cov==7.1.0",
-    "pytest-env==1.6.0",
+    "pytest-env==1.7.0",
     "pytest-timeout==2.4.0",
     "dirty-equals==0.11",
     "ipython==9.15.0",
@@ -54,6 +54,10 @@ dev = [
 line-length = 120
 
 [tool.ruff.lint]
+# ruff 0.16 widened its implicit default selection (UP/B/C4/DTZ/FURB/...), which lights up
+# ~150 pre-existing findings across app/ and tests/. Spell out the set this repo has always
+# linted against so a ruff bump stays a no-op; adopting the wider set is its own piece of work.
+select = ["E4", "E7", "E9", "F"]
 extend-select = ["I"]
 ignore = ['E402']
 
