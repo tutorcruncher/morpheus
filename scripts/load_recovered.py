@@ -20,6 +20,7 @@ What it does, one agency at a time:
      rows that already exist for the same group uuid + address + send_ts. Every row is stamped
      extra.recovered_batch = <batch-id> (plus recovered_from, trigger, sources) so a batch can be removed
      again with --rollback. The BEFORE INSERT trigger fills the search vector as for normal sends.
+     No schema changes are made: the script only inserts into companies, message_groups and messages.
   4. --dry-run does everything inside a transaction and rolls back, reporting the counts it would insert.
 
 Run with the production URL only after a manual snapshot, off-peak, smallest agency first, and with the
@@ -76,23 +77,53 @@ def group_uuid_for(r: dict) -> str:
 
 
 def rollback_batch(cur, batch_id: str, dry_run: bool) -> None:
+    """Remove a batch: its messages, and any group that exists only because of it.
+
+    A group belongs to the batch if every message in it carries this batch id — which is true of the groups
+    the load created, and false for a group that already held real sends (so those are always left alone).
+    This is worked out before the messages are deleted, while the evidence still exists.
+    """
+    cur.execute(
+        """select distinct m.group_id from messages m
+           where m.extra->>'recovered_batch' = %(b)s
+             and not exists (select 1 from messages o
+                             where o.group_id = m.group_id
+                               and (o.extra->>'recovered_batch') is distinct from %(b)s)""",
+        {'b': batch_id},
+    )
+    group_ids = [r[0] for r in cur.fetchall()]
     cur.execute("select count(*) from messages where extra->>'recovered_batch' = %s", (batch_id,))
     n_msg = cur.fetchone()[0]
-    log(f'batch {batch_id}: {n_msg} messages to delete')
+    log(f'batch {batch_id}: {n_msg} messages and {len(group_ids)} groups to delete')
     if dry_run:
         return
     cur.execute("delete from messages where extra->>'recovered_batch' = %s", (batch_id,))
-    # Groups created by this batch are recorded in recovered_batch_groups; drop those left empty.
-    cur.execute("select to_regclass('recovered_batch_groups')")
-    if cur.fetchone()[0]:
+    n_grp = 0
+    if group_ids:
         cur.execute(
-            """delete from message_groups where id in (
-                 select group_id from recovered_batch_groups where batch_id = %s)
+            """delete from message_groups where id = any(%s)
                and not exists (select 1 from messages m where m.group_id = message_groups.id)""",
-            (batch_id,),
+            (group_ids,),
         )
-        cur.execute('delete from recovered_batch_groups where batch_id = %s', (batch_id,))
-    log(f'batch {batch_id}: deleted {n_msg} messages and their now-empty groups')
+        n_grp = cur.rowcount
+    drop_legacy_group_table(cur, batch_id)
+    log(f'batch {batch_id}: deleted {n_msg} messages and {n_grp} now-empty groups')
+
+
+def drop_legacy_group_table(cur, batch_id: str) -> None:
+    """Earlier versions recorded created groups in a recovered_batch_groups table.
+
+    Nothing writes it any more. Clear this batch's rows and drop the table once it is empty, so a database
+    that was loaded with an older copy of this script does not keep an unused table for ever.
+    """
+    cur.execute("select to_regclass('recovered_batch_groups')")
+    if not cur.fetchone()[0]:
+        return
+    cur.execute('delete from recovered_batch_groups where batch_id = %s', (batch_id,))
+    cur.execute('select count(*) from recovered_batch_groups')
+    if cur.fetchone()[0] == 0:
+        cur.execute('drop table recovered_batch_groups')
+        log('dropped the now-empty legacy recovered_batch_groups table')
 
 
 def main() -> int:
@@ -170,16 +201,13 @@ def load(conn, cur, args) -> int:
     cur.execute('select uuid::text, id from message_groups where uuid = any(%s::uuid[])', (list(groups),))
     group_id = dict(cur.fetchall())
     existing_groups = len(group_id)
-    cur.execute('create table if not exists recovered_batch_groups (batch_id text not null, group_id int not null)')
     new_groups = [(u, g) for u, g in groups.items() if u not in group_id]
     for u, g in new_groups:
         cur.execute(
             'insert into message_groups (uuid, company_id, message_method, created_ts, from_email) values (%s, %s, %s, %s, %s) returning id',
             (u, company_id[g['code']], args.method, g['ts'], g['from_email']),
         )
-        gid = cur.fetchone()[0]
-        group_id[u] = gid
-        cur.execute('insert into recovered_batch_groups (batch_id, group_id) values (%s, %s)', (args.batch_id, gid))
+        group_id[u] = cur.fetchone()[0]
     log(
         f'groups: {len(groups)} in files, {existing_groups} already present, {len(new_groups)} created ({sum(g["synth"] for _, g in new_groups)} synthesised)'
     )
