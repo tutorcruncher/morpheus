@@ -54,7 +54,24 @@ def log(msg: str) -> None:
     print(f'[{dt.datetime.now():%H:%M:%S}] {msg}', flush=True)
 
 
-def read_rows(input_dir: Path, agency: str, start: dt.date | None, end: dt.date | None, as_code=None):
+def read_rows(
+    input_dir: Path,
+    agency: str,
+    start: dt.date | None,
+    end: dt.date | None,
+    as_code=None,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+):
+    """Rows for one agency, optionally bounded by day (--start/--end) and by time (--start-ts/--end-ts).
+
+    The timestamp bounds exist for the Route A tail. A subaccount restored from a nightly snapshot
+    was deleted some hours after that snapshot was taken, so Route B supplies only the sends in
+    between. A whole-day filter would also pick up what it sent *after* the deletion, and those rows
+    already exist in the database as real messages — the insert guard would not catch them, because
+    Route B's send_ts comes from a log line and never matches the database's to the microsecond.
+    Both bounds are inclusive and compare as ISO strings, which is what the rendered files hold.
+    """
     files = sorted(input_dir.glob('????-??-??.csv.gz'))
     for f in files:
         day = dt.date.fromisoformat(f.stem[:10])
@@ -62,6 +79,10 @@ def read_rows(input_dir: Path, agency: str, start: dt.date | None, end: dt.date 
             continue
         with gzip.open(f, 'rt', newline='', encoding='utf-8') as fh:
             for r in csv.DictReader(fh):
+                if start_ts and r['send_ts'] < start_ts:
+                    continue
+                if end_ts and r['send_ts'] > end_ts:
+                    continue
                 if r['company_code'] == agency:
                     if as_code:
                         new_code, new_branch = as_code
@@ -180,6 +201,11 @@ def main() -> int:
     ap.add_argument('--batch-id', help='label stamped on every inserted row (extra.recovered_batch)')
     ap.add_argument('--start', type=dt.date.fromisoformat)
     ap.add_argument('--end', type=dt.date.fromisoformat)
+    ap.add_argument('--start-ts', metavar='ISO_TS',
+                    help='only rows with send_ts >= this (inclusive), e.g. 2026-08-26T01:06:00. '
+                         'For the Route A tail, where a whole-day cut would re-insert sends that '
+                         'already exist in the database.')
+    ap.add_argument('--end-ts', metavar='ISO_TS', help='only rows with send_ts <= this (inclusive)')
     ap.add_argument('--batch-size', type=positive_int, default=5000)
     ap.add_argument('--method', default=METHOD,
                     help=f'message method to store (default {METHOD}). Use email-test to view a batch in a local '
@@ -214,7 +240,7 @@ def load(conn, cur, args) -> int:
         if not c or not b:
             sys.exit('--as-code must look like CODE:BRANCH, e.g. testagency:3')
         as_code = (c, b)
-    rows = list(read_rows(args.input, args.agency, args.start, args.end, as_code))
+    rows = list(read_rows(args.input, args.agency, args.start, args.end, as_code, args.start_ts, args.end_ts))
     if not rows:
         log(f'no rows for {args.agency} in {args.input}')
         return 0

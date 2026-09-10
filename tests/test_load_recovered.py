@@ -118,3 +118,51 @@ class TestPositiveInt:
 
     def test_accepts_a_positive_value(self):
         assert load_recovered.positive_int('5000') == 5000
+
+
+class TestReadRows:
+    """--start/--end are whole days. Route A needs a sub-day cut: a subaccount restored from a
+    nightly snapshot was deleted some hours later the same day, so only the sends between the
+    snapshot and the deletion come from Route B. Loading the whole day would also insert the sends
+    made *after* the deletion, which already exist in the database as real messages."""
+
+    @staticmethod
+    def _write(tmp_path, rows):
+        import csv
+        import gzip
+
+        path = tmp_path / '2026-08-26.csv.gz'
+        with gzip.open(path, 'wt', newline='', encoding='utf-8') as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+        return tmp_path
+
+    def test_start_ts_and_end_ts_cut_within_a_day(self, tmp_path):
+        rows = [
+            row('2026-08-26T00:30:00.000000', code='agency-a'),  # before the snapshot
+            row('2026-08-26T01:32:43.507000', code='agency-a'),  # in the window
+            row('2026-08-26T19:00:00.000000', code='agency-a'),  # in the window
+            row('2026-08-26T22:39:09.472000', code='agency-a'),  # after the deletion
+        ]
+        d = self._write(tmp_path, rows)
+
+        got = list(
+            load_recovered.read_rows(
+                d,
+                'agency-a',
+                None,
+                None,
+                start_ts='2026-08-26T01:06:00',
+                end_ts='2026-08-26T19:48:37',
+            )
+        )
+        assert [r['send_ts'] for r in got] == ['2026-08-26T01:32:43.507000', '2026-08-26T19:00:00.000000']
+
+    def test_no_ts_bounds_returns_the_whole_day(self, tmp_path):
+        rows = [
+            row('2026-08-26T00:30:00.000000', code='agency-a'),
+            row('2026-08-26T22:39:09.472000', code='agency-a'),
+        ]
+        d = self._write(tmp_path, rows)
+        assert len(list(load_recovered.read_rows(d, 'agency-a', None, None))) == 2
