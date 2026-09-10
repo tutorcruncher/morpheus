@@ -137,3 +137,40 @@ class TestConstants:
     def test_vector_is_never_inserted(self):
         # The create_tsvector BEFORE INSERT trigger rebuilds it, as it does for a normal send.
         assert 'vector' in restore.SKIP_COLUMNS
+
+
+class TestPreflightProblems:
+    """Both hazards must stop the load before a row is written, not partway through.
+
+    The id check is also load-bearing for --rollback: it deletes every id in the parquet, which only
+    means "undo the restore" while the target held none of them beforehand."""
+
+    def test_clean_target_is_go(self):
+        assert restore.preflight_problems({t: 0 for t in restore.TABLES}, []) == []
+
+    def test_ids_already_present_stop_the_load(self):
+        problems = restore.preflight_problems({'messages': 12, 'events': 0}, [])
+        assert len(problems) == 1
+        assert 'messages' in problems[0] and '12' in problems[0]
+
+    def test_every_offending_table_is_named(self):
+        problems = restore.preflight_problems({'messages': 3, 'events': 5, 'links': 0}, [])
+        assert len(problems) == 2
+
+    def test_uuid_under_a_different_id_stops_the_load(self):
+        # ON CONFLICT (id) does not arbitrate the unique index on message_groups.uuid, so this would
+        # otherwise abort the transaction on a bare duplicate-key error.
+        problems = restore.preflight_problems({}, [('uuid-1', 500, 900)])
+        assert len(problems) == 1
+        assert 'uuid-1' in problems[0] and '500' in problems[0] and '900' in problems[0]
+
+    def test_many_uuid_conflicts_are_counted_not_all_printed(self):
+        conflicts = [(f'uuid-{i}', i, i + 1000) for i in range(50)]
+        problems = restore.preflight_problems({}, conflicts)
+        assert '50' in problems[0]
+        assert problems[0].endswith('…')
+
+    def test_both_hazards_reported_together(self):
+        # One run should tell you everything that is wrong, not make you fix them one at a time.
+        problems = restore.preflight_problems({'messages': 4}, [('uuid-1', 1, 2)])
+        assert len(problems) == 2

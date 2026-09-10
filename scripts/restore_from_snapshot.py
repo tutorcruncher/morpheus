@@ -32,6 +32,13 @@ What it does, in dependency order (groups -> messages -> events -> links):
 
 Rollback needs no bookkeeping: the ids are in the parquet files, so --rollback deletes exactly those
 ids. Restored rows are therefore byte-identical to the originals, carrying no marker of the restore.
+That equivalence rests on the pre-flight refusing to start when the target already holds any id or
+group uuid we are about to restore, so nothing --rollback deletes can be a row we did not write.
+
+The whole load is one transaction: if anything fails at any point, the database rolls all of it back
+and the target is untouched. --rollback is for undoing a restore that already committed.
+
+Needs pyarrow, which the app does not depend on -- run it with `uv run --with pyarrow python ...`.
 
 Before running against production: take a manual RDS snapshot, and go off-peak -- every inserted
 event fires the update_message AFTER INSERT trigger, so that step dominates the run time.
@@ -109,6 +116,37 @@ def resolve_remap(snap_by_id: dict[int, str], used_ids: list[int], current_by_co
     return mapping, problems
 
 
+def preflight_problems(existing_ids: dict[str, int], uuid_conflicts: list[tuple[str, int, int]]) -> list[str]:
+    """Reasons the target is not in a fit state to restore into. Empty means go.
+
+    Two separate hazards, both fatal before a row is written rather than partway through:
+
+    `existing_ids` -- how many of the ids we are about to restore the target already holds. Should be
+    zero: these ids were allocated before the delete and nothing since can have reused them. If it is
+    not zero, either a previous restore already committed (roll that back first) or something is
+    wrong enough to stop for. Refusing here is also what makes --rollback exact: every id in the
+    parquet was then written by us, so deleting them all cannot touch a row we did not create.
+
+    `uuid_conflicts` -- (uuid, id in target, id we would restore). message_groups.uuid carries its own
+    unique index, which `ON CONFLICT (id)` does not arbitrate, so a group already present under a
+    different id aborts the transaction on a bare duplicate-key error. Reachable whenever Route B has
+    loaded the same agency: 26,758 of these two agencies' group uuids appear in both datasets. The
+    documented order avoids it (Route B only supplies the post-snapshot tail, which shares none), but
+    a clear refusal beats a cryptic abort after staging half a million rows.
+    """
+    problems = []
+    for table, n in sorted(existing_ids.items()):
+        if n:
+            problems.append(f'{table}: {n:,} of the ids to restore already exist in the target')
+    if uuid_conflicts:
+        shown = ', '.join(f'{u} (target id {db}, restoring {mine})' for u, db, mine in uuid_conflicts[:3])
+        problems.append(
+            f'message_groups: {len(uuid_conflicts):,} uuid(s) already exist under a different id — {shown}'
+            + ('…' if len(uuid_conflicts) > 3 else '')
+        )
+    return problems
+
+
 def sequence_problems(max_ids: dict[str, int], sequences: dict[str, int]) -> list[str]:
     """Tables whose restored ids reach their sequence, which a future insert would then collide with.
 
@@ -121,14 +159,43 @@ def sequence_problems(max_ids: dict[str, int], sequences: dict[str, int]) -> lis
     ]
 
 
+def check_target_clean(cur, input_dir: Path) -> None:
+    """Refuse before writing anything if the target already holds ids or uuids we are restoring."""
+    existing = {}
+    for table in TABLES:
+        ids = read_table(input_dir, table, ['id'])['id'].to_pylist()
+        cur.execute(f'select count(*) from {table} where id = any(%s)', (ids,))
+        existing[table] = cur.fetchone()[0]
+
+    groups = read_table(input_dir, 'message_groups', ['id', 'uuid'])
+    mine = dict(zip(groups['uuid'].to_pylist(), groups['id'].to_pylist()))
+    cur.execute('select uuid::text, id from message_groups where uuid::text = any(%s)', (list(mine),))
+    conflicts = [(u, db_id, mine[u]) for u, db_id in cur.fetchall() if db_id != mine[u]]
+
+    problems = preflight_problems(existing, conflicts)
+    if problems:
+        sys.exit(
+            'the target is not clean for this restore:\n  ' + '\n  '.join(problems) + '\n\n'
+            'If a previous restore committed, roll it back first. If Route B loaded these agencies, '
+            'roll that batch back — Route A supersedes it, since these are the real messages rather '
+            'than reconstructions. Nothing has been written.'
+        )
+    log('  target is clean: no restored id or group uuid already present')
+
+
 def company_remap(cur, input_dir: Path) -> dict[int, int]:
     snap = read_table(input_dir.parent / 'route_a', 'companies') if (input_dir.parent / 'route_a').exists() else None
     if snap is None:
         sys.exit(f'need the snapshot companies table at {input_dir.parent / "route_a" / "companies"}')
     snap_by_id = dict(zip(snap['id'].to_pylist(), snap['code'].to_pylist()))
 
-    groups = read_table(input_dir, 'message_groups', ['company_id'])
-    used = sorted(set(groups['company_id'].to_pylist()))
+    # Every table that carries a company_id, not just message_groups: the remap is applied to all of
+    # them, so building it from one would let an id the other uses fall through unmapped.
+    used = set()
+    for table in TABLES:
+        if 'company_id' in read_table(input_dir, table).column_names:
+            used |= set(read_table(input_dir, table, ['company_id'])['company_id'].to_pylist())
+    used = sorted(used)
 
     cur.execute('select code, id from companies')
     mapping, problems = resolve_remap(snap_by_id, used, dict(cur.fetchall()))
@@ -180,7 +247,16 @@ def load_one(cur, input_dir: Path, table: str, remap: dict[int, int], batch_size
     rows = data.select(cols).to_pylist()
     remapped = 0
     for row in rows:
-        if 'company_id' in row and row['company_id'] in remap:
+        if 'company_id' in row:
+            # An id missing from the remap must stop the load, never pass through: the snapshot's
+            # company ids mean nothing in the target, so keeping one files this agency's mail under
+            # whichever company happens to hold that id now — silent, and invisible afterwards.
+            if row['company_id'] not in remap:
+                sys.exit(
+                    f'{table}: company_id {row["company_id"]} has no mapping to a current company. '
+                    'Nothing has been written. This means the snapshot companies table and the rows '
+                    'disagree, which should not happen — do not bypass it.'
+                )
             row['company_id'] = remap[row['company_id']]
             remapped += 1
         buf.write('\t'.join(pg_text(row[c]) for c in cols) + '\n')
@@ -222,7 +298,13 @@ def pg_text(v) -> str:
 
 
 def rollback(cur, input_dir: Path, batch_size: int) -> None:
-    """Delete exactly the restored ids, children first."""
+    """Delete exactly the restored ids, children first.
+
+    Deleting every id in the parquet is only the same thing as "undo the restore" because the load
+    refuses to start when the target already holds any of them (check_target_clean). That guarantee
+    is what makes this safe without a manifest: nothing here can remove a row the restore did not
+    write. If that pre-flight is ever bypassed, this is no longer true and could delete live rows.
+    """
     for table in reversed(TABLES):
         ids = read_table(input_dir, table, ['id'])['id'].to_pylist()
         deleted = 0
@@ -253,8 +335,9 @@ def main() -> None:
         log('rollback committed')
         return
 
-    log('checking sequences')
+    log('pre-flight')
     check_sequences(cur, args.input, args.allow_id_overlap)
+    check_target_clean(cur, args.input)
 
     remap = company_remap(cur, args.input)
     log(f'company remap: {", ".join(f"{o}->{n}" for o, n in sorted(remap.items()))}')
