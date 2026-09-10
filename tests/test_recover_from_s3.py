@@ -1,12 +1,12 @@
 """Unit tests for the remote recovery driver (scripts/recover_from_s3.py).
 
-The driver's job is to fetch the two archives from S3 and then run the two loaders that were
-rehearsed by hand -- it deliberately reimplements none of their logic, so what is worth covering here
-is what it *decides*: which agencies run, in what order, under what batch id, and with which bounds.
-A mistake in any of those either skips an agency's mail or loads a bounded slice unbounded.
+The driver fetches the archives and then runs the two loaders that were rehearsed by hand -- it
+reimplements none of their logic, so what is worth covering is what it *decides*: which agencies run,
+under what batch id, and with which bounds. A mistake in any of those either skips an agency's mail
+or loads a bounded window unbounded.
 
-No real agency codes, addresses or ids appear here beyond the campaign order itself, which is public
-in the runbook.
+Which agencies exist is downloaded, not compiled in, so no customer names appear here either. The
+fixtures are invented, and the rule the real list has to obey is tested on them.
 """
 
 import importlib.util
@@ -20,56 +20,82 @@ recover = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(recover)
 
 
-class TestCampaignOrder:
-    """Smallest agency first, so the one-row agency is a live smoke test before the 87,909-row one."""
+def doc(codes=('agency-a', 'agency-b'), partial=()):
+    return {
+        'agencies': {'codes': list(codes)},
+        'partial_agencies': {'entries': list(partial)},
+    }
 
-    def test_all_twenty_five_agencies_are_listed(self):
-        assert len(recover.AGENCIES) == 25
-        assert len(set(recover.AGENCIES)) == 25
 
-    def test_the_two_snapshot_agencies_are_not_in_the_list(self):
-        # They are Route A. Loading their whole rendered history here would give them reconstructed
-        # bodies alongside the real ones the snapshot restores.
-        assert 'capital-tuition-group' not in recover.AGENCIES
-        assert 'prime-uk-education-ltd' not in recover.AGENCIES
+WINDOW = {
+    'agency': 'agency-z',
+    'day': '2026-08-26',
+    'start_ts': '2026-08-26T01:06:00',
+    'end_ts': '2026-08-26T19:48:37',
+    'expected': 132,
+}
 
-    def test_only_filter_picks_a_single_agency(self):
-        assert recover.agencies_to_run('tuition360') == ['tuition360']
 
-    def test_only_filter_rejects_an_agency_that_is_not_in_the_campaign(self):
+class TestParseAgencyList:
+    def test_a_well_formed_list_is_returned_as_given(self):
+        agencies, partial = recover.parse_agency_list(doc(partial=[WINDOW]))
+        assert agencies == ['agency-a', 'agency-b']
+        assert partial == [WINDOW]
+
+    def test_order_is_preserved_because_it_is_the_load_order(self):
+        # Smallest agency first, so the smallest load is a live smoke test before the largest.
+        agencies, _ = recover.parse_agency_list(doc(codes=('c', 'a', 'b')))
+        assert agencies == ['c', 'a', 'b']
+
+    def test_an_agency_in_both_lists_stops_the_run(self):
+        # The one rule that matters: an agency whose real email was restored from the snapshot must
+        # never also have its whole reconstructed history loaded on top.
+        with pytest.raises(SystemExit) as exc:
+            recover.parse_agency_list(doc(codes=('agency-a', 'agency-z'), partial=[WINDOW]))
+        assert 'agency-z' in str(exc.value) or 'both' in str(exc.value)
+
+    def test_a_bounded_window_missing_its_end_is_refused(self):
+        # Without an end timestamp the load would run to the end of the day and re-insert email the
+        # agency sent after it was deleted, which is still live.
         with pytest.raises(SystemExit):
-            recover.agencies_to_run('capital-tuition-group')
+            recover.parse_agency_list(doc(partial=[{**WINDOW, 'end_ts': ''}]))
 
-    def test_no_filter_runs_the_whole_campaign_in_order(self):
-        assert recover.agencies_to_run(None) == recover.AGENCIES
+    @pytest.mark.parametrize('field', ['agency', 'day', 'start_ts', 'end_ts'])
+    def test_every_bound_is_required(self, field):
+        with pytest.raises(SystemExit):
+            recover.parse_agency_list(doc(partial=[{k: v for k, v in WINDOW.items() if k != field}]))
+
+    def test_duplicates_are_refused(self):
+        with pytest.raises(SystemExit):
+            recover.parse_agency_list(doc(codes=('agency-a', 'agency-a')))
+
+    def test_an_empty_list_is_refused_rather_than_loading_nothing_quietly(self):
+        with pytest.raises(SystemExit):
+            recover.parse_agency_list(doc(codes=()))
+
+    def test_a_list_with_no_partial_agencies_is_fine(self):
+        agencies, partial = recover.parse_agency_list({'agencies': {'codes': ['agency-a']}})
+        assert agencies == ['agency-a'] and partial == []
+
+
+class TestAgenciesToRun:
+    def test_no_filter_runs_them_all_in_order(self):
+        assert recover.agencies_to_run(['a', 'b', 'c'], None) == ['a', 'b', 'c']
+
+    def test_only_picks_a_single_agency(self):
+        assert recover.agencies_to_run(['a', 'b'], 'b') == ['b']
+
+    def test_only_rejects_an_agency_that_is_not_in_the_list(self):
+        with pytest.raises(SystemExit):
+            recover.agencies_to_run(['a', 'b'], 'agency-z')
 
 
 class TestBatchId:
     def test_batch_id_matches_the_runbook_shape(self):
-        assert recover.batch_id('tuition360', '20260910') == 'recover-tuition360-20260910'
+        assert recover.batch_id('agency-a', '20260910') == 'recover-agency-a-20260910'
 
     def test_the_date_is_what_makes_a_rerun_distinguishable(self):
-        assert recover.batch_id('tuition360', '20260101') != recover.batch_id('tuition360', '20260910')
-
-
-class TestTails:
-    """Capital and Prime kept sending between the 01:06 snapshot and their own deletion. Only that
-    window comes from Route B -- a whole-day load would also insert what they sent afterwards, which
-    is still live in production."""
-
-    def test_both_tails_are_defined(self):
-        assert {t['agency'] for t in recover.TAILS} == {'capital-tuition-group', 'prime-uk-education-ltd'}
-
-    def test_each_tail_ends_at_its_own_deletion_time(self):
-        by_agency = {t['agency']: t for t in recover.TAILS}
-        assert by_agency['capital-tuition-group']['end_ts'] == '2026-08-26T19:48:37'
-        assert by_agency['prime-uk-education-ltd']['end_ts'] == '2026-08-26T02:08:31'
-
-    def test_both_tails_start_at_the_snapshot(self):
-        assert all(t['start_ts'] == '2026-08-26T01:06:00' for t in recover.TAILS)
-
-    def test_both_tails_are_bounded_to_the_single_day(self):
-        assert all(t['day'] == '2026-08-26' for t in recover.TAILS)
+        assert recover.batch_id('agency-a', '20260101') != recover.batch_id('agency-a', '20260910')
 
 
 class TestCommands:
@@ -77,7 +103,6 @@ class TestCommands:
 
     def test_restore_command_points_at_the_extracted_layout(self):
         cmd = recover.restore_command(self.DSN, Path('/tmp/x'), dry_run=False)
-        assert '--input' in cmd
         assert cmd[cmd.index('--input') + 1] == '/tmp/x/route_a_filtered'
         assert '--dry-run' not in cmd
 
@@ -85,38 +110,37 @@ class TestCommands:
         assert '--dry-run' in recover.restore_command(self.DSN, Path('/tmp/x'), dry_run=True)
         assert '--dry-run' in recover.load_command(self.DSN, Path('/tmp/x'), 'a', 'b', dry_run=True)
 
-    def test_load_command_has_no_bounds_for_an_ordinary_agency(self):
-        cmd = recover.load_command(self.DSN, Path('/tmp/x'), 'tuition360', 'batch-1', dry_run=False)
-        assert '--agency' in cmd and cmd[cmd.index('--agency') + 1] == 'tuition360'
+    def test_an_ordinary_agency_gets_no_bounds(self):
+        cmd = recover.load_command(self.DSN, Path('/tmp/x'), 'agency-a', 'batch-1', dry_run=False)
+        assert cmd[cmd.index('--agency') + 1] == 'agency-a'
         assert '--start-ts' not in cmd and '--end-ts' not in cmd and '--start' not in cmd
 
-    def test_load_command_carries_every_bound_for_a_tail(self):
-        tail = recover.TAILS[0]
-        cmd = recover.load_command(self.DSN, Path('/tmp/x'), tail['agency'], 'capital-tail', dry_run=False, tail=tail)
+    def test_a_bounded_window_carries_every_bound(self):
+        cmd = recover.load_command(self.DSN, Path('/tmp/x'), WINDOW['agency'], 'b', dry_run=False, tail=WINDOW)
         for flag, value in [
-            ('--start', tail['day']),
-            ('--end', tail['day']),
-            ('--start-ts', tail['start_ts']),
-            ('--end-ts', tail['end_ts']),
+            ('--start', WINDOW['day']),
+            ('--end', WINDOW['day']),
+            ('--start-ts', WINDOW['start_ts']),
+            ('--end-ts', WINDOW['end_ts']),
         ]:
-            assert flag in cmd and cmd[cmd.index(flag) + 1] == value
+            assert cmd[cmd.index(flag) + 1] == value
 
     def test_the_rendered_folder_is_where_the_archive_puts_it(self):
-        cmd = recover.load_command(self.DSN, Path('/tmp/x'), 'tuition360', 'b', dry_run=False)
+        cmd = recover.load_command(self.DSN, Path('/tmp/x'), 'agency-a', 'b', dry_run=False)
         assert cmd[cmd.index('--input') + 1] == '/tmp/x/rendered'
 
     def test_no_loader_is_ever_given_as_code_or_method(self):
         # --as-code re-homes mail onto another agency and --method makes it invisible to production
         # TC2. Both are local-testing flags and must never reach a real run.
-        cmd = recover.load_command(self.DSN, Path('/tmp/x'), 'tuition360', 'b', dry_run=False)
+        cmd = recover.load_command(self.DSN, Path('/tmp/x'), 'agency-a', 'b', dry_run=False)
         assert '--as-code' not in cmd and '--method' not in cmd
 
 
 class TestDatabaseUrl:
-    """Heroku hands out postgres:// URLs, which psycopg2 accepts but SQLAlchemy does not; normalise
-    once here so the driver behaves the same wherever it runs."""
+    """The platform hands out postgres:// URLs, which psycopg2 accepts but SQLAlchemy does not;
+    normalise once so the driver behaves the same wherever it runs."""
 
-    def test_heroku_style_scheme_is_normalised(self, monkeypatch):
+    def test_legacy_scheme_is_normalised(self, monkeypatch):
         monkeypatch.setenv('DATABASE_URL', 'postgres://u:p@h:5432/d')
         assert recover.database_url().startswith('postgresql://')
 

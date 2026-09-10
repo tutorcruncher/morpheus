@@ -20,6 +20,11 @@ Config, all from the environment:
     AWS_EMAIL_RECOVERY_BUCKET       default tutorcruncher-dev-private
     AWS_EMAIL_RECOVERY_PREFIX       default email-recovery
 
+Which agencies to load, in what order, and which of them take only a bounded window, come from
+agencies_to_load.json in the same S3 prefix. That list is data rather than code so no customer names
+are committed to this repo -- but the rule it must obey is enforced here, in parse_agency_list: an
+agency that takes a bounded window must never also appear in the full-history list.
+
 What it does NOT do is reimplement the loading. It downloads the two archives, unpacks them into the
 layout the loaders expect, and then invokes scripts/restore_from_snapshot.py and
 scripts/load_recovered.py as separate processes -- exactly the commands rehearsed by hand, one
@@ -33,9 +38,10 @@ disagree with itself.
 
 The phases in order, which is also what --phase all does:
 
-  route-a   restore 549,261 real rows for the two agencies deleted after the 26 Aug snapshot
-  route-b   25 agencies, 347,003 messages, smallest first
-  tails     the sends those two Route A agencies made between the snapshot and their deletion
+  route-a   restore the real rows for the agencies whose deletion happened after the snapshot
+  route-b   every agency in the full-history list, smallest first
+  tails     the bounded windows -- what the snapshot-restored agencies sent between the snapshot
+            being taken and their account being deleted
 
 Read §1a and §3a of ROUTE_B_RUNBOOK.md before running this against production.
 """
@@ -44,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import shutil
 import subprocess
@@ -59,58 +66,9 @@ DEFAULT_PREFIX = 'email-recovery'
 ROUTE_A_ARCHIVE = 'route_a.tar.gz'
 ROUTE_B_ARCHIVE = 'route_b.tar.gz'
 
-# Smallest first: the one-row agency is a live smoke test before the 87,909-row one. This is the
-# order in ROUTE_B_RUNBOOK.md §3, and capital-tuition-group and prime-uk-education-ltd are absent
-# from it deliberately -- they are Route A, and only their tail comes from here.
-AGENCIES = [
-    'tuition-with-chloe',
-    'empowering-assessment-and-tuition',
-    'teach-and-coach-tutors',
-    'empowered-learning-llc',
-    'tuition-extra-group',
-    'tuition360',
-    'tuition-central',
-    'teach-me-islam-online-1',
-    'london-tuition',
-    'leetutors-llc',
-    'lighthouse-global-education',
-    'teaching-through-education',
-    'lighthouse-tuition-south-west',
-    'sarah-isaacs-english-tutoring-services',
-    'tuition-point',
-    'teach2teach',
-    'lighthouse-learning',
-    'london-home-tutors',
-    'a-tutoring-services',
-    'alist-1',
-    'teachers-who-tutor',
-    'simply-learns',
-    'empower-tutoring-academy',
-    'cardiff-vale-tutors-1',
-    'simply-learning-tuition',
-]
-
-# The Route A tail. Both agencies were deleted hours after the 26 Aug 01:06 snapshot was taken, so
-# the snapshot cannot hold what they sent in between -- 132 rows for Capital, 7 for Prime. The bounds
-# are not optional: --start/--end are whole days, so without --start-ts/--end-ts the load would also
-# insert what each sent *after* it was deleted, which is still live in production and which the
-# insert guard cannot recognise, because a rendered send_ts comes from a log line rather than the app.
-TAILS = [
-    {
-        'agency': 'capital-tuition-group',
-        'day': '2026-08-26',
-        'start_ts': '2026-08-26T01:06:00',
-        'end_ts': '2026-08-26T19:48:37',
-        'expected': 132,
-    },
-    {
-        'agency': 'prime-uk-education-ltd',
-        'day': '2026-08-26',
-        'start_ts': '2026-08-26T01:06:00',
-        'end_ts': '2026-08-26T02:08:31',
-        'expected': 7,
-    },
-]
+# Which agencies to load, in what order, and which of them get only a bounded window. Downloaded
+# alongside the data rather than written here, so no customer names are committed to this repo.
+AGENCY_LIST = 'agencies_to_load.json'
 
 PHASE_ARCHIVES = {
     'route-a': [ROUTE_A_ARCHIVE],
@@ -118,6 +76,8 @@ PHASE_ARCHIVES = {
     'tails': [ROUTE_B_ARCHIVE],
     'all': [ROUTE_A_ARCHIVE, ROUTE_B_ARCHIVE],
 }
+
+PARTIAL_FIELDS = ('agency', 'day', 'start_ts', 'end_ts')
 
 
 def log(msg: str) -> None:
@@ -142,14 +102,41 @@ def archives_for(phase: str) -> list[str]:
     return PHASE_ARCHIVES[phase]
 
 
-def agencies_to_run(only: str | None) -> list[str]:
-    if only is None:
-        return AGENCIES
-    if only not in AGENCIES:
+def parse_agency_list(doc: dict) -> tuple[list[str], list[dict]]:
+    """The downloaded list, checked hard enough that a bad one stops the run rather than mis-loading.
+
+    The names are data, but the rule they have to obey is not: **an agency that gets only a bounded
+    window must never also appear in the full-history list**. Those agencies had their real email
+    restored from the database snapshot, and loading their whole rendered history would file
+    reconstructed copies alongside the originals. The check below is what keeps that guarantee in
+    the code where it can be reviewed, without the code needing to know anyone's name.
+    """
+    agencies = (doc.get('agencies') or {}).get('codes')
+    partial = (doc.get('partial_agencies') or {}).get('entries', [])
+    if not agencies or not isinstance(agencies, list):
+        sys.exit(f'{AGENCY_LIST}: no agencies.codes list')
+    if len(set(agencies)) != len(agencies):
+        sys.exit(f'{AGENCY_LIST}: agencies.codes contains duplicates')
+    for entry in partial:
+        missing = [f for f in PARTIAL_FIELDS if not entry.get(f)]
+        if missing:
+            sys.exit(f'{AGENCY_LIST}: a partial_agencies entry is missing {", ".join(missing)}')
+    overlap = sorted(set(agencies) & {e['agency'] for e in partial})
+    if overlap:
         sys.exit(
-            f'{only!r} is not one of the 25 Route B agencies. '
-            'capital-tuition-group and prime-uk-education-ltd are Route A -- use --phase tails.'
+            f'{AGENCY_LIST}: {len(overlap)} agency(s) appear in both agencies.codes and '
+            'partial_agencies. An agency that gets only a bounded window must never have its whole '
+            'history loaded too -- that would duplicate email already restored from the snapshot. '
+            'Refusing to run; nothing has been written.'
         )
+    return agencies, partial
+
+
+def agencies_to_run(agencies: list[str], only: str | None) -> list[str]:
+    if only is None:
+        return agencies
+    if only not in agencies:
+        sys.exit(f'{only!r} is not in the agency list. If it takes a bounded window, use --phase tails.')
     return [only]
 
 
@@ -173,24 +160,36 @@ def extract(archive: Path, into: Path) -> None:
     archive.unlink()  # the dyno's disk is small and the tarball is dead weight once unpacked
 
 
+def get(name: str, bucket: str, prefix: str, workdir: Path, archive_dir: Path | None) -> Path:
+    """One object into the working directory, from S3 or from a local copy."""
+    target = workdir / name
+    if archive_dir:
+        local = archive_dir / name
+        if not local.exists():
+            sys.exit(f'{local} not found')
+        log(f'  using {local} ({local.stat().st_size / 1024**2:.1f} MB)')
+        shutil.copy(local, target)
+    else:
+        download(bucket, prefix, name, target)
+    return target
+
+
 def fetch(phase: str, bucket: str, prefix: str, workdir: Path, archive_dir: Path | None = None) -> None:
     """Get the archives this phase needs and unpack them.
 
-    --archive-dir skips the download and uses archives already on disk. It is how this is rehearsed
+    --archive-dir skips the download and uses copies already on disk. It is how this is rehearsed
     against a local database without S3 credentials, and it saves re-fetching 108 MB when a phase is
     retried on a dyno that still has the previous download.
     """
     for name in archives_for(phase):
-        target = workdir / name
-        if archive_dir:
-            local = archive_dir / name
-            if not local.exists():
-                sys.exit(f'{local} not found')
-            log(f'  using {local} ({local.stat().st_size / 1024**2:.1f} MB)')
-            shutil.copy(local, target)
-        else:
-            download(bucket, prefix, name, target)
-        extract(target, workdir)
+        extract(get(name, bucket, prefix, workdir, archive_dir), workdir)
+
+
+def fetch_agency_list(
+    bucket: str, prefix: str, workdir: Path, archive_dir: Path | None
+) -> tuple[list[str], list[dict]]:
+    path = get(AGENCY_LIST, bucket, prefix, workdir, archive_dir)
+    return parse_agency_list(json.loads(path.read_text()))
 
 
 def restore_command(dsn: str, workdir: Path, dry_run: bool) -> list[str]:
@@ -260,13 +259,15 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.only and args.phase not in ('route-b', 'all'):
-        sys.exit('--only applies to the 25 Route B agencies, so it needs --phase route-b')
+        sys.exit('--only picks one agency from the full-history list, so it needs --phase route-b')
 
     dsn = database_url()
     log(f'phase {args.phase}{" (dry run)" if args.dry_run else ""}, database {dsn.rsplit("@", 1)[-1]}')
 
     workdir = Path(tempfile.mkdtemp(prefix='recovery_'))
     try:
+        all_agencies, partial = fetch_agency_list(args.bucket, args.prefix, workdir, args.archive_dir)
+        log(f'  {AGENCY_LIST}: {len(all_agencies)} agencies, {len(partial)} loaded as a bounded window')
         fetch(args.phase, args.bucket, args.prefix, workdir, args.archive_dir)
 
         if args.phase in ('route-a', 'all'):
@@ -274,18 +275,19 @@ def main() -> None:
             run(restore_command(dsn, workdir, args.dry_run), 'route A')
 
         if args.phase in ('route-b', 'all'):
-            agencies = agencies_to_run(args.only)
+            agencies = agencies_to_run(all_agencies, args.only)
             for i, agency in enumerate(agencies, 1):
                 log(f'route B {i}/{len(agencies)}: {agency}')
                 run(load_command(dsn, workdir, agency, batch_id(agency, args.batch_date), args.dry_run), agency)
 
         if args.phase in ('tails', 'all'):
-            for tail in TAILS:
-                log(f'tail: {tail["agency"]} — expecting {tail["expected"]} messages')
-                batch = f'{tail["agency"].split("-")[0]}-tail-{args.batch_date}'
+            for entry in partial:
+                expected = f' — expecting {entry["expected"]} messages' if entry.get('expected') else ''
+                log(f'bounded window: {entry["agency"]}{expected}')
+                batch = f'{entry["agency"]}-window-{args.batch_date}'
                 run(
-                    load_command(dsn, workdir, tail['agency'], batch, args.dry_run, tail=tail),
-                    f'{tail["agency"]} tail',
+                    load_command(dsn, workdir, entry['agency'], batch, args.dry_run, tail=entry),
+                    f'{entry["agency"]} bounded window',
                 )
     finally:
         for path in sorted(workdir.rglob('*'), reverse=True):
