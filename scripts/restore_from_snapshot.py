@@ -47,7 +47,6 @@ from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
-import pyarrow.parquet as pq
 
 # Load order matters: each table's foreign keys point at the one before it.
 TABLES = ['message_groups', 'messages', 'events', 'links']
@@ -71,11 +70,14 @@ def parquet_files(input_dir: Path, table: str) -> list[Path]:
 
 
 def read_table(input_dir: Path, table: str, columns: list[str] | None = None):
+    # pyarrow is imported here rather than at module scope so the pure helpers below can be
+    # imported and tested without it.
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     files = parquet_files(input_dir, table)
     if not files:
         sys.exit(f'no parquet files under {input_dir / table}')
-    import pyarrow as pa
-
     return pa.concat_tables([pq.read_table(f, columns=columns) for f in files])
 
 
@@ -87,12 +89,39 @@ def target_columns(cur, table: str) -> list[str]:
     return [r[0] for r in cur.fetchall()]
 
 
-def company_remap(cur, input_dir: Path) -> dict[int, int]:
-    """snapshot companies.id -> current companies.id, matched on code.
+def resolve_remap(snap_by_id: dict[int, str], used_ids: list[int], current_by_code: dict[str, int]):
+    """snapshot companies.id -> current companies.id, matched on code. Returns (mapping, problems).
 
     The subaccount delete removed the companies rows outright; later sends re-created them under the
     same codes with fresh ids. Codes are unique and stable, so they are the join key -- ids are not.
+    Getting this wrong files one agency's mail under another, so it is resolved for every id the rows
+    actually use, and any id that cannot be resolved is an error rather than a row left behind.
     """
+    mapping, problems = {}, []
+    for old_id in used_ids:
+        code = snap_by_id.get(old_id)
+        if code is None:
+            problems.append(f'snapshot company id {old_id} has no row in the snapshot companies table')
+        elif code not in current_by_code:
+            problems.append(f'{code!r} (snapshot id {old_id}) does not exist in the target database')
+        else:
+            mapping[old_id] = current_by_code[code]
+    return mapping, problems
+
+
+def sequence_problems(max_ids: dict[str, int], sequences: dict[str, int]) -> list[str]:
+    """Tables whose restored ids reach their sequence, which a future insert would then collide with.
+
+    Restoring original primary keys is only safe while every one of them sits below the sequence:
+    the ids were allocated before the delete and the sequence has only moved forward since, so this
+    should always hold -- and if it does not, something is wrong enough to stop for.
+    """
+    return [
+        f'{t}: max id {max_ids[t]:,} >= sequence {sequences[t]:,}' for t in max_ids if max_ids[t] >= sequences[t]
+    ]
+
+
+def company_remap(cur, input_dir: Path) -> dict[int, int]:
     snap = read_table(input_dir.parent / 'route_a', 'companies') if (input_dir.parent / 'route_a').exists() else None
     if snap is None:
         sys.exit(f'need the snapshot companies table at {input_dir.parent / "route_a" / "companies"}')
@@ -102,20 +131,10 @@ def company_remap(cur, input_dir: Path) -> dict[int, int]:
     used = sorted(set(groups['company_id'].to_pylist()))
 
     cur.execute('select code, id from companies')
-    current = dict(cur.fetchall())
-
-    mapping, missing = {}, []
-    for old_id in used:
-        code = snap_by_id.get(old_id)
-        if code is None:
-            missing.append(f'snapshot company id {old_id} has no row in the snapshot companies table')
-        elif code not in current:
-            missing.append(f'{code!r} (snapshot id {old_id}) does not exist in the target database')
-        else:
-            mapping[old_id] = current[code]
-    if missing:
+    mapping, problems = resolve_remap(snap_by_id, used, dict(cur.fetchall()))
+    if problems:
         sys.exit(
-            'cannot map every company:\n  ' + '\n  '.join(missing) + '\n\n'
+            'cannot map every company:\n  ' + '\n  '.join(problems) + '\n\n'
             'Every code the restored rows belong to must already exist in the target. If one is '
             'missing, the agency has not sent anything since the wipe -- create the companies row '
             'first (a plain insert of the code) and re-run.'
@@ -124,16 +143,14 @@ def company_remap(cur, input_dir: Path) -> dict[int, int]:
 
 
 def check_sequences(cur, input_dir: Path, allow_overlap: bool) -> None:
-    """Every restored id must sit below its sequence, or a future insert collides with it."""
-    problems = []
+    max_ids, sequences = {}, {}
     for table in TABLES:
-        ids = read_table(input_dir, table, ['id'])['id']
-        max_id = max(ids.to_pylist())
+        max_ids[table] = max(read_table(input_dir, table, ['id'])['id'].to_pylist())
         cur.execute('select last_value from %s' % f'{table}_id_seq')
-        seq = cur.fetchone()[0]
-        log(f'  {table:<15} max restored id {max_id:>12,}   sequence at {seq:>12,}')
-        if max_id >= seq:
-            problems.append(f'{table}: max id {max_id:,} >= sequence {seq:,}')
+        sequences[table] = cur.fetchone()[0]
+        log(f'  {table:<15} max restored id {max_ids[table]:>12,}   sequence at {sequences[table]:>12,}')
+
+    problems = sequence_problems(max_ids, sequences)
     if problems and not allow_overlap:
         sys.exit(
             'restored ids reach past the sequence:\n  ' + '\n  '.join(problems) + '\n\n'
