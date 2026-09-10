@@ -12,15 +12,21 @@ to_address, first_name, last_name, user_id, role_type, trigger, tags, subject, b
 reply_to, sources, context_keys).
 
 What it does, one agency at a time:
-  0. input: rows identical on group uuid + address + send_ts are collapsed to one before anything is
-     written (the rendered files carry ~10% such duplicates from merging papertrail with bigquery).
+  0. input: rows for the same group uuid + address sent within --dedupe-window seconds (default 5)
+     are collapsed to one before anything is written. Merging papertrail with bigquery left ~10%
+     exact duplicates and a further 6,930 pairs a few milliseconds apart, which an exact key missed.
   1. companies: ensures a row per "<agency>:<branch>" code (the codes TC2 sends with).
   2. message_groups: one per group uuid (rows without a uuid get a deterministic uuid5 per code+minute),
      created_ts = earliest send in the group, message_method 'email-mandrill', from_email from the style.
-     Groups whose uuid already exists are reused, never modified — and the load refuses to start if such
-     a group belongs to a different company than its rows do.
+     Groups whose uuid already exists are reused, never modified. 54 uuids are carried by two different
+     agencies, so ownership is settled first — from the whole input, then overlaid with what the database
+     already holds, which wins — and a row whose uuid belongs to someone else takes the uuid5 path and
+     gets its own group. Without that, those rows block 8 of the 25 agency loads outright.
   3. messages: COPY into a TEMP staging table, then INSERT … SELECT in batches of --batch-size, skipping
-     rows that already exist for the same group uuid + address + send_ts. Every row is stamped
+     rows the database already holds for the same group uuid + address within --dedupe-window seconds.
+     The window matters: every agency kept sending after its own subaccount was deleted, so the rendered
+     files carry post-deletion sends that are still live in production, and their send_ts comes from a
+     log line rather than the app — an exact match never fires and re-inserts them. Every row is stamped
      extra.recovered_batch = <batch-id> (plus recovered_from, trigger, sources) so a batch can be removed
      again with --rollback. The BEFORE INSERT trigger fills the search vector as for normal sends.
      No schema changes are made: the script only inserts into companies, message_groups and messages.
@@ -33,6 +39,7 @@ delete_old_emails beat task paused (recovered groups carry their original dates)
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
 import datetime as dt
 import gzip
@@ -48,6 +55,9 @@ import psycopg2.extras
 
 csv.field_size_limit(1 << 30)
 METHOD = 'email-mandrill'
+# How far apart two sends to the same address in the same group can be and still be the same email.
+# Sized from the rendered data: 6,930 near-duplicate pairs, p99 2s, 6,902 of them under 5s.
+DEDUPE_WINDOW = 5.0
 
 
 def log(msg: str) -> None:
@@ -93,29 +103,88 @@ def read_rows(
                     yield r
 
 
-def group_uuid_for(r: dict) -> str:
-    if r['group_uuid']:
+def majority_owner(input_dir: Path) -> dict[str, str]:
+    """Group uuids used by more than one company code, mapped to the code that holds the most rows.
+
+    54 uuids in the rendered set appear under two agencies. The loader reuses an existing group but
+    refuses when its company is not the one the rows claim, so the minority rows block the whole
+    agency: 8 of 25 loads refuse, 240,759 messages, over 33 rows. Resolving it as the loads run --
+    first one to reach a uuid keeps it -- is order-dependent and would re-home 1,315 of one agency's
+    rows into another's group, so ownership is decided here, once, from the entire input.
+
+    The scan deliberately ignores --start/--end and --start-ts/--end-ts: the answer must not change
+    between the main load and the Route A tail run. Ties break on the code to stay deterministic.
+    """
+    counts: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for f in sorted(input_dir.glob('????-??-??.csv.gz')):
+        with gzip.open(f, 'rt', newline='', encoding='utf-8') as fh:
+            for r in csv.DictReader(fh):
+                if r['group_uuid']:
+                    counts[r['group_uuid']][f'{r["company_code"]}:{r["branch_id"]}'] += 1
+    return {u: min(c.items(), key=lambda kv: (-kv[1], kv[0]))[0] for u, c in counts.items() if len(c) > 1}
+
+
+def merge_db_owners(rendered: dict[str, str], db: dict[str, str]) -> dict[str, str]:
+    """Ownership from the rendered files, overlaid with what the database already holds.
+
+    The database wins. Its groups are real rows -- Route A's restored history, or live sends -- so a
+    rendered row carrying one of their uuids is the one that has borrowed it, whatever the rendered
+    majority says. The snapshot restore brings in 57,705 real groups, one of which a reconstructed
+    agency also carries.
+    """
+    return {**rendered, **db}
+
+
+def group_uuid_for(r: dict, owners: dict[str, str] | None = None) -> str:
+    """The group a row belongs in: its own uuid, unless that uuid belongs to another agency.
+
+    A row whose uuid is owned by a different company code falls through to the synthesised path, the
+    same one rows with no uuid take, giving that agency its own group instead of borrowing one.
+    """
+    code = f'{r["company_code"]}:{r["branch_id"]}'
+    if r['group_uuid'] and (owners is None or owners.get(r['group_uuid'], code) == code):
         return r['group_uuid']
     minute = r['send_ts'][:16]
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f'recovered:{r["company_code"]}:{r["branch_id"]}:{minute}'))
 
 
-def dedupe_rows(rows: list[dict]) -> list[dict]:
-    """Collapse rows identical on (group, to_address, send_ts), keeping the first of each.
+def parse_ts(s: str) -> dt.datetime:
+    """One rendered send_ts as an aware UTC datetime. A value without an offset is UTC, which is the
+    same assumption the COPY step makes when it appends +00:00."""
+    ts = dt.datetime.fromisoformat(s)
+    return ts.replace(tzinfo=dt.timezone.utc) if ts.tzinfo is None else ts.astimezone(dt.timezone.utc)
+
+
+def dedupe_rows(
+    rows: list[dict], window_seconds: float = DEDUPE_WINDOW, owners: dict[str, str] | None = None
+) -> list[dict]:
+    """Collapse rows for the same (group, to_address) sent within window_seconds, keeping the first.
 
     The insert guard in load() skips staged rows that already exist in `messages`, but it cannot see
     rows inserted by its own statement. Duplicates are adjacent once rows are sorted by send_ts, and
     COPY preserves that order into the staging heap, so a duplicate pair almost always lands in the
-    same --batch-size chunk and both rows would be written. The key matches the guard's exactly —
-    subject is deliberately excluded so the two passes agree on what a duplicate is.
+    same --batch-size chunk and both rows would be written. Subject is deliberately excluded from the
+    key so this pass and the SQL guard agree on what a duplicate is.
+
+    The window is not cosmetic. The rendered files were merged from two sources whose clocks differ,
+    so the same email appears twice a few milliseconds apart about as often as it appears twice
+    identically — 6,930 such pairs against 38,383 exact ones, median 43ms, p99 2s. An exact key
+    collapses only the second kind and writes the first kind twice.
+
+    Each row is measured against the last row *kept*, not its predecessor, so a long run of sends a
+    few seconds apart cannot chain into a single kept row and swallow genuinely distinct email.
+    window_seconds=0 restores the old exact-match behaviour.
     """
-    seen: set[tuple[str, str, str]] = set()
+    kept_at: dict[tuple[str, str], dt.datetime] = {}
     deduped = []
     for r in rows:
-        key = (group_uuid_for(r), r['to_address'], r['send_ts'])
-        if key not in seen:
-            seen.add(key)
-            deduped.append(r)
+        key = (group_uuid_for(r, owners), r['to_address'])
+        ts = parse_ts(r['send_ts'])
+        previous = kept_at.get(key)
+        if previous is not None and abs((ts - previous).total_seconds()) <= window_seconds:
+            continue
+        kept_at[key] = ts
+        deduped.append(r)
     return deduped
 
 
@@ -141,6 +210,14 @@ def positive_int(v: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError(f'must be 1 or more, got {n}')
     return n
+
+
+def non_negative_float(v: str) -> float:
+    """A negative window would make the BETWEEN range empty, silently disabling the guard."""
+    f = float(v)
+    if f < 0:
+        raise argparse.ArgumentTypeError(f'must be 0 or more, got {f}')
+    return f
 
 
 def rollback_batch(cur, batch_id: str, dry_run: bool) -> None:
@@ -201,18 +278,37 @@ def main() -> int:
     ap.add_argument('--batch-id', help='label stamped on every inserted row (extra.recovered_batch)')
     ap.add_argument('--start', type=dt.date.fromisoformat)
     ap.add_argument('--end', type=dt.date.fromisoformat)
-    ap.add_argument('--start-ts', metavar='ISO_TS',
-                    help='only rows with send_ts >= this (inclusive), e.g. 2026-08-26T01:06:00. '
-                         'For the Route A tail, where a whole-day cut would re-insert sends that '
-                         'already exist in the database.')
+    ap.add_argument(
+        '--start-ts',
+        metavar='ISO_TS',
+        help='only rows with send_ts >= this (inclusive), e.g. 2026-08-26T01:06:00. '
+        'For the Route A tail, where a whole-day cut would re-insert sends that '
+        'already exist in the database.',
+    )
     ap.add_argument('--end-ts', metavar='ISO_TS', help='only rows with send_ts <= this (inclusive)')
     ap.add_argument('--batch-size', type=positive_int, default=5000)
-    ap.add_argument('--method', default=METHOD,
-                    help=f'message method to store (default {METHOD}). Use email-test to view a batch in a local '
-                         'dev TC2, whose test email backend queries Morpheus for email-test — never for production.')
-    ap.add_argument('--as-code', metavar='CODE:BRANCH',
-                    help='load under this company code instead of the one in the files, e.g. testagency:3 '
-                         '(local testing only — it re-homes the emails onto another agency/branch)')
+    ap.add_argument(
+        '--dedupe-window',
+        type=non_negative_float,
+        default=DEDUPE_WINDOW,
+        metavar='SECONDS',
+        help=f'treat two sends to the same address in the same group as the same email when they are '
+        f'within this many seconds (default {DEDUPE_WINDOW}). Applies both to the input and to '
+        'the check against what the database already holds. 0 means exact match only, which '
+        're-inserts live email whose timestamp differs by microseconds.',
+    )
+    ap.add_argument(
+        '--method',
+        default=METHOD,
+        help=f'message method to store (default {METHOD}). Use email-test to view a batch in a local '
+        'dev TC2, whose test email backend queries Morpheus for email-test — never for production.',
+    )
+    ap.add_argument(
+        '--as-code',
+        metavar='CODE:BRANCH',
+        help='load under this company code instead of the one in the files, e.g. testagency:3 '
+        '(local testing only — it re-homes the emails onto another agency/branch)',
+    )
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--rollback', metavar='BATCH_ID', help='delete everything stamped with this batch id and exit')
     args = ap.parse_args()
@@ -245,9 +341,27 @@ def load(conn, cur, args) -> int:
         log(f'no rows for {args.agency} in {args.input}')
         return 0
     rows.sort(key=lambda r: r['send_ts'])
-    deduped = dedupe_rows(rows)
+    # Decided from the whole input, before anything is written, so the answer cannot depend on
+    # which agencies have already been loaded.
+    owners = majority_owner(args.input)
+    cur.execute(
+        """select g.uuid::text, c.code from message_groups g join companies c on c.id = g.company_id
+           where g.uuid = any(%s::uuid[])""",
+        (sorted({r['group_uuid'] for r in rows if r['group_uuid']}),),
+    )
+    owners = merge_db_owners(owners, dict(cur.fetchall()))
+    borrowed = sum(
+        1
+        for r in rows
+        if r['group_uuid'] and owners.get(r['group_uuid'], '') not in ('', f'{r["company_code"]}:{r["branch_id"]}')
+    )
+    if borrowed:
+        log(f'groups: {borrowed} row(s) carry a uuid owned by another agency; giving them their own group')
+    deduped = dedupe_rows(rows, args.dedupe_window, owners)
     if len(deduped) != len(rows):
-        log(f'input: dropped {len(rows) - len(deduped)} duplicate rows (same group, address and send time)')
+        log(
+            f'input: dropped {len(rows) - len(deduped)} duplicate rows (same group and address within {args.dedupe_window}s)'
+        )
     rows = deduped
     log(f'{args.agency}: {len(rows)} rows from {rows[0]["send_ts"][:10]} to {rows[-1]["send_ts"][:10]}')
 
@@ -263,7 +377,7 @@ def load(conn, cur, args) -> int:
     # 2. groups
     groups: dict[str, dict] = {}
     for r in rows:
-        u = group_uuid_for(r)
+        u = group_uuid_for(r, owners)
         g = groups.setdefault(
             u,
             dict(
@@ -306,7 +420,7 @@ def load(conn, cur, args) -> int:
     buf = io.StringIO()
     w = csv.writer(buf)
     for r in rows:
-        u = group_uuid_for(r)
+        u = group_uuid_for(r, owners)
         code = f'{r["company_code"]}:{r["branch_id"]}'
         tags = json.loads(r['tags'] or '[]')
         tags = [u] + [t for t in tags if t != u]
@@ -341,24 +455,28 @@ def load(conn, cur, args) -> int:
     cur.execute(
         "update staging_messages set to_first_name = nullif(to_first_name, ''), to_last_name = nullif(to_last_name, ''), to_address = nullif(to_address, '')"
     )
+    window = f'{args.dedupe_window} seconds'
     cur.execute(
         """select count(*) from staging_messages s where exists (
-             select 1 from messages m where m.group_id = s.group_id and m.to_address is not distinct from s.to_address and m.send_ts = s.send_ts)"""
+             select 1 from messages m where m.group_id = s.group_id and m.to_address is not distinct from s.to_address
+               and m.send_ts between s.send_ts - %(w)s::interval and s.send_ts + %(w)s::interval)""",
+        {'w': window},
     )
     dupes = cur.fetchone()[0]
-    log(f'staged {len(rows)} rows; {dupes} already exist (same group, address and send time) and will be skipped')
+    log(f'staged {len(rows)} rows; {dupes} already exist (same group and address within {window}) and will be skipped')
 
     inserted = 0
     while True:
         cur.execute(
             """with batch as (
-                 delete from staging_messages s where ctid in (select ctid from staging_messages limit %s) returning *
+                 delete from staging_messages s where ctid in (select ctid from staging_messages limit %(n)s) returning *
                )
                insert into messages (group_id, company_id, method, send_ts, update_ts, status, to_first_name, to_last_name, to_address, tags, subject, body, extra)
-               select b.group_id, b.company_id, %s, b.send_ts, b.send_ts, 'send', b.to_first_name, b.to_last_name, b.to_address, b.tags, b.subject, b.body, b.extra
+               select b.group_id, b.company_id, %(method)s, b.send_ts, b.send_ts, 'send', b.to_first_name, b.to_last_name, b.to_address, b.tags, b.subject, b.body, b.extra
                from batch b
-               where not exists (select 1 from messages m where m.group_id = b.group_id and m.to_address is not distinct from b.to_address and m.send_ts = b.send_ts)""",
-            (args.batch_size, args.method),
+               where not exists (select 1 from messages m where m.group_id = b.group_id and m.to_address is not distinct from b.to_address
+                                   and m.send_ts between b.send_ts - %(w)s::interval and b.send_ts + %(w)s::interval)""",
+            {'n': args.batch_size, 'method': args.method, 'w': window},
         )
         n = cur.rowcount
         cur.execute('select count(*) from staging_messages')
