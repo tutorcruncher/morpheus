@@ -41,9 +41,7 @@ class TestResolveRemap:
         assert mapping == {11: 4242}
 
     def test_code_missing_from_the_target_is_a_problem_not_a_silent_skip(self):
-        mapping, problems = restore.resolve_remap(
-            {11: 'agency-a:1', 12: 'agency-a:2'}, [11, 12], {'agency-a:1': 900}
-        )
+        mapping, problems = restore.resolve_remap({11: 'agency-a:1', 12: 'agency-a:2'}, [11, 12], {'agency-a:1': 900})
         assert mapping == {11: 900}
         assert len(problems) == 1
         assert 'agency-a:2' in problems[0]

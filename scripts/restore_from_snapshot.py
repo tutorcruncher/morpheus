@@ -154,9 +154,7 @@ def sequence_problems(max_ids: dict[str, int], sequences: dict[str, int]) -> lis
     the ids were allocated before the delete and the sequence has only moved forward since, so this
     should always hold -- and if it does not, something is wrong enough to stop for.
     """
-    return [
-        f'{t}: max id {max_ids[t]:,} >= sequence {sequences[t]:,}' for t in max_ids if max_ids[t] >= sequences[t]
-    ]
+    return [f'{t}: max id {max_ids[t]:,} >= sequence {sequences[t]:,}' for t in max_ids if max_ids[t] >= sequences[t]]
 
 
 def check_target_clean(cur, input_dir: Path) -> None:
