@@ -1,0 +1,248 @@
+"""Unit tests for the snapshot restore's pure helpers (scripts/restore_from_snapshot.py).
+
+Companion to test_load_recovered.py, and the same rule applies: the script is run by hand against a
+--dsn and is never imported by the app, so it is loaded here by path, and only the logic that decides
+*what* gets written is covered. A mistake in these three helpers files one agency's mail under
+another, corrupts every body that contains a tab or a newline, or restores primary keys the database
+is about to hand out again.
+
+No real agency codes, addresses or ids appear here; the fixtures are invented.
+"""
+
+import importlib.util
+from pathlib import Path
+
+_SCRIPT = Path(__file__).parent.parent / 'scripts' / 'restore_from_snapshot.py'
+_spec = importlib.util.spec_from_file_location('restore_from_snapshot', _SCRIPT)
+restore = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(restore)
+
+
+class TestResolveRemap:
+    """company_id is the only field the restore rewrites. The snapshot's companies rows were deleted
+    and re-created by later sends under the same codes with different ids, so the mapping is by code
+    -- and a wrong mapping silently files one agency's email history under another agency."""
+
+    def test_maps_snapshot_ids_to_current_ids_by_code(self):
+        mapping, problems = restore.resolve_remap(
+            {11: 'agency-a:1', 12: 'agency-a:2', 13: 'agency-b:3'},
+            [11, 12, 13],
+            {'agency-a:1': 900, 'agency-a:2': 901, 'agency-b:3': 902, 'someone-else:9': 903},
+        )
+        assert mapping == {11: 900, 12: 901, 13: 902}
+        assert problems == []
+
+    def test_ids_are_not_carried_over_when_they_happen_to_match(self):
+        # The snapshot id and the current id for a code are unrelated numbers. A remap that quietly
+        # kept the old id would look correct here only by coincidence.
+        mapping, _ = restore.resolve_remap({11: 'agency-a:1'}, [11], {'agency-a:1': 11})
+        assert mapping == {11: 11}
+        mapping, _ = restore.resolve_remap({11: 'agency-a:1'}, [11], {'agency-a:1': 4242})
+        assert mapping == {11: 4242}
+
+    def test_code_missing_from_the_target_is_a_problem_not_a_silent_skip(self):
+        mapping, problems = restore.resolve_remap({11: 'agency-a:1', 12: 'agency-a:2'}, [11, 12], {'agency-a:1': 900})
+        assert mapping == {11: 900}
+        assert len(problems) == 1
+        assert 'agency-a:2' in problems[0]
+
+    def test_id_missing_from_the_snapshot_companies_table_is_a_problem(self):
+        _, problems = restore.resolve_remap({11: 'agency-a:1'}, [11, 99], {'agency-a:1': 900})
+        assert len(problems) == 1
+        assert '99' in problems[0]
+
+    def test_only_the_ids_actually_used_need_resolving(self):
+        # A branch that exists but sent nothing has no rows to remap, so its absence from the target
+        # must not block the load.
+        mapping, problems = restore.resolve_remap(
+            {11: 'agency-a:1', 12: 'agency-a:never-sent'}, [11], {'agency-a:1': 900}
+        )
+        assert mapping == {11: 900}
+        assert problems == []
+
+
+class TestSequenceProblems:
+    """Restoring original primary keys is only safe while every one sits below its sequence. If one
+    reaches it, the database is about to hand that id out again to a different row."""
+
+    def test_ids_below_the_sequence_are_fine(self):
+        assert restore.sequence_problems({'messages': 100}, {'messages': 101}) == []
+
+    def test_id_equal_to_the_sequence_is_a_problem(self):
+        # last_value is the id most recently handed out, so an equal id is already taken.
+        assert len(restore.sequence_problems({'messages': 100}, {'messages': 100})) == 1
+
+    def test_id_past_the_sequence_is_a_problem(self):
+        problems = restore.sequence_problems({'messages': 500}, {'messages': 100})
+        assert len(problems) == 1
+        assert 'messages' in problems[0]
+
+    def test_reports_every_offending_table_not_just_the_first(self):
+        problems = restore.sequence_problems(
+            {'message_groups': 1, 'messages': 500, 'events': 900, 'links': 2},
+            {'message_groups': 10, 'messages': 100, 'events': 90, 'links': 20},
+        )
+        assert len(problems) == 2
+        assert {p.split(':')[0] for p in problems} == {'messages', 'events'}
+
+
+class TestPgText:
+    """Values are handed to COPY as text. Email bodies are HTML full of newlines, and a tag can hold
+    a tab, so an unescaped character ends the row or the field early and shifts every column after
+    it -- which COPY accepts happily until the types stop lining up."""
+
+    def test_none_becomes_the_null_marker(self):
+        # \\N is COPY's NULL, distinct from the two-character string 'N' or an empty field.
+        assert restore.pg_text(None) == '\\N'
+
+    def test_booleans_use_the_postgres_short_forms(self):
+        assert restore.pg_text(True) == 't'
+        assert restore.pg_text(False) == 'f'
+
+    def test_empty_string_is_not_null(self):
+        assert restore.pg_text('') == ''
+
+    def test_newline_would_otherwise_end_the_row(self):
+        assert restore.pg_text('line one\nline two') == 'line one\\nline two'
+
+    def test_tab_would_otherwise_end_the_field(self):
+        assert restore.pg_text('a\tb') == 'a\\tb'
+
+    def test_carriage_return_is_escaped(self):
+        assert restore.pg_text('a\r\nb') == 'a\\r\\nb'
+
+    def test_backslash_is_escaped_first(self):
+        # Escaping the backslash after the others would turn an escape sequence we just wrote into a
+        # literal backslash plus 'n', so ordering is the whole game here.
+        assert restore.pg_text('a\\nb') == 'a\\\\nb'
+        assert restore.pg_text('back\\slash\nnewline') == 'back\\\\slash\\nnewline'
+
+    def test_html_body_survives_intact(self):
+        body = '<p>Hi</p>\n<a href="https://example.com/x?a=1&b=2">Link</a>\n'
+        assert restore.pg_text(body) == body.replace('\n', '\\n')
+
+    def test_numbers_and_arrays_are_stringified(self):
+        assert restore.pg_text(0) == '0'
+        assert restore.pg_text(1.5) == '1.5'
+        assert restore.pg_text('{tag-one,tag-two}') == '{tag-one,tag-two}'
+
+
+class TestConstants:
+    def test_tables_are_in_foreign_key_order(self):
+        # Each table points at the one before it, so any other order fails on insert.
+        assert restore.TABLES == ['message_groups', 'messages', 'events', 'links']
+
+    def test_vector_is_never_inserted(self):
+        # The create_tsvector BEFORE INSERT trigger rebuilds it, as it does for a normal send.
+        assert 'vector' in restore.SKIP_COLUMNS
+
+
+class TestPreflightProblems:
+    """Both hazards must stop the load before a row is written, not partway through.
+
+    The id check is also load-bearing for --rollback: it deletes every id in the parquet, which only
+    means "undo the restore" while the target held none of them beforehand."""
+
+    def test_clean_target_is_go(self):
+        assert restore.preflight_problems({t: 0 for t in restore.TABLES}, []) == []
+
+    def test_ids_already_present_stop_the_load(self):
+        problems = restore.preflight_problems({'messages': 12, 'events': 0}, [])
+        assert len(problems) == 1
+        assert 'messages' in problems[0] and '12' in problems[0]
+
+    def test_every_offending_table_is_named(self):
+        problems = restore.preflight_problems({'messages': 3, 'events': 5, 'links': 0}, [])
+        assert len(problems) == 2
+
+    def test_uuid_under_a_different_id_stops_the_load(self):
+        # ON CONFLICT (id) does not arbitrate the unique index on message_groups.uuid, so this would
+        # otherwise abort the transaction on a bare duplicate-key error.
+        problems = restore.preflight_problems({}, [('uuid-1', 500, 900)])
+        assert len(problems) == 1
+        assert 'uuid-1' in problems[0] and '500' in problems[0] and '900' in problems[0]
+
+    def test_many_uuid_conflicts_are_counted_not_all_printed(self):
+        conflicts = [(f'uuid-{i}', i, i + 1000) for i in range(50)]
+        problems = restore.preflight_problems({}, conflicts)
+        assert '50' in problems[0]
+        assert problems[0].endswith('…')
+
+    def test_both_hazards_reported_together(self):
+        # One run should tell you everything that is wrong, not make you fix them one at a time.
+        problems = restore.preflight_problems({'messages': 4}, [('uuid-1', 1, 2)])
+        assert len(problems) == 2
+
+
+class TestJsonlRows:
+    """The Heroku loader reads its input from S3 as gzipped JSON Lines rather than parquet, so the
+    dyno needs nothing but the standard library.
+
+    JSON Lines rather than CSV because CSV has no way to say "null": it writes an empty field for
+    both `None` and `''`, and the snapshot has columns that are legitimately one or the other
+    (external_id, subject, to_address). Restoring a null as an empty string would change the data,
+    and Route A's whole premise is that the rows go back exactly as they were.
+
+    Rows stands in for the small part of the pyarrow Table interface the script actually uses, so
+    the loading code is identical whichever format the input arrived in.
+    """
+
+    ROWS = [
+        {'id': 1, 'code': 'agency-a:1', 'subject': '', 'external_id': None, 'opened': True},
+        {'id': 2, 'code': 'agency-b:2', 'subject': 'Hello', 'external_id': 'abc', 'opened': False},
+    ]
+
+    def _write(self, tmp_path, table='messages'):
+        import gzip
+        import json
+
+        d = tmp_path / table
+        d.mkdir(parents=True)
+        with gzip.open(d / f'{table}.jsonl.gz', 'wt', encoding='utf-8') as fh:
+            for r in self.ROWS:
+                fh.write(json.dumps(r) + '\n')
+        return tmp_path
+
+    def test_reads_every_row(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages')
+        assert got.num_rows == 2
+        assert got.to_pylist() == self.ROWS
+
+    def test_null_and_empty_string_stay_distinct(self, tmp_path):
+        # The whole reason this is not CSV.
+        got = restore.read_table(self._write(tmp_path), 'messages').to_pylist()
+        assert got[0]['subject'] == ''
+        assert got[0]['external_id'] is None
+
+    def test_booleans_and_ints_survive_as_themselves(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages').to_pylist()
+        assert got[0]['opened'] is True and got[1]['opened'] is False
+        assert got[0]['id'] == 1 and isinstance(got[0]['id'], int)
+
+    def test_column_access_matches_the_pyarrow_shape(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages')
+        assert got['id'].to_pylist() == [1, 2]
+        assert got.column_names == ['id', 'code', 'subject', 'external_id', 'opened']
+
+    def test_select_narrows_the_columns(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages').select(['id', 'code'])
+        assert got.to_pylist() == [{'id': 1, 'code': 'agency-a:1'}, {'id': 2, 'code': 'agency-b:2'}]
+
+    def test_columns_argument_narrows_at_read_time(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages', ['id'])
+        assert got.to_pylist() == [{'id': 1}, {'id': 2}]
+
+    def test_a_missing_column_in_one_row_is_not_invented(self, tmp_path):
+        # Column names come from the union of the rows, and a row that lacks one reads as null
+        # rather than being silently dropped or defaulted.
+        import gzip
+        import json
+
+        d = tmp_path / 'events'
+        d.mkdir(parents=True)
+        with gzip.open(d / 'events.jsonl.gz', 'wt', encoding='utf-8') as fh:
+            fh.write(json.dumps({'id': 1, 'extra': 'x'}) + '\n')
+            fh.write(json.dumps({'id': 2}) + '\n')
+        got = restore.read_table(tmp_path, 'events')
+        assert got.column_names == ['id', 'extra']
+        assert got.to_pylist() == [{'id': 1, 'extra': 'x'}, {'id': 2, 'extra': None}]
