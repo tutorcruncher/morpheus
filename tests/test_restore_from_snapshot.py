@@ -172,3 +172,77 @@ class TestPreflightProblems:
         # One run should tell you everything that is wrong, not make you fix them one at a time.
         problems = restore.preflight_problems({'messages': 4}, [('uuid-1', 1, 2)])
         assert len(problems) == 2
+
+
+class TestJsonlRows:
+    """The Heroku loader reads its input from S3 as gzipped JSON Lines rather than parquet, so the
+    dyno needs nothing but the standard library.
+
+    JSON Lines rather than CSV because CSV has no way to say "null": it writes an empty field for
+    both `None` and `''`, and the snapshot has columns that are legitimately one or the other
+    (external_id, subject, to_address). Restoring a null as an empty string would change the data,
+    and Route A's whole premise is that the rows go back exactly as they were.
+
+    Rows stands in for the small part of the pyarrow Table interface the script actually uses, so
+    the loading code is identical whichever format the input arrived in.
+    """
+
+    ROWS = [
+        {'id': 1, 'code': 'agency-a:1', 'subject': '', 'external_id': None, 'opened': True},
+        {'id': 2, 'code': 'agency-b:2', 'subject': 'Hello', 'external_id': 'abc', 'opened': False},
+    ]
+
+    def _write(self, tmp_path, table='messages'):
+        import gzip
+        import json
+
+        d = tmp_path / table
+        d.mkdir(parents=True)
+        with gzip.open(d / f'{table}.jsonl.gz', 'wt', encoding='utf-8') as fh:
+            for r in self.ROWS:
+                fh.write(json.dumps(r) + '\n')
+        return tmp_path
+
+    def test_reads_every_row(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages')
+        assert got.num_rows == 2
+        assert got.to_pylist() == self.ROWS
+
+    def test_null_and_empty_string_stay_distinct(self, tmp_path):
+        # The whole reason this is not CSV.
+        got = restore.read_table(self._write(tmp_path), 'messages').to_pylist()
+        assert got[0]['subject'] == ''
+        assert got[0]['external_id'] is None
+
+    def test_booleans_and_ints_survive_as_themselves(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages').to_pylist()
+        assert got[0]['opened'] is True and got[1]['opened'] is False
+        assert got[0]['id'] == 1 and isinstance(got[0]['id'], int)
+
+    def test_column_access_matches_the_pyarrow_shape(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages')
+        assert got['id'].to_pylist() == [1, 2]
+        assert got.column_names == ['id', 'code', 'subject', 'external_id', 'opened']
+
+    def test_select_narrows_the_columns(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages').select(['id', 'code'])
+        assert got.to_pylist() == [{'id': 1, 'code': 'agency-a:1'}, {'id': 2, 'code': 'agency-b:2'}]
+
+    def test_columns_argument_narrows_at_read_time(self, tmp_path):
+        got = restore.read_table(self._write(tmp_path), 'messages', ['id'])
+        assert got.to_pylist() == [{'id': 1}, {'id': 2}]
+
+    def test_a_missing_column_in_one_row_is_not_invented(self, tmp_path):
+        # Column names come from the union of the rows, and a row that lacks one reads as null
+        # rather than being silently dropped or defaulted.
+        import gzip
+        import json
+
+        d = tmp_path / 'events'
+        d.mkdir(parents=True)
+        with gzip.open(d / 'events.jsonl.gz', 'wt', encoding='utf-8') as fh:
+            fh.write(json.dumps({'id': 1, 'extra': 'x'}) + '\n')
+            fh.write(json.dumps({'id': 2}) + '\n')
+        got = restore.read_table(tmp_path, 'events')
+        assert got.column_names == ['id', 'extra']
+        assert got.to_pylist() == [{'id': 1, 'extra': 'x'}, {'id': 2, 'extra': None}]

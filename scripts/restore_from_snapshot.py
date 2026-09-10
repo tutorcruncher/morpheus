@@ -48,7 +48,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gzip
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -76,15 +78,85 @@ def parquet_files(input_dir: Path, table: str) -> list[Path]:
     return sorted((input_dir / table).rglob('*.parquet'))
 
 
+def jsonl_files(input_dir: Path, table: str) -> list[Path]:
+    return sorted((input_dir / table).rglob('*.jsonl.gz'))
+
+
+class Column:
+    """One column's values, with the .to_pylist() the loading code calls on it."""
+
+    def __init__(self, values: list):
+        self._values = values
+
+    def to_pylist(self) -> list:
+        return self._values
+
+
+class Rows:
+    """The part of the pyarrow Table interface this script uses, backed by plain dicts.
+
+    Exists so the input can arrive as gzipped JSON Lines instead of parquet, which is what the
+    remote loader downloads from S3: a dyno's slug holds only what pyproject.toml declares, and
+    JSON Lines needs nothing but the standard library.
+
+    JSON Lines rather than CSV because CSV cannot express null -- it writes an empty field for both
+    None and '', and the snapshot has columns that are genuinely one or the other (external_id,
+    subject, to_address). Collapsing the two would change the restored rows, and Route A exists to
+    put them back exactly as they were.
+    """
+
+    def __init__(self, rows: list[dict], column_names: list[str] | None = None):
+        self._rows = rows
+        if column_names is None:
+            column_names = []
+            for r in rows:
+                for k in r:
+                    if k not in column_names:
+                        column_names.append(k)
+        self.column_names = column_names
+
+    @property
+    def num_rows(self) -> int:
+        return len(self._rows)
+
+    def __getitem__(self, column: str) -> Column:
+        return Column([r.get(column) for r in self._rows])
+
+    def select(self, columns: list[str]) -> 'Rows':
+        return Rows([{c: r.get(c) for c in columns} for r in self._rows], list(columns))
+
+    def to_pylist(self) -> list[dict]:
+        return [{c: r.get(c) for c in self.column_names} for r in self._rows]
+
+
+def read_jsonl(files: list[Path], columns: list[str] | None) -> Rows:
+    rows = []
+    for f in files:
+        with gzip.open(f, 'rt', encoding='utf-8') as fh:
+            for line in fh:
+                if line.strip():
+                    rows.append(json.loads(line))
+    table = Rows(rows)
+    return table.select(columns) if columns else table
+
+
 def read_table(input_dir: Path, table: str, columns: list[str] | None = None):
+    """One table's rows, from whichever format is on disk.
+
+    JSON Lines is what the S3 path delivers; parquet is what the local extract produces. Both are
+    read here so the rest of the script never learns which one it got.
+    """
+    if jsonl := jsonl_files(input_dir, table):
+        return read_jsonl(jsonl, columns)
+
     # pyarrow is imported here rather than at module scope so the pure helpers below can be
-    # imported and tested without it.
+    # imported and tested without it, and so the remote run never needs it at all.
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     files = parquet_files(input_dir, table)
     if not files:
-        sys.exit(f'no parquet files under {input_dir / table}')
+        sys.exit(f'no parquet or jsonl.gz files under {input_dir / table}')
     return pa.concat_tables([pq.read_table(f, columns=columns) for f in files])
 
 
