@@ -32,6 +32,10 @@ dependencies = [
     "jinja2==3.1.6",
     "pydantic[email]",
     "misaka>=2.1.1",
+    # Only scripts/recover_from_s3.py uses this, to fetch the issue #548 recovery archives from S3.
+    # It is here rather than in an extra because a dyno's slug holds exactly what this list declares.
+    # Remove it once the recovery is loaded and verified; nothing in the app imports boto3.
+    "boto3==1.40.29",
 ]
 
 [dependency-groups]
