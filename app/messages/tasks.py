@@ -36,7 +36,7 @@ from app.core.celery import celery_app
 from app.core.config import settings
 from app.core.database import get_session
 from app.ext.clients import ApiError, Mandrill, MessageBird
-from app.messages.models import Company, Event, Link, Message, MessageGroup, MessageStatus
+from app.messages.models import DELETED_COMPANY_PREFIX, Company, Event, Link, Message, MessageGroup, MessageStatus
 from app.messages.schemas import (
     BaseWebhook,
     EmailRecipientModel,
@@ -783,3 +783,20 @@ def delete_company_messages(company_ids: list[int], company_code: str) -> str:
     msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
     main_logger.info('deleted company=%s companies=%s %s', company_code, company_ids, msg_summary)
     return msg_summary
+
+
+@celery_app.task(name='app.messages.tasks.purge_deleted_companies')
+def purge_deleted_companies() -> int:
+    """Re-queue purges that never reached a worker.
+
+    delete_subaccount renames a company before queueing its purge, so a task lost in between — a
+    broker blip, or a worker still on the previous release that does not know the task name — would
+    otherwise leave the row under a code no later delete can match. Re-running a purge that did
+    land deletes nothing.
+    """
+    with get_session() as db:
+        company_ids = db.exec(select(Company.id).where(Company.code.like(f'{DELETED_COMPANY_PREFIX}%'))).all()  # ty:ignore[unresolved-attribute]
+    for company_id in company_ids:
+        delete_company_messages.delay([company_id], f'{DELETED_COMPANY_PREFIX}{company_id}')
+        main_logger.info('re-queued stranded purge for company=%s', company_id)
+    return len(company_ids)

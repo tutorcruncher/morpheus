@@ -32,4 +32,8 @@ celery_app.conf.beat_schedule = {
         'task': 'app.messages.tasks.delete_old_emails',
         'schedule': crontab(minute='30'),
     },
+    'purge-deleted-companies': {
+        'task': 'app.messages.tasks.purge_deleted_companies',
+        'schedule': crontab(minute='45'),
+    },
 }

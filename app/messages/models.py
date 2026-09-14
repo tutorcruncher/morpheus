@@ -91,6 +91,12 @@ def utcnow() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+# delete_subaccount renames a company to DELETED_COMPANY_PREFIX + its id before queueing the purge,
+# so nothing new can attach to a row that is about to be deleted. '/' cannot appear in a real code
+# and the id keeps it unique, so a tombstone can never be selected by a delete for a real code.
+DELETED_COMPANY_PREFIX = 'deleted/'
+
+
 class Company(SQLModel, table=True):
     __tablename__ = 'companies'
 

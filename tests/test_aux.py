@@ -242,6 +242,9 @@ def test_delete_subaccount_purge_spares_a_recreated_company(cli: TestClient, syn
         '/delete-subaccount/email-test/', json={'company_code': 'slowco'}, headers={'Authorization': 'testing-key'}
     )
     assert r.status_code == 200, r.text
+    # No colon, so split_part leaves it whole, and the id keeps it unique: no delete for a real
+    # subaccount code can select it.
+    assert sync_db.fetchval('select code from companies where id = $1', old_id) == f'deleted/{old_id}'
 
     # The agency signs up again and sends before the worker gets round to the purge.
     send_email(company_code='slowco')
@@ -254,7 +257,31 @@ def test_delete_subaccount_purge_spares_a_recreated_company(cli: TestClient, syn
     assert sync_db.fetchval('select code from companies') == 'slowco'
 
 
-def test_delete_company_messages_reports_what_it_deleted(cli: TestClient, sync_db: SyncDb, send_email):
+def test_purge_deleted_companies_redrives_a_lost_task(cli: TestClient, sync_db: SyncDb, send_email, monkeypatch):
+    """A purge that never reached a worker leaves a row no later delete can match, so it is swept.
+
+    The rename commits before the task is published, so losing the task in between — a broker blip,
+    or a worker still on the previous release — strands the messages under the tombstoned code.
+    """
+    send_email(company_code='slowco')
+    company_id = sync_db.fetchval("select id from companies where code = 'slowco'")
+
+    monkeypatch.setattr(tasks.delete_company_messages, 'delay', lambda *args: None)
+    r = cli.post(
+        '/delete-subaccount/email-test/', json={'company_code': 'slowco'}, headers={'Authorization': 'testing-key'}
+    )
+    assert r.status_code == 200, r.text
+    assert sync_db.fetchval('select code from companies') == f'deleted/{company_id}'
+    assert sync_db.fetchval('select count(*) from messages') == 1
+
+    monkeypatch.undo()
+    assert tasks.purge_deleted_companies() == 1
+
+    assert sync_db.fetchval('select count(*) from messages') == 0
+    assert sync_db.fetchval('select count(*) from companies') == 0
+
+
+def test_delete_company_messages_reports_what_it_deleted(sync_db: SyncDb, send_email):
     send_email(company_code='purgeco', recipients=[{'address': f'{i}@test.com'} for i in range(3)])
     send_email(company_code='keepco')
     company_id = sync_db.fetchval("select id from companies where code = 'purgeco'")

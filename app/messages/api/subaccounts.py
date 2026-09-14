@@ -11,7 +11,7 @@ from app.common.api.errors import HTTP400, HTTP404, HTTP409
 from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.ext.clients import Mandrill
-from app.messages.models import Company, SendMethod
+from app.messages.models import DELETED_COMPANY_PREFIX, Company, SendMethod
 from app.messages.schemas import SubaccountModel
 from app.messages.tasks import delete_company_messages
 
@@ -70,10 +70,16 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
     """
     company_ids = db.exec(select(Company.id).where(func.split_part(Company.code, ':', 1) == m.company_code)).all()
     if company_ids:
-        # Rename before queueing. /send/ looks companies up by code, so leaving the code in place
-        # would let a re-created subaccount attach its messages to the very rows the purge is about
-        # to delete, and the worker would wipe the new agency's history along with the old one.
-        db.execute(update(Company).where(Company.id.in_(company_ids)).values(code=func.concat('deleted/', Company.id)))  # ty:ignore[deprecated, unresolved-attribute]
+        # Tombstone before queueing: /send/ finds companies by code, so a row left under its own
+        # code would hand a re-created subaccount the very id the purge is about to delete. The
+        # rename commits before the publish rather than after, so a half-done delete strands the
+        # row rather than purging a company that was never tombstoned; purge_deleted_companies
+        # picks the strays up.
+        db.execute(  # ty:ignore[deprecated]
+            update(Company)
+            .where(Company.id.in_(company_ids))  # ty:ignore[unresolved-attribute]
+            .values(code=func.concat(DELETED_COMPANY_PREFIX, Company.id))
+        )
         db.commit()
         delete_company_messages.delay(list(company_ids), m.company_code)
         logger.info('queued deletion of company=%s companies=%s', m.company_code, company_ids)
