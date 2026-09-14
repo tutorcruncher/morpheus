@@ -4,15 +4,16 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from sqlalchemy import delete, func
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.common.api.errors import HTTP400, HTTP404, HTTP409
 from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.ext.clients import Mandrill
-from app.messages.models import Company, Message, MessageGroup, SendMethod
+from app.messages.models import Company, SendMethod
 from app.messages.schemas import SubaccountModel
+from app.messages.tasks import delete_company_messages
 
 logger = logging.getLogger('views.subaccounts')
 router = APIRouter(dependencies=[Depends(AdminAuth)])
@@ -62,29 +63,22 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
     part before the first colon. A plain prefix match must NOT be used here: it also matches
     companies whose code merely starts with ``m.company_code`` (deleting ``simply-learn`` used to
     wipe ``simply-learning-tuition:7664``'s entire message history).
-    The production schema was built by the legacy migrations with ON DELETE RESTRICT on
-    messages.company_id / message_groups.company_id, so we cannot rely on a CASCADE from
-    companies — we delete messages (events/links cascade off messages) then message_groups
-    then companies, matching the old delete order.
+
+    The history itself is purged by a worker rather than here. Counting and deleting a large
+    agency's messages runs for minutes, well past the 30 seconds Heroku's router holds a request
+    open for, so doing it inline tells the caller the delete failed while it goes on to succeed.
     """
     company_ids = db.exec(select(Company.id).where(func.split_part(Company.code, ':', 1) == m.company_code)).all()
-    m_count = g_count = 0
     if company_ids:
-        m_count = db.exec(select(func.count()).select_from(Message).where(Message.company_id.in_(company_ids))).one()  # ty:ignore[unresolved-attribute]
-        g_count = db.exec(
-            select(func.count()).select_from(MessageGroup).where(MessageGroup.company_id.in_(company_ids))  # ty:ignore[unresolved-attribute]
-        ).one()
-        db.execute(delete(Message).where(Message.company_id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
-        db.execute(delete(MessageGroup).where(MessageGroup.company_id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
-        db.execute(delete(Company).where(Company.id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
-        db.commit()
-    msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
-    logger.info('deleting company=%s %s', m.company_name, msg_summary)
+        delete_company_messages.delay(list(company_ids))
+    logger.info('queued deletion of company=%s companies=%s', m.company_name, company_ids)
 
     if method == SendMethod.email_mandrill:
+        # 404 is Mandrill's answer for a subaccount that is already gone; it has to be allowed
+        # through for the Unknown_Subaccount branch below to see it.
         r = Mandrill().post(
             'subaccounts/delete.json',
-            allowed_statuses=(200, 400, 500),
+            allowed_statuses=(200, 400, 404, 500),
             id=m.company_code,
             timeout_=12,
         )
@@ -93,4 +87,4 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
             raise HTTP404(data.get('message', 'sub-account not found'))
         elif r.status_code != 200:
             raise HTTP400(f'error from mandrill: {json.dumps(data, indent=2)}')
-    return {'message': msg_summary}
+    return {'message': f'queued_companies={len(company_ids)}'}

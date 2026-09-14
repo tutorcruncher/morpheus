@@ -28,7 +28,7 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic import ValidationError
 from pydf import generate_pdf
-from sqlalchemy import text
+from sqlalchemy import delete, func, text
 from sqlmodel import select
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
@@ -36,7 +36,7 @@ from app.core.celery import celery_app
 from app.core.config import settings
 from app.core.database import get_session
 from app.ext.clients import ApiError, Mandrill, MessageBird
-from app.messages.models import Event, Link, Message, MessageStatus
+from app.messages.models import Company, Event, Link, Message, MessageGroup, MessageStatus
 from app.messages.schemas import (
     BaseWebhook,
     EmailRecipientModel,
@@ -765,3 +765,25 @@ def delete_old_emails() -> None:
         )
         db.commit()
         main_logger.info('deleted %s old messages', result.rowcount)  # ty:ignore[unresolved-attribute]
+
+
+@celery_app.task(name='app.messages.tasks.delete_company_messages')
+def delete_company_messages(company_ids: list[int]) -> str:
+    """Delete the message history of companies whose subaccount has been deleted.
+
+    Production carries the legacy ON DELETE RESTRICT constraints on messages.company_id and
+    message_groups.company_id, so the children go before the companies rather than relying on a
+    cascade; events and links do cascade off messages.
+    """
+    with get_session() as db:
+        m_count = db.exec(select(func.count()).select_from(Message).where(Message.company_id.in_(company_ids))).one()  # ty:ignore[unresolved-attribute]
+        g_count = db.exec(
+            select(func.count()).select_from(MessageGroup).where(MessageGroup.company_id.in_(company_ids))  # ty:ignore[unresolved-attribute]
+        ).one()
+        db.execute(delete(Message).where(Message.company_id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
+        db.execute(delete(MessageGroup).where(MessageGroup.company_id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
+        db.execute(delete(Company).where(Company.id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
+        db.commit()
+    msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
+    main_logger.info('deleted companies=%s %s', company_ids, msg_summary)
+    return msg_summary

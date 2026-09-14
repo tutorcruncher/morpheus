@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.ext.clients import ApiError, ApiSession
+from app.messages import tasks
 from tests.conftest import SyncDb
 from tests.test_user_display import modify_url
 
@@ -156,7 +157,7 @@ def test_delete_subaccount(cli: TestClient, sync_db: SyncDb, dummy_server: Dummy
 
     r = cli.post('/delete-subaccount/email-mandrill/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
-    assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
+    assert r.json() == {'message': 'queued_companies=0'}
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 200',
@@ -168,7 +169,7 @@ def test_delete_subaccount(cli: TestClient, sync_db: SyncDb, dummy_server: Dummy
     assert dummy_server.log == [
         'POST /mandrill/subaccounts/add.json > 200',
         'POST /mandrill/subaccounts/delete.json > 200',
-        'POST /mandrill/subaccounts/delete.json > 500',
+        'POST /mandrill/subaccounts/delete.json > 404',
     ]
 
 
@@ -180,7 +181,7 @@ def test_delete_subaccount_multiple_branches(cli: TestClient, sync_db: SyncDb, d
 
     r = cli.post('/delete-subaccount/email-test/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
-    assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
+    assert r.json() == {'message': 'queued_companies=2'}
     assert sync_db.fetchval('select count(*) from companies') == 1
 
 
@@ -197,10 +198,35 @@ def test_delete_subaccount_does_not_match_longer_codes(
     data = {'company_code': 'simply-learn'}
     r = cli.post('/delete-subaccount/email-test/', json=data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
-    assert r.json() == {'message': 'deleted_messages=2 deleted_message_groups=2'}
+    assert r.json() == {'message': 'queued_companies=2'}
 
     assert sync_db.fetchval('select code from companies') == 'simply-learning-tuition:7664'
     assert sync_db.fetchval('select count(*) from messages') == 1
+
+
+def test_delete_subaccount_queues_the_purge(
+    cli: TestClient, sync_db: SyncDb, send_email, monkeypatch, dummy_server: DummyServer
+):
+    """The purge is queued, not run inline.
+
+    Deleting a large agency's history takes minutes, and Heroku's router closes the request at 30
+    seconds, so a caller that purges inline is told the delete failed while it goes on to succeed.
+    """
+    send_email(company_code='slowco')
+    company_id = sync_db.fetchval("select id from companies where code = 'slowco'")
+
+    queued = []
+    monkeypatch.setattr(tasks.delete_company_messages, 'delay', queued.append)
+    r = cli.post(
+        '/delete-subaccount/email-test/', json={'company_code': 'slowco'}, headers={'Authorization': 'testing-key'}
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {'message': 'queued_companies=1'}
+    assert queued == [[company_id]]
+    # Still here: the request handed the work to a worker rather than doing it itself.
+    assert sync_db.fetchval('select count(*) from messages') == 1
+    assert sync_db.fetchval('select count(*) from companies') == 1
 
 
 def test_delete_subaccount_wrong_response(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
@@ -220,7 +246,7 @@ def test_delete_subaccount_other_method(cli: TestClient, sync_db: SyncDb, dummy_
         '/delete-subaccount/email-test/', json={'company_code': 'foobar'}, headers={'Authorization': 'testing-key'}
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {'message': 'deleted_messages=0 deleted_message_groups=0'}
+    assert r.json() == {'message': 'queued_companies=0'}
 
     assert dummy_server.log == []
 
@@ -248,14 +274,14 @@ def test_delete_subaccount_and_saved_messages(
 
     r = cli.post('/delete-subaccount/email-mandrill/', json=fb1_data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
-    assert r.json() == {'message': 'deleted_messages=2 deleted_message_groups=2'}
+    assert r.json() == {'message': 'queued_companies=1'}
 
     assert sync_db.fetchval('select count(*) from message_groups') == 1
     assert sync_db.fetchval('select count(*) from messages') == 5
 
     r = cli.post('/delete-subaccount/email-mandrill/', json=fb2_data, headers={'Authorization': 'testing-key'})
     assert r.status_code == 200, r.text
-    assert r.json() == {'message': 'deleted_messages=5 deleted_message_groups=1'}
+    assert r.json() == {'message': 'queued_companies=1'}
 
     assert sync_db.fetchval('select count(*) from message_groups') == 0
     assert sync_db.fetchval('select count(*) from messages') == 0
