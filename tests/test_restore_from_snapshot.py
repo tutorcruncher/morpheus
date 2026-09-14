@@ -9,8 +9,11 @@ is about to hand out again.
 No real agency codes, addresses or ids appear here; the fixtures are invented.
 """
 
+import argparse
 import importlib.util
 from pathlib import Path
+
+import pytest
 
 _SCRIPT = Path(__file__).parent.parent / 'scripts' / 'restore_from_snapshot.py'
 _spec = importlib.util.spec_from_file_location('restore_from_snapshot', _SCRIPT)
@@ -246,3 +249,24 @@ class TestJsonlRows:
         got = restore.read_table(tmp_path, 'events')
         assert got.column_names == ['id', 'extra']
         assert got.to_pylist() == [{'id': 1, 'extra': 'x'}, {'id': 2, 'extra': None}]
+
+
+class TestReadTableWithoutPyarrow:
+    """The remote run has no pyarrow: the slug holds what pyproject.toml declares, and the S3 input is
+    JSON Lines. A wrong --input, or an archive member that did not unpack, must still say so -- the
+    empty-input check has to come before the import, or the operator gets ModuleNotFoundError instead
+    of the real problem. pyarrow is absent from the test environment too, so this is the real thing."""
+
+    def test_an_empty_input_directory_says_so(self, tmp_path):
+        with pytest.raises(SystemExit) as exc:
+            restore.read_table(tmp_path, 'messages')
+        assert 'jsonl.gz' in str(exc.value)
+
+
+class TestBatchSize:
+    def test_zero_is_refused_because_it_would_never_drain_the_staging_table(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            restore.positive_int('0')
+
+    def test_a_normal_size_is_accepted(self):
+        assert restore.positive_int('5000') == 5000

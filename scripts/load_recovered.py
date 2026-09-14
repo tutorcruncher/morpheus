@@ -330,6 +330,10 @@ def main() -> int:
 
 def load(conn, cur, args) -> int:
     t0 = time.monotonic()
+    # Every timestamp in the rendered files is UTC and written without an offset. Message rows get one
+    # appended before the copy, but a group's created_ts is handed over as the naive string, so the
+    # session's time zone decides what it means. Pin it rather than trust the server's default.
+    cur.execute("set time zone 'UTC'")
     as_code = None
     if args.as_code:
         c, _, b = args.as_code.partition(':')
@@ -338,8 +342,13 @@ def load(conn, cur, args) -> int:
         as_code = (c, b)
     rows = list(read_rows(args.input, args.agency, args.start, args.end, as_code, args.start_ts, args.end_ts))
     if not rows:
-        log(f'no rows for {args.agency} in {args.input}')
-        return 0
+        # Every agency on the list is there because it has email to load, so nothing matching means the
+        # code is wrong, not that the agency is empty. Exiting 0 here let the driver move on and the run
+        # report success while that agency's whole history stayed missing.
+        sys.exit(
+            f'no rows for {args.agency} in {args.input}. Nothing has been written. Check the agency '
+            'code against the rendered files, and any --start/--end bounds.'
+        )
     rows.sort(key=lambda r: r['send_ts'])
     # Decided from the whole input, before anything is written, so the answer cannot depend on
     # which agencies have already been loaded.

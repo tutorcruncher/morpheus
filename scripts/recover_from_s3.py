@@ -31,10 +31,11 @@ scripts/load_recovered.py as separate processes -- exactly the commands rehearse
 process per agency, so a failure kills one agency's transaction and nothing else. Their output is
 this script's output.
 
-Resuming is simply running it again. Every agency is its own transaction and the loaders skip rows
-that are already present, so a re-run after a dyno restart costs seconds per completed agency. There
-is no progress file, because a progress file can disagree with the database and the database cannot
-disagree with itself.
+Resuming is running the phase that died again -- the phase, not --phase all. Every agency is its own
+transaction and the loaders skip rows that are already present, so a re-run costs seconds per completed
+agency. Route A is the exception: once it has committed, it refuses to run into a database that already
+holds its ids, so --phase all would stop there and never reach route B. There is no progress file,
+because a progress file can disagree with the database and the database cannot disagree with itself.
 
 The phases in order, which is also what --phase all does:
 
@@ -290,9 +291,9 @@ def main() -> None:
                     f'{entry["agency"]} bounded window',
                 )
     finally:
-        for path in sorted(workdir.rglob('*'), reverse=True):
-            path.unlink() if path.is_file() else path.rmdir()
-        workdir.rmdir()
+        # ignore_errors so a cleanup problem in this finally cannot replace the error that brought us
+        # here: what the operator needs to see is why the load failed, not why a temp file survived.
+        shutil.rmtree(workdir, ignore_errors=True)
 
     log('done' if not args.dry_run else 'dry run complete — nothing was written')
 

@@ -38,7 +38,9 @@ group uuid we are about to restore, so nothing --rollback deletes can be a row w
 The whole load is one transaction: if anything fails at any point, the database rolls all of it back
 and the target is untouched. --rollback is for undoing a restore that already committed.
 
-Needs pyarrow, which the app does not depend on -- run it with `uv run --with pyarrow python ...`.
+Parquet input needs pyarrow, which the app does not depend on -- run that with
+`uv run --with pyarrow python ...`. JSON Lines input, which is what the S3 archive holds and what the
+remote loader unpacks, needs nothing but the standard library.
 
 Before running against production: take a manual RDS snapshot, and go off-peak -- every inserted
 event fires the update_message AFTER INSERT trigger, so that step dominates the run time.
@@ -149,15 +151,26 @@ def read_table(input_dir: Path, table: str, columns: list[str] | None = None):
     if jsonl := jsonl_files(input_dir, table):
         return read_jsonl(jsonl, columns)
 
+    # Before the import, not after: the remote run has no pyarrow, so a wrong --input or a member that
+    # did not unpack would otherwise surface as ModuleNotFoundError instead of the real problem.
+    files = parquet_files(input_dir, table)
+    if not files:
+        sys.exit(f'no parquet or jsonl.gz files under {input_dir / table}')
+
     # pyarrow is imported here rather than at module scope so the pure helpers below can be
     # imported and tested without it, and so the remote run never needs it at all.
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    files = parquet_files(input_dir, table)
-    if not files:
-        sys.exit(f'no parquet or jsonl.gz files under {input_dir / table}')
     return pa.concat_tables([pq.read_table(f, columns=columns) for f in files])
+
+
+def positive_int(v: str) -> int:
+    """--batch-size 0 makes `limit 0` drain nothing from staging, so the insert loop never ends."""
+    n = int(v)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f'must be 1 or more, got {n}')
+    return n
 
 
 def target_columns(cur, table: str) -> list[str]:
@@ -388,7 +401,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--dsn', required=True)
     ap.add_argument('--input', type=Path, required=True, help='route_a_filtered folder')
-    ap.add_argument('--batch-size', type=int, default=5000)
+    ap.add_argument('--batch-size', type=positive_int, default=5000)
     ap.add_argument('--dry-run', action='store_true', help='do everything, then roll the transaction back')
     ap.add_argument('--rollback', action='store_true', help='delete the restored ids and exit')
     ap.add_argument('--allow-id-overlap', action='store_true')
@@ -397,6 +410,9 @@ def main() -> None:
     conn = psycopg2.connect(args.dsn)
     conn.autocommit = False
     cur = conn.cursor()
+    # The export's timestamps all carry +00, so nothing here depends on the session's time zone -- pin
+    # it anyway so a server whose default is not UTC cannot change what a restore means.
+    cur.execute("set time zone 'UTC'")
 
     if args.rollback:
         log('rollback: deleting restored ids')

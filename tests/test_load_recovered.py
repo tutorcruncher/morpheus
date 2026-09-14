@@ -484,3 +484,64 @@ class TestDbOwnersWin:
         owners = load_recovered.merge_db_owners({}, {self.U: 'prime:30784'})
         r = row('2026-08-26T01:00:00', group_uuid=self.U, code='agency-a')
         assert load_recovered.group_uuid_for(r, owners) != self.U
+
+
+class TestSessionTimeZone:
+    """A rendered send_ts has no offset because every value in the files is UTC.
+
+    The message rows say so explicitly -- the loader appends '+00:00' before the copy -- but a group's
+    created_ts is the same naive string handed straight to psycopg2, so Postgres reads it in whatever
+    time zone the session happens to be in. On a server whose default is not UTC, every group lands up
+    to a day away from its own first message. Pin the session instead of trusting the server's default.
+    """
+
+    GROUP = '88888888-8888-8888-8888-888888888888'
+
+    def test_a_group_is_created_at_its_first_message_whatever_the_server_says(self, db, tmp_path):
+        import psycopg2
+
+        from app.core.config import settings
+
+        d = TestInsertGuardWindow._rendered(tmp_path, '2026-08-26T12:00:00', self.GROUP, 'sam@example.com')
+        conn = psycopg2.connect(settings.database_url)
+        conn.autocommit = False
+        cur = conn.cursor()
+        try:
+            cur.execute("set time zone 'Europe/London'")  # UTC+1 on that August date
+            load_recovered.load(conn, cur, TestInsertGuardWindow()._args(d, 5))
+            cur.execute(
+                """select g.created_ts, m.send_ts from message_groups g
+                   join messages m on m.group_id = g.id where g.uuid = %s""",
+                (self.GROUP,),
+            )
+            created_ts, send_ts = cur.fetchone()
+            assert created_ts == send_ts
+        finally:
+            conn.close()
+
+
+class TestAnAgencyThatMatchesNothing:
+    """An agency code that matches no rendered rows is a broken input, not an empty agency.
+
+    Every agency on the list is there because it has email to load. If the code is misspelled, or a
+    company is renamed and the list is not, the loader used to log one line and exit 0 -- so the driver
+    moved on, the run ended saying done, and that agency's whole history was still missing with nobody
+    told. Stop instead.
+    """
+
+    def test_an_agency_with_no_rows_stops_rather_than_reporting_success(self, db, tmp_path):
+        import psycopg2
+
+        from app.core.config import settings
+
+        d = TestInsertGuardWindow._rendered(tmp_path, '2026-08-26T12:00:00', TestSessionTimeZone.GROUP, 'x@e.com')
+        args = TestInsertGuardWindow()._args(d, 5)
+        args.agency = 'agency-b'  # the file holds agency-a only
+        conn = psycopg2.connect(settings.database_url)
+        conn.autocommit = False
+        cur = conn.cursor()
+        try:
+            with pytest.raises(SystemExit):
+                load_recovered.load(conn, cur, args)
+        finally:
+            conn.close()
