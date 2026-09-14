@@ -91,6 +91,14 @@ def utcnow() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+# delete_subaccount renames a company to DELETED_COMPANY_PREFIX + its id before queueing the purge,
+# so nothing new can attach to a row that is about to be deleted, and the id keeps each tombstone
+# unique against the column's unique constraint. Nothing reserves the prefix: /send/ creates a
+# company for whatever code it is handed, which is why purge_deleted_companies matches
+# code == prefix + id rather than the prefix alone.
+DELETED_COMPANY_PREFIX = 'deleted/'
+
+
 class Company(SQLModel, table=True):
     __tablename__ = 'companies'
 

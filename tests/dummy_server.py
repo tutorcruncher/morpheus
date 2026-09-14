@@ -85,12 +85,18 @@ def make_handler(state: DummyState):
             if data.get('key') != 'good-mandrill-testing-key':
                 return _json({'auth': 'failed'}, 403)
             sa_id = data['id']
-            if sa_id == 'broken1' or sa_id not in state.mandrill_subaccounts:
+            if sa_id == 'broken1':
                 return _json({'error': 'snap something unknown went wrong'}, 500)
-            elif 'name' not in state.mandrill_subaccounts[sa_id]:
+            elif sa_id not in state.mandrill_subaccounts or 'name' not in state.mandrill_subaccounts[sa_id]:
+                # Mandrill answers an unknown subaccount with a 404, not the 500 it used to send.
                 return _json(
-                    {'message': f"No subaccount exists with the id '{sa_id}'", 'name': 'Unknown_Subaccount'},
-                    500,
+                    {
+                        'status': 'error',
+                        'code': 12,
+                        'name': 'Unknown_Subaccount',
+                        'message': f"No subaccount exists with the id '{sa_id}'",
+                    },
+                    404,
                 )
             state.mandrill_subaccounts[sa_id] = data
             return _json({'message': "subaccount deleted (this isn't the same response as mandrill)"})

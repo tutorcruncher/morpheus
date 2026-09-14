@@ -28,7 +28,7 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic import ValidationError
 from pydf import generate_pdf
-from sqlalchemy import text
+from sqlalchemy import delete, func, text
 from sqlmodel import select
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
@@ -36,7 +36,7 @@ from app.core.celery import celery_app
 from app.core.config import settings
 from app.core.database import get_session
 from app.ext.clients import ApiError, Mandrill, MessageBird
-from app.messages.models import Event, Link, Message, MessageStatus
+from app.messages.models import DELETED_COMPANY_PREFIX, Company, Event, Link, Message, MessageGroup, MessageStatus
 from app.messages.schemas import (
     BaseWebhook,
     EmailRecipientModel,
@@ -769,3 +769,43 @@ def delete_old_emails() -> None:
         )
         db.commit()
         main_logger.info('deleted %s old messages', result.rowcount)  # ty:ignore[unresolved-attribute]
+
+
+@celery_app.task(name='app.messages.tasks.delete_company_messages')
+def delete_company_messages(company_ids: list[int], company_code: str) -> str:
+    """Delete the message history of companies whose subaccount has been deleted.
+
+    Production carries the legacy ON DELETE RESTRICT constraints on messages.company_id and
+    message_groups.company_id, so the children go before the companies rather than relying on a
+    cascade; events and links do cascade off messages.
+    """
+    with get_session() as db:
+        m_count = db.execute(delete(Message).where(Message.company_id.in_(company_ids))).rowcount  # ty:ignore[deprecated, unresolved-attribute]
+        g_count = db.execute(delete(MessageGroup).where(MessageGroup.company_id.in_(company_ids))).rowcount  # ty:ignore[deprecated, unresolved-attribute]
+        db.execute(delete(Company).where(Company.id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
+        db.commit()
+    msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
+    main_logger.info('deleted company=%s companies=%s %s', company_code, company_ids, msg_summary)
+    return msg_summary
+
+
+@celery_app.task(name='app.messages.tasks.purge_deleted_companies')
+def purge_deleted_companies() -> int:
+    """Re-queue purges that never reached a worker.
+
+    delete_subaccount renames a company before queueing its purge, so a task lost in between (a
+    broker blip, or a worker still on the previous release that does not know the task name) would
+    otherwise leave the row under a code no later delete can match. Re-running a purge that did
+    land deletes nothing.
+
+    The match is the exact code the rename writes, not its prefix: /send/ creates a company for
+    whatever code it is handed, so a prefix would put a live company that merely looks tombstoned
+    into the delete path.
+    """
+    with get_session() as db:
+        tombstone = func.concat(DELETED_COMPANY_PREFIX, Company.id)
+        company_ids = db.exec(select(Company.id).where(Company.code == tombstone)).all()
+    for company_id in company_ids:
+        delete_company_messages.delay([company_id], 'sweep')
+        main_logger.info('re-queued stranded purge for company=%s', company_id)
+    return len(company_ids)
