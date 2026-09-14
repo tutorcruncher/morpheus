@@ -64,9 +64,9 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
     companies whose code merely starts with ``m.company_code`` (deleting ``simply-learn`` used to
     wipe ``simply-learning-tuition:7664``'s entire message history).
 
-    The history itself is purged by a worker rather than here. Counting and deleting a large
-    agency's messages runs for minutes, well past the 30 seconds Heroku's router holds a request
-    open for, so doing it inline tells the caller the delete failed while it goes on to succeed.
+    The history itself is purged by a worker rather than here. Deleting a large agency's messages
+    runs for minutes, well past the 30 seconds Heroku's router holds a request open for, so doing it
+    inline tells the caller the delete failed while it goes on to succeed.
     """
     company_ids = db.exec(select(Company.id).where(func.split_part(Company.code, ':', 1) == m.company_code)).all()
     if company_ids:
