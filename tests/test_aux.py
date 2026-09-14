@@ -281,6 +281,20 @@ def test_purge_deleted_companies_redrives_a_lost_task(cli: TestClient, sync_db: 
     assert sync_db.fetchval('select count(*) from companies') == 0
 
 
+def test_purge_deleted_companies_only_takes_rows_the_rename_made(sync_db: SyncDb, send_email):
+    """The sweep matches the exact code the rename writes, not a prefix of it.
+
+    /send/ creates a company for whatever code it is handed, so a prefix match would let the sweep
+    delete a live company that merely looks tombstoned.
+    """
+    send_email(company_code='deleted/foo')
+
+    assert tasks.purge_deleted_companies() == 0
+
+    assert sync_db.fetchval('select code from companies') == 'deleted/foo'
+    assert sync_db.fetchval('select count(*) from messages') == 1
+
+
 def test_delete_company_messages_reports_what_it_deleted(sync_db: SyncDb, send_email):
     send_email(company_code='purgeco', recipients=[{'address': f'{i}@test.com'} for i in range(3)])
     send_email(company_code='keepco')

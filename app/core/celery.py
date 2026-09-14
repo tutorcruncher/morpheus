@@ -32,8 +32,12 @@ celery_app.conf.beat_schedule = {
         'task': 'app.messages.tasks.delete_old_emails',
         'schedule': crontab(minute='30'),
     },
+    # Daily, not hourly: this only catches a purge lost to a broker blip or a worker still on the
+    # previous release, nothing waits on the swept rows, and a permanently failing purge re-queued
+    # hourly would be an hourly Sentry issue forever. 05:45 sits in the widest gap between
+    # TutorCruncher's 3-hourly terminated-agency runs, so the sweep rarely meets a purge still going.
     'purge-deleted-companies': {
         'task': 'app.messages.tasks.purge_deleted_companies',
-        'schedule': crontab(minute='45'),
+        'schedule': crontab(hour='5', minute='45'),
     },
 }

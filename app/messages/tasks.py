@@ -28,7 +28,7 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic import ValidationError
 from pydf import generate_pdf
-from sqlalchemy import delete, text
+from sqlalchemy import delete, func, text
 from sqlmodel import select
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
@@ -789,14 +789,19 @@ def delete_company_messages(company_ids: list[int], company_code: str) -> str:
 def purge_deleted_companies() -> int:
     """Re-queue purges that never reached a worker.
 
-    delete_subaccount renames a company before queueing its purge, so a task lost in between — a
-    broker blip, or a worker still on the previous release that does not know the task name — would
+    delete_subaccount renames a company before queueing its purge, so a task lost in between (a
+    broker blip, or a worker still on the previous release that does not know the task name) would
     otherwise leave the row under a code no later delete can match. Re-running a purge that did
     land deletes nothing.
+
+    The match is the exact code the rename writes, not its prefix: /send/ creates a company for
+    whatever code it is handed, so a prefix would put a live company that merely looks tombstoned
+    into the delete path.
     """
     with get_session() as db:
-        company_ids = db.exec(select(Company.id).where(Company.code.like(f'{DELETED_COMPANY_PREFIX}%'))).all()  # ty:ignore[unresolved-attribute]
+        tombstone = func.concat(DELETED_COMPANY_PREFIX, Company.id)
+        company_ids = db.exec(select(Company.id).where(Company.code == tombstone)).all()
     for company_id in company_ids:
-        delete_company_messages.delay([company_id], f'{DELETED_COMPANY_PREFIX}{company_id}')
+        delete_company_messages.delay([company_id], 'sweep')
         main_logger.info('re-queued stranded purge for company=%s', company_id)
     return len(company_ids)
