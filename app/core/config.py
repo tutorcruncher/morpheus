@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     us_send_number: str = '15744445663'
     canada_send_number: str = '12048170659'
+    australia_send_number: str = '61488826088'
     tc_registered_originator: str = 'TtrCrnchr'
 
     admin_basic_auth_password: str = 'testing'
