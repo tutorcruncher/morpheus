@@ -482,6 +482,10 @@ class SendSMS:
             self.from_name = settings.us_send_number
         elif self.m.country_code == 'CA':
             self.from_name = settings.canada_send_number
+        elif self.m.country_code == 'AU':
+            # ACMA's SMS Sender ID Register (mandatory since 1 July 2026) labels unregistered
+            # alphanumeric sender IDs "Unverified"; a numeric originator is exempt. See #554.
+            self.from_name = settings.australia_send_number
         else:
             self.from_name = settings.tc_registered_originator
 
