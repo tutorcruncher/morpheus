@@ -28,7 +28,7 @@ from phonenumbers import (
 from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic import ValidationError
 from pydf import generate_pdf
-from sqlalchemy import delete, func, text
+from sqlalchemy import delete, text
 from sqlmodel import select
 from ua_parser.user_agent_parser import Parse as ParseUserAgent
 
@@ -768,7 +768,7 @@ def delete_old_emails() -> None:
 
 
 @celery_app.task(name='app.messages.tasks.delete_company_messages')
-def delete_company_messages(company_ids: list[int]) -> str:
+def delete_company_messages(company_ids: list[int], company_code: str) -> str:
     """Delete the message history of companies whose subaccount has been deleted.
 
     Production carries the legacy ON DELETE RESTRICT constraints on messages.company_id and
@@ -776,14 +776,10 @@ def delete_company_messages(company_ids: list[int]) -> str:
     cascade; events and links do cascade off messages.
     """
     with get_session() as db:
-        m_count = db.exec(select(func.count()).select_from(Message).where(Message.company_id.in_(company_ids))).one()  # ty:ignore[unresolved-attribute]
-        g_count = db.exec(
-            select(func.count()).select_from(MessageGroup).where(MessageGroup.company_id.in_(company_ids))  # ty:ignore[unresolved-attribute]
-        ).one()
-        db.execute(delete(Message).where(Message.company_id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
-        db.execute(delete(MessageGroup).where(MessageGroup.company_id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
+        m_count = db.execute(delete(Message).where(Message.company_id.in_(company_ids))).rowcount  # ty:ignore[deprecated, unresolved-attribute]
+        g_count = db.execute(delete(MessageGroup).where(MessageGroup.company_id.in_(company_ids))).rowcount  # ty:ignore[deprecated, unresolved-attribute]
         db.execute(delete(Company).where(Company.id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
         db.commit()
     msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
-    main_logger.info('deleted companies=%s %s', company_ids, msg_summary)
+    main_logger.info('deleted company=%s companies=%s %s', company_code, company_ids, msg_summary)
     return msg_summary

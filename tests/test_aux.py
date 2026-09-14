@@ -204,9 +204,7 @@ def test_delete_subaccount_does_not_match_longer_codes(
     assert sync_db.fetchval('select count(*) from messages') == 1
 
 
-def test_delete_subaccount_queues_the_purge(
-    cli: TestClient, sync_db: SyncDb, send_email, monkeypatch, dummy_server: DummyServer
-):
+def test_delete_subaccount_queues_the_purge(cli: TestClient, sync_db: SyncDb, send_email, monkeypatch):
     """The purge is queued, not run inline.
 
     Deleting a large agency's history takes minutes, and Heroku's router closes the request at 30
@@ -216,17 +214,67 @@ def test_delete_subaccount_queues_the_purge(
     company_id = sync_db.fetchval("select id from companies where code = 'slowco'")
 
     queued = []
-    monkeypatch.setattr(tasks.delete_company_messages, 'delay', queued.append)
+    monkeypatch.setattr(tasks.delete_company_messages, 'delay', lambda *args: queued.append(args))
     r = cli.post(
         '/delete-subaccount/email-test/', json={'company_code': 'slowco'}, headers={'Authorization': 'testing-key'}
     )
 
     assert r.status_code == 200, r.text
     assert r.json() == {'message': 'queued_companies=1'}
-    assert queued == [[company_id]]
+    assert queued == [([company_id], 'slowco')]
     # Still here: the request handed the work to a worker rather than doing it itself.
     assert sync_db.fetchval('select count(*) from messages') == 1
     assert sync_db.fetchval('select count(*) from companies') == 1
+
+
+def test_delete_subaccount_purge_spares_a_recreated_company(cli: TestClient, sync_db: SyncDb, send_email, monkeypatch):
+    """A send between the response and the worker must survive the queued purge.
+
+    /send/ finds companies by code, so a company left under its own code would hand a re-created
+    subaccount the very id the purge is about to delete, taking the new agency's history with it.
+    """
+    send_email(company_code='slowco')
+    old_id = sync_db.fetchval("select id from companies where code = 'slowco'")
+
+    queued = []
+    monkeypatch.setattr(tasks.delete_company_messages, 'delay', lambda *args: queued.append(args))
+    r = cli.post(
+        '/delete-subaccount/email-test/', json={'company_code': 'slowco'}, headers={'Authorization': 'testing-key'}
+    )
+    assert r.status_code == 200, r.text
+
+    # The agency signs up again and sends before the worker gets round to the purge.
+    send_email(company_code='slowco')
+    new_id = sync_db.fetchval("select id from companies where code = 'slowco'")
+    assert new_id != old_id
+
+    tasks.delete_company_messages(*queued[0])
+
+    assert sync_db.fetchval('select count(*) from messages') == 1
+    assert sync_db.fetchval('select code from companies') == 'slowco'
+
+
+def test_delete_company_messages_reports_what_it_deleted(cli: TestClient, sync_db: SyncDb, send_email):
+    send_email(company_code='purgeco', recipients=[{'address': f'{i}@test.com'} for i in range(3)])
+    send_email(company_code='keepco')
+    company_id = sync_db.fetchval("select id from companies where code = 'purgeco'")
+
+    assert tasks.delete_company_messages([company_id], 'purgeco') == 'deleted_messages=3 deleted_message_groups=1'
+
+    assert sync_db.fetchval('select count(*) from messages') == 1
+    assert sync_db.fetchval('select code from companies') == 'keepco'
+
+
+def test_delete_subaccount_unknown_to_mandrill(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):
+    """An agency whose sub-account was never created still has to read as deleted, not as an error."""
+    r = cli.post(
+        '/delete-subaccount/email-mandrill/',
+        json={'company_code': 'never-created'},
+        headers={'Authorization': 'testing-key'},
+    )
+    assert r.status_code == 404, r.text
+    assert r.json() == {'message': "No subaccount exists with the id 'never-created'"}
+    assert dummy_server.log == ['POST /mandrill/subaccounts/delete.json > 404']
 
 
 def test_delete_subaccount_wrong_response(cli: TestClient, sync_db: SyncDb, dummy_server: DummyServer):

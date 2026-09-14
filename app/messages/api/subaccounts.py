@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlmodel import select
 
 from app.common.api.errors import HTTP400, HTTP404, HTTP409
@@ -70,9 +70,16 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
     """
     company_ids = db.exec(select(Company.id).where(func.split_part(Company.code, ':', 1) == m.company_code)).all()
     if company_ids:
-        delete_company_messages.delay(list(company_ids))
-    logger.info('queued deletion of company=%s companies=%s', m.company_name, company_ids)
+        # Rename before queueing. /send/ looks companies up by code, so leaving the code in place
+        # would let a re-created subaccount attach its messages to the very rows the purge is about
+        # to delete, and the worker would wipe the new agency's history along with the old one.
+        db.execute(update(Company).where(Company.id.in_(company_ids)).values(code=func.concat('deleted/', Company.id)))  # ty:ignore[deprecated, unresolved-attribute]
+        db.commit()
+        delete_company_messages.delay(list(company_ids), m.company_code)
+        logger.info('queued deletion of company=%s companies=%s', m.company_code, company_ids)
 
+    # The purge is queued whatever Mandrill says below, matching the old behaviour where the rows
+    # were already committed before the Mandrill response decided the status.
     if method == SendMethod.email_mandrill:
         # 404 is Mandrill's answer for a subaccount that is already gone; it has to be allowed
         # through for the Unknown_Subaccount branch below to see it.
