@@ -270,3 +270,34 @@ class TestBatchSize:
 
     def test_a_normal_size_is_accepted(self):
         assert restore.positive_int('5000') == 5000
+
+
+class TestCodesToCreate:
+    """A code the restored rows need but the target does not have belongs to a branch that has sent
+    nothing since the wipe, so later sends never re-created its companies row.
+
+    Creating it is safe and is what makes the restore complete: the code comes from the snapshot, so
+    the row means the same thing it meant before the delete. It is what Route B already does for its
+    own agencies. What must never happen is the opposite -- mapping onto some *other* company that
+    happens to exist -- and that is resolve_remap's job, not this one.
+    """
+
+    def test_a_code_the_target_lacks_is_offered_for_creation(self):
+        assert restore.codes_to_create({11: 'agency-a:1', 12: 'agency-a:2'}, [11, 12], {'agency-a:1': 900}) == [
+            'agency-a:2'
+        ]
+
+    def test_codes_the_target_already_has_are_left_alone(self):
+        assert restore.codes_to_create({11: 'agency-a:1'}, [11], {'agency-a:1': 900}) == []
+
+    def test_a_branch_that_sent_nothing_is_not_created(self):
+        # Only the ids the restored rows actually use matter; an unused code needs no row.
+        assert restore.codes_to_create({11: 'agency-a:1', 12: 'agency-a:idle'}, [11], {'agency-a:1': 900}) == []
+
+    def test_an_id_the_snapshot_cannot_name_is_not_invented(self):
+        # No code means nothing to create -- that stays a hard problem in resolve_remap.
+        assert restore.codes_to_create({11: 'agency-a:1'}, [11, 99], {'agency-a:1': 900}) == []
+
+    def test_each_code_is_offered_once_and_in_a_stable_order(self):
+        snap = {11: 'agency-b:2', 12: 'agency-a:1', 13: 'agency-b:2'}
+        assert restore.codes_to_create(snap, [11, 12, 13], {}) == ['agency-a:1', 'agency-b:2']
