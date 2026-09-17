@@ -22,6 +22,10 @@ What it does, in dependency order (groups -> messages -> events -> links):
      insert (--allow-id-overlap to override, only if you know why).
   2. company_id is the ONE thing remapped. The delete removed the companies rows and later sends
      re-created them with new ids, so snapshot company ids are matched to current ones by `code`.
+     A branch that has sent nothing since the wipe has no row to match, since only a send would have
+     re-created one -- that row is created here from the snapshot's code, logged by name, and rolled
+     back with the rest if the restore fails. Mapping onto a *different* existing company is still
+     refused outright: that is the error this is protecting against, and creating a row is not it.
   3. Columns are the intersection of what the parquet has and what the target table has, minus the
      ones the database owns. The snapshot carries spam_status/spam_reason, which this codebase's
      models do not define, so whether they are restored depends on the target -- not on a guess here.
@@ -201,6 +205,18 @@ def resolve_remap(snap_by_id: dict[int, str], used_ids: list[int], current_by_co
     return mapping, problems
 
 
+def codes_to_create(snap_by_id: dict[int, str], used_ids: list[int], current_by_code: dict[str, int]) -> list[str]:
+    """Codes the restored rows need that the target does not have a companies row for.
+
+    A missing code means that branch has sent nothing since the wipe, so no later send re-created its
+    row. Creating it from the snapshot's own code restores what the delete removed and is exactly what
+    Route B does for its agencies. The hazard this is careful *not* to touch is the other direction --
+    attaching restored rows to some other company that already exists -- which stays resolve_remap's
+    job. An id the snapshot cannot even name is not invented here; that stays a hard problem.
+    """
+    return sorted({code for i in used_ids if (code := snap_by_id.get(i)) and code not in current_by_code})
+
+
 def preflight_problems(existing_ids: dict[str, int], uuid_conflicts: list[tuple[str, int, int]]) -> list[str]:
     """Reasons the target is not in a fit state to restore into. Empty means go.
 
@@ -281,13 +297,24 @@ def company_remap(cur, input_dir: Path) -> dict[int, int]:
     used = sorted(used)
 
     cur.execute('select code, id from companies')
-    mapping, problems = resolve_remap(snap_by_id, used, dict(cur.fetchall()))
+    current = dict(cur.fetchall())
+
+    # A branch that has sent nothing since the wipe has no companies row, because only a later send
+    # would have re-created one. Put it back from the snapshot's own code, inside this transaction, so
+    # it rolls back with everything else if the restore fails. Named in the log, never silent.
+    for code in codes_to_create(snap_by_id, used, current):
+        cur.execute('insert into companies (code) values (%s) on conflict (code) do nothing', (code,))
+        cur.execute('select id from companies where code = %s', (code,))
+        current[code] = cur.fetchone()[0]
+        log(f'  created the missing companies row for {code} (id {current[code]})')
+
+    mapping, problems = resolve_remap(snap_by_id, used, current)
     if problems:
         sys.exit(
             'cannot map every company:\n  ' + '\n  '.join(problems) + '\n\n'
-            'Every code the restored rows belong to must already exist in the target. If one is '
-            'missing, the agency has not sent anything since the wipe -- create the companies row '
-            'first (a plain insert of the code) and re-run.'
+            'Every code the restored rows belong to must resolve to a company in the target. A code '
+            'the target lacks is created above; this is the other kind -- the snapshot companies '
+            'table cannot name the id at all, so there is nothing to create. Nothing has been written.'
         )
     return mapping
 
