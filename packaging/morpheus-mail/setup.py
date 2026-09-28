@@ -45,6 +45,6 @@ setup(
     install_requires=[
         'chevron>=0.11.1',
         'libsass>=0.13.2',
-        'misaka>=2.1.1',
+        'mistune==3.3.4',
     ],
 )

@@ -8,9 +8,9 @@ from typing import Dict
 import chevron
 import sass
 from chevron import ChevronError
-from misaka import HtmlRenderer, Markdown
 
-markdown = Markdown(HtmlRenderer(flags=['hard-wrap']), extensions=['no-intra-emphasis'])
+from app.render.markdown import markdown
+
 logger = logging.getLogger('render')
 
 
