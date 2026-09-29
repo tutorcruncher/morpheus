@@ -8,7 +8,7 @@ into ./morpheus/render/ at build time by the GHA publish job (or by hand with
 
 from setuptools import setup
 
-VERSION = '2.0.0'
+VERSION = '2.1.0'
 
 setup(
     name='morpheus-mail',
@@ -45,6 +45,6 @@ setup(
     install_requires=[
         'chevron>=0.11.1',
         'libsass>=0.13.2',
-        'mistune==3.3.4',
+        'mistune>=3.3.4,<4',
     ],
 )

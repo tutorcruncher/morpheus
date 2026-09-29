@@ -23,8 +23,10 @@ def test_tc2_parity(src, expected):
     assert markdown(src) == expected
 
 
-def test_lone_dash_not_a_list():
-    assert markdown('-') == '-'
+@pytest.mark.parametrize('src', ['-', '-\n', '-\r\n', '- ', ' - '])
+def test_lone_dash_not_a_list(src):
+    """Footers arrive from a textarea, so the trailing-newline forms matter."""
+    assert markdown(src) == src
 
 
 def test_none_renders_empty():
@@ -91,3 +93,47 @@ def test_tables_render():
 
 def test_strikethrough():
     assert markdown('~~gone~~') == '<p><del>gone</del></p>\n'
+
+
+@pytest.mark.parametrize(
+    'src, expected',
+    [
+        # misaka's `no-intra-emphasis` covered * as well as _; CommonMark only covers _, so
+        # without our InlineParser these lose their asterisks and gain italics.
+        ('text with 5*6=30 and 7*8', '<p>text with 5*6=30 and 7*8</p>\n'),
+        ('price is 100**per hour**today', '<p>price is 100**per hour**today</p>\n'),
+        ('x**2**y', '<p>x**2**y</p>\n'),
+        ('costs 5*4 dollars', '<p>costs 5*4 dollars</p>\n'),
+    ],
+)
+def test_no_intra_word_asterisk_emphasis(src, expected):
+    assert markdown(src) == expected
+
+
+@pytest.mark.parametrize(
+    'src, expected',
+    [
+        # Only an *opening* marker is suppressed, so a closer against a word still pairs up.
+        ('**20**th', '<p><strong>20</strong>th</p>\n'),
+        ('**bold**word', '<p><strong>bold</strong>word</p>\n'),
+        ('*italic* and **bold**', '<p><em>italic</em> and <strong>bold</strong></p>\n'),
+        ('**Student(s)**: Alex', '<p><strong>Student(s)</strong>: Alex</p>\n'),
+    ],
+)
+def test_emphasis_still_works_at_word_boundaries(src, expected):
+    assert markdown(src) == expected
+
+
+def test_task_lists_are_plain_list_items():
+    """TC2 enables mistune's `task_lists`; we don't, because <input> is stripped by most email
+    clients and misaka rendered the brackets literally."""
+    assert markdown('- [ ] task') == '<ul>\n<li>[ ] task</li>\n</ul>\n'
+
+
+def test_markdown_after_block_html_is_not_rendered():
+    """Documents a known CommonMark behaviour misaka did not share: a block-level HTML tag opens
+    an HTML block that runs to the next blank line, so markdown on the following line stays raw.
+    TC2 renders this identically, so a footer previewed there matches the email sent here."""
+    assert markdown('<div>\nx\n</div>\nCall **now**') == '<div>\nx\n</div>\nCall **now**\n\n'
+    # A blank line closes the HTML block and the markdown renders as expected.
+    assert '<strong>now</strong>' in markdown('<div>\nx\n</div>\n\nCall **now**')

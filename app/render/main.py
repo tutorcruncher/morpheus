@@ -9,7 +9,7 @@ import chevron
 import sass
 from chevron import ChevronError
 
-from app.render.markdown import markdown
+from .markdown import markdown
 
 logger = logging.getLogger('render')
 
