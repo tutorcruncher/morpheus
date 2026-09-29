@@ -515,10 +515,10 @@ def test_macro_in_message(send_email, tmpdir):
 content:
 <body>
 <h1>hello John</h1>
-
 <div class="button">
   <a href="/pay/now/123/"><span>Pay now</span></a>
 </div>
+
 
 </body>
 """
@@ -529,7 +529,7 @@ content:
 def test_send_md_options(send_email, tmpdir):
     message_id = send_email(context={'message__render': 'we are_testing_emphasis **bold**\nnewline'})
     msg_file = tmpdir.join(f'{message_id}.txt').read()
-    assert '<p>we are_testing_emphasis <strong>bold</strong><br>\nnewline</p>' in msg_file
+    assert '<p>we are_testing_emphasis <strong>bold</strong><br />\nnewline</p>' in msg_file
 
 
 def test_standard_sass(cli: TestClient, tmpdir, worker, loop):
