@@ -140,6 +140,19 @@ class Message(SQLModel, table=True):
         Index('message_tags', 'tags', 'method', 'company_id', postgresql_using='gin'),
         Index('message_vector', 'vector', 'method', 'company_id', postgresql_using='gin'),
         Index('message_company_method', 'method', 'company_id', 'id'),
+        # Serves _get_sms_spend (TC2 billing, the cost_limit check on every capped SMS send, the SMS list): the
+        # sum over a company's month reads only these index entries. Without it Postgres read every SMS the company
+        # had ever sent, or every message on the platform that month, from the heap: up to 141s for a big sender.
+        # Partial on SMS so emails, nearly every row, stay out of it; psycopg2 sends `method` as a literal, so the
+        # planner can match the predicate. Built in prod by hand with CREATE INDEX CONCURRENTLY (issue #511).
+        Index(
+            'message_sms_company_send_ts',
+            'company_id',
+            'method',
+            'send_ts',
+            postgresql_include=['cost'],
+            postgresql_where=sa_text("method IN ('sms-messagebird', 'sms-test')"),
+        ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from uuid import uuid4
 
+from sqlalchemy import text
 from sqlmodel import select
 
 from app.core.config import settings
@@ -512,3 +513,42 @@ def test_sms_billing_bad_request_creates_no_company(cli, db):
     assert r.status_code == 400, r.text
     assert r.json() == {'message': 'request body must include "start" and "end" dates'}
     assert db.exec(select(Company).where(Company.code == 'never-sent')).first() is None
+
+
+def test_sms_spend_reads_sms_index(db):
+    """
+    With emails making up nearly every row, a company's month of SMS spend is found through message_sms_company_send_ts,
+    not by reading every SMS it ever sent or every message sent that month. (In prod, where VACUUM keeps the
+    visibility map current, the INCLUDE (cost) makes that an index-only scan; a test can't VACUUM inside its
+    transaction, so here it's a bitmap scan on the same index.)
+    """
+    db.execute(
+        text(
+            """
+            INSERT INTO companies (code) SELECT 'company-' || i FROM generate_series(1, 20) i;
+            INSERT INTO message_groups (company_id, message_method, uuid)
+            SELECT c.id, m.method::send_methods, gen_random_uuid()
+            FROM companies c, (VALUES ('email-test'), ('sms-messagebird')) m(method);
+            INSERT INTO messages (group_id, company_id, method, send_ts, cost)
+            SELECT g.id, g.company_id, g.message_method,
+                   timestamptz '2026-01-01' + (i * interval '7 minutes'),
+                   CASE WHEN g.message_method = 'sms-messagebird' THEN 0.012 END
+            FROM message_groups g
+            JOIN generate_series(1, 3000) i ON g.message_method = 'email-test' OR i % 10 = 0;
+            ANALYZE messages;
+            """
+        )
+    )
+    company_id = db.execute(text("SELECT id FROM companies WHERE code = 'company-1'")).scalar_one()
+    plan = '\n'.join(
+        r[0]
+        for r in db.execute(
+            text(
+                'EXPLAIN SELECT sum(cost) FROM messages '
+                f"WHERE method = 'sms-messagebird' AND company_id = {company_id} "
+                "AND send_ts >= '2026-01-05' AND send_ts < '2026-01-12'"
+            )
+        )
+    )
+    db.rollback()
+    assert 'on message_sms_company_send_ts' in plan, plan
