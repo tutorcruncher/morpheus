@@ -1,4 +1,5 @@
 import re
+import sys
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -9,6 +10,12 @@ from sqlmodel import select
 from app.core.config import settings
 from app.messages.models import Company
 from tests.conftest import SyncDb
+
+
+def test_app_does_not_load_phonenumbers_geodata():
+    # The geocoder's prefix database is ~108MB per process (every web worker and celery child), and
+    # nothing reads the region names it gives, so importing the app must not pull it in.
+    assert 'phonenumbers.geodata' not in sys.modules
 
 
 def test_send_message(cli, tmpdir, worker, loop):
@@ -28,8 +35,7 @@ def test_send_message(cli, tmpdir, worker, loop):
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     assert (
-        "to: Number(number='+447891123856', country_code='44', "
-        "number_formatted='+44 7891 123856', descr=None, is_mobile=True)"
+        "to: Number(number='+447891123856', country_code='44', number_formatted='+44 7891 123856', is_mobile=True)"
     ) in msg_file
     assert f'\nfrom_name: {settings.tc_registered_originator}\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
@@ -54,8 +60,7 @@ def test_send_message_usa(cli, settings, tmpdir, worker, loop):
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     assert (
-        "to: Number(number='+18183373095', country_code='1', "
-        "number_formatted='+1 818-337-3095', descr=None, is_mobile=True)"
+        "to: Number(number='+18183373095', country_code='1', number_formatted='+1 818-337-3095', is_mobile=True)"
     ) in msg_file
     assert f'\nfrom_name: {settings.us_send_number}\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
@@ -80,8 +85,7 @@ def test_send_message_canada(cli, settings, tmpdir, worker, loop):
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     assert (
-        "to: Number(number='+18183373095', country_code='1', "
-        "number_formatted='+1 818-337-3095', descr=None, is_mobile=True)"
+        "to: Number(number='+18183373095', country_code='1', number_formatted='+1 818-337-3095', is_mobile=True)"
     ) in msg_file
     assert f'\nfrom_name: {settings.canada_send_number}\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
@@ -106,8 +110,7 @@ def test_send_message_australia(cli, settings, tmpdir, worker, loop):
     assert str(tmpdir.listdir()[0]).endswith(f)
     msg_file = tmpdir.join(f).read()
     assert (
-        "to: Number(number='+61412345678', country_code='61', "
-        "number_formatted='+61 412 345 678', descr=None, is_mobile=True)"
+        "to: Number(number='+61412345678', country_code='61', number_formatted='+61 412 345 678', is_mobile=True)"
     ) in msg_file
     assert f'\nfrom_name: {settings.australia_send_number}\n' in msg_file
     assert '\nmessage:\nthis is a message bar\n' in msg_file
@@ -134,21 +137,18 @@ def test_validate_number(cli, tmpdir):
             'number': '+18183373095',
             'country_code': '1',
             'number_formatted': '+1 818-337-3095',
-            'descr': 'California, United States',
             'is_mobile': True,
         },
         '345': {
             'number': '+447891123856',
             'country_code': '44',
             'number_formatted': '+44 7891 123856',
-            'descr': 'United Kingdom',
             'is_mobile': True,
         },
         '456': {
             'number': '+442071128953',
             'country_code': '44',
             'number_formatted': '+44 20 7112 8953',
-            'descr': 'London, United Kingdom',
             'is_mobile': False,
         },
         '567': None,
