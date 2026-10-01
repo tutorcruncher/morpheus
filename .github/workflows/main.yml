@@ -106,8 +106,11 @@ jobs:
         run: uvx twine check dist/*
 
       - name: upload to pypi
+        # Every deploy tag runs this, but setup.py's VERSION only moves when the render module
+        # changes. PyPI 400s on re-uploading an existing version, so skip it rather than fail
+        # the run; a bumped VERSION still uploads.
         working-directory: packaging/morpheus-mail
-        run: uvx twine upload dist/*
+        run: uvx twine upload --skip-existing dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.pypi_password }}
