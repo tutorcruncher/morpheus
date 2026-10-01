@@ -25,7 +25,6 @@ from phonenumbers import (
     number_type,
     parse as parse_number,
 )
-from phonenumbers.geocoder import country_name_for_number, description_for_number
 from pydantic import ValidationError
 from pydf import generate_pdf
 from sqlalchemy import delete, func, text
@@ -378,7 +377,6 @@ class Number:
     number: str
     country_code: str
     number_formatted: str
-    descr: Optional[str]
     is_mobile: bool
 
 
@@ -393,7 +391,7 @@ class SmsData:
 MOBILE_NUMBER_TYPES = (PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE)
 
 
-def validate_number(number: str, country: str, include_description: bool = True) -> Optional[Number]:
+def validate_number(number: str, country: str) -> Optional[Number]:
     try:
         p = parse_number(number, country)
     except NumberParseException:
@@ -402,19 +400,11 @@ def validate_number(number: str, country: str, include_description: bool = True)
     if not is_valid_number(p):
         return None
 
-    is_mobile = number_type(p) in MOBILE_NUMBER_TYPES
-    descr = None
-    if include_description:
-        country_n = country_name_for_number(p, 'en')
-        region = description_for_number(p, 'en')
-        descr = country_n if country_n == region else f'{region}, {country_n}'
-
     return Number(
         number=format_number(p, PhoneNumberFormat.E164),
         country_code=f'{p.country_code}',
         number_formatted=format_number(p, PhoneNumberFormat.INTERNATIONAL),
-        descr=descr,
-        is_mobile=is_mobile,
+        is_mobile=number_type(p) in MOBILE_NUMBER_TYPES,
     )
 
 
@@ -502,7 +492,7 @@ class SendSMS:
             raise NotImplementedError()
 
     def _sms_prep(self) -> Optional[SmsData]:
-        number_info = validate_number(self.recipient.number, self.m.country_code, include_description=False)
+        number_info = validate_number(self.recipient.number, self.m.country_code)
         msg, error, shortened_link, msg_length = None, None, None, None
         if not number_info or not number_info.is_mobile:
             error = f'invalid mobile number "{self.recipient.number}"'
