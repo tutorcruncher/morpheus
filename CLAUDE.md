@@ -37,6 +37,7 @@ make dev        # uvicorn app.main:app --reload
 make worker     # celery worker
 make beat       # celery beat
 make reset-db   # DROPS and recreates the local `morpheus` database, then runs create_db_and_tables
+                # against DATABASE_URL — if that points elsewhere, `morpheus` is left empty
 ```
 
 Run only the test files you change: `uv run pytest tests/test_sms.py`. Tests need a local Postgres
