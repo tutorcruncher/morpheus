@@ -46,18 +46,18 @@ class DBSession(Session):
             return instance, False
 
 
-def _make_engine(pool_size: int, max_overflow: int):
+def make_engine(url: str, pool_size: int, max_overflow: int, **connect_args):
     return create_engine(
-        settings.database_url,
+        url,
         pool_pre_ping=True,
         pool_size=pool_size,
         max_overflow=max_overflow,
         pool_timeout=settings.db_pool_timeout,
-        connect_args={'options': '-c timezone=UTC'},
+        connect_args={'options': '-c timezone=UTC', **connect_args},
     )
 
 
-engine = _make_engine(settings.db_pool_size, settings.db_max_overflow)
+engine = make_engine(settings.database_url, settings.db_pool_size, settings.db_max_overflow)
 SessionLocal = sessionmaker(class_=DBSession, autocommit=False, autoflush=False, bind=engine)
 SessionCls = SessionLocal
 
@@ -74,7 +74,7 @@ def configure_worker_engine() -> None:
     """
     global engine, SessionLocal, SessionCls
     engine.dispose()
-    engine = _make_engine(settings.db_worker_pool_size, settings.db_worker_max_overflow)
+    engine = make_engine(settings.database_url, settings.db_worker_pool_size, settings.db_worker_max_overflow)
     SessionLocal = sessionmaker(class_=DBSession, autocommit=False, autoflush=False, bind=engine)
     SessionCls = SessionLocal
 

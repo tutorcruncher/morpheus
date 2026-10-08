@@ -35,6 +35,7 @@ from app.core.celery import celery_app
 from app.core.config import settings
 from app.core.database import get_session
 from app.ext.clients import ApiError, Mandrill, MessageBird
+from app.messages.mirror import mirror_ids
 from app.messages.models import DELETED_COMPANY_PREFIX, Company, Event, Link, Message, MessageGroup, MessageStatus
 from app.messages.schemas import (
     BaseWebhook,
@@ -774,6 +775,9 @@ def delete_company_messages(company_ids: list[int], company_code: str) -> str:
         g_count = db.execute(delete(MessageGroup).where(MessageGroup.company_id.in_(company_ids))).rowcount  # ty:ignore[deprecated, unresolved-attribute]
         db.execute(delete(Company).where(Company.id.in_(company_ids)))  # ty:ignore[deprecated, unresolved-attribute]
         db.commit()
+    # The companies are gone from the primary, so the mirror deletes them, and its CASCADE foreign
+    # keys take their messages with them.
+    mirror_ids('companies', company_ids)
     msg_summary = f'deleted_messages={m_count} deleted_message_groups={g_count}'
     main_logger.info('deleted company=%s companies=%s %s', company_code, company_ids, msg_summary)
     return msg_summary
