@@ -133,6 +133,29 @@ def mirror_rows(table_name: str, ids: list[int]) -> None:
         _copy(db, mirror_conn, SQLModel.metadata.tables[table_name], ids)
 
 
+@celery_app.task(name='app.messages.mirror.reconcile_mirror_companies')
+def reconcile_mirror_companies() -> int:
+    """Re-copy every company on the mirror that no longer matches the primary.
+
+    A purge or rename whose copy never landed (lost to a broker blip, or out of retries) would
+    otherwise leave the old row on the mirror, and through its CASCADE foreign keys the company's
+    whole history. Companies are a row per agency or branch, so comparing them all is cheap.
+    """
+    if not settings.mirror_database_url:
+        return 0
+    table = SQLModel.metadata.tables['companies']
+    query = select(table.c.id, table.c.code)
+    with get_session() as db:
+        primary = dict(db.execute(query).tuples().all())  # ty:ignore[deprecated]
+    with get_mirror_engine().connect() as mirror_conn:
+        mirror = dict(mirror_conn.execute(query).tuples().all())
+    out_of_step = sorted(id_ for id_, code in mirror.items() if primary.get(id_) != code)
+    if out_of_step:
+        logger.info('re-copying mirror companies out of step with the primary: %s', out_of_step)
+        mirror_ids('companies', out_of_step)
+    return len(out_of_step)
+
+
 def _copy(db: DBSession, mirror_conn: Connection, table: Table, ids: list[int]) -> None:
     columns = [c for c in table.c if c.name not in SKIPPED_COLUMNS]
     rows = db.execute(select(*columns).where(table.c.id.in_(ids))).mappings().all()  # ty:ignore[deprecated]

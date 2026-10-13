@@ -189,6 +189,23 @@ def test_nothing_queued_without_mirror_url(send_email, monkeypatch):
     assert queued == []
 
 
+def test_reconcile_recopies_companies_out_of_step(db, mirror):
+    db.add_all([Company(code='kept'), Company(code='deleted/2')])
+    db.commit()
+    # A rename and a purge whose copies never landed.
+    with mirror.begin() as conn:
+        conn.execute(text("UPDATE companies SET code = 'renamed' WHERE id = 2"))
+        conn.execute(text("INSERT INTO companies (id, code) VALUES (3, 'purged')"))
+
+    assert mirror_module.reconcile_mirror_companies() == 2
+
+    assert_mirror_matches_primary(mirror)
+
+
+def test_reconcile_does_nothing_without_mirror_url():
+    assert mirror_module.reconcile_mirror_companies() == 0
+
+
 def test_copies_run_on_their_own_queue():
     route = celery_app.amqp.router.route
 
