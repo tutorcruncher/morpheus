@@ -18,7 +18,7 @@ Delete this module once Heroku Postgres is the primary database.
 
 import logging
 
-from sqlalchemy import Table, delete, event, select
+from sqlalchemy import Table, delete, event, make_url, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -51,6 +51,8 @@ def get_mirror_engine() -> Engine:
     global _mirror_engine
     if _mirror_engine is None:
         assert settings.mirror_database_url
+        # TLS unless the URL picks its own sslmode, as the local and CI test databases do.
+        tls = {} if 'sslmode' in make_url(settings.mirror_database_url).query else {'sslmode': 'require'}
         _mirror_engine = make_engine(
             settings.mirror_database_url,
             settings.db_worker_pool_size,
@@ -58,6 +60,7 @@ def get_mirror_engine() -> Engine:
             # A failed copy's error, logged and retried, then names only the SQL, not the row values.
             hide_parameters=True,
             connect_timeout=CONNECT_TIMEOUT,
+            **tls,
         )
     return _mirror_engine
 

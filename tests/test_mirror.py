@@ -31,7 +31,8 @@ def mirror_url() -> str:
         mp.setattr(db_module, 'engine', mirror_engine)
         db_module.create_db_and_tables()
     mirror_engine.dispose()
-    return mirror.render_as_string(hide_password=False)
+    # CI's Postgres service has no TLS; without an sslmode the mirror engine requires it.
+    return mirror.update_query_dict({'sslmode': 'prefer'}).render_as_string(hide_password=False)
 
 
 @pytest.fixture
@@ -193,6 +194,17 @@ def test_copies_run_on_their_own_queue():
 
     assert route({}, 'app.messages.mirror.mirror_rows')['queue'].name == 'mirror'
     assert route({}, 'app.messages.tasks.send_email')['queue'].name == 'celery'
+
+
+def test_mirror_requires_tls_unless_url_sets_sslmode(monkeypatch):
+    engine_kwargs = []
+    monkeypatch.setattr(mirror_module, 'make_engine', lambda *args, **kwargs: engine_kwargs.append(kwargs))
+    for url in ('postgresql://u@db.example.com/x', 'postgresql://u@localhost/x?sslmode=prefer'):
+        monkeypatch.setattr(mirror_module, '_mirror_engine', None)
+        monkeypatch.setattr(app_settings, 'mirror_database_url', url)
+        mirror_module.get_mirror_engine()
+
+    assert [kwargs.get('sslmode') for kwargs in engine_kwargs] == ['require', None]
 
 
 def test_mirror_errors_omit_row_values(mirror):
