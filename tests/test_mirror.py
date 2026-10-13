@@ -7,6 +7,7 @@ from sqlalchemy.exc import DataError
 from sqlmodel import SQLModel
 
 from app.core import database as db_module
+from app.core.celery import celery_app
 from app.core.config import settings as app_settings
 from app.messages import mirror as mirror_module, tasks
 from app.messages.models import Company, Message
@@ -185,6 +186,13 @@ def test_nothing_queued_without_mirror_url(send_email, monkeypatch):
     send_email()
 
     assert queued == []
+
+
+def test_copies_run_on_their_own_queue():
+    route = celery_app.amqp.router.route
+
+    assert route({}, 'app.messages.mirror.mirror_rows')['queue'].name == 'mirror'
+    assert route({}, 'app.messages.tasks.send_email')['queue'].name == 'celery'
 
 
 def test_mirror_errors_omit_row_values(mirror):

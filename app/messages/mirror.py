@@ -5,6 +5,10 @@ mirror_rows once its transaction commits. The task copies the rows' current prim
 included, so the message ids TC2 holds stay valid once the mirror becomes the primary. Unset, the
 listeners return straight away and nothing is queued.
 
+The tasks run on their own `mirror` queue (app/core/celery.py task_routes), served by the Procfile's
+mirror process, so a slow or unreachable mirror never delays sends. Scale that process up before
+setting MIRROR_DATABASE_URL: until it runs, copies wait in Redis.
+
 Bulk statements (db.execute(update(...)) / delete(...)) skip the ORM events, so their callers queue
 mirror_ids themselves. delete_old_emails is not mirrored: it is off, and #502 switches it on against
 Heroku once Heroku is the primary.
@@ -35,8 +39,8 @@ PENDING_KEY = 'mirror_pending'
 READY_KEY = 'mirror_ready'
 # The mirror's create_tsvector trigger fills messages.vector on insert, so it is never copied.
 SKIPPED_COLUMNS = {'vector'}
-# mirror_rows shares the worker with sends: an unreachable mirror must cost a worker child seconds
-# per attempt, not the OS's minutes-long TCP connect timeout.
+# An unreachable mirror must cost a mirror worker child seconds per attempt, not the OS's
+# minutes-long TCP connect timeout.
 CONNECT_TIMEOUT = 5
 
 _mirror_engine: Engine | None = None

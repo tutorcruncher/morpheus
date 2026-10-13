@@ -20,6 +20,9 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
+    # Copies to the mirror database (issue #502) run on their own queue, served by the Procfile's
+    # mirror process, so a slow or unreachable mirror never holds up sends.
+    task_routes={'app.messages.mirror.*': {'queue': 'mirror'}},
 )
 
 
