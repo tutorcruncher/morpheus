@@ -51,6 +51,8 @@ def get_mirror_engine() -> Engine:
             settings.mirror_database_url,
             settings.db_worker_pool_size,
             settings.db_worker_max_overflow,
+            # A failed copy's error, logged and retried, then names only the SQL, not the row values.
+            hide_parameters=True,
             connect_timeout=CONNECT_TIMEOUT,
         )
     return _mirror_engine

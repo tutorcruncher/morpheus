@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, make_url, select, text
+from sqlalchemy.exc import DataError
 from sqlmodel import SQLModel
 
 from app.core import database as db_module
@@ -184,6 +185,13 @@ def test_nothing_queued_without_mirror_url(send_email, monkeypatch):
     send_email()
 
     assert queued == []
+
+
+def test_mirror_errors_omit_row_values(mirror):
+    with pytest.raises(DataError) as exc_info, mirror.connect() as conn:
+        conn.execute(text('select CAST(:v AS text), 1/0'), {'v': 'marker-c41d'})
+
+    assert 'marker-c41d' not in str(exc_info.value)
 
 
 def test_copy_queued_before_mirror_url_was_unset_is_dropped(monkeypatch):

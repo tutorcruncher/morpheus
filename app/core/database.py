@@ -46,13 +46,14 @@ class DBSession(Session):
             return instance, False
 
 
-def make_engine(url: str, pool_size: int, max_overflow: int, **connect_args):
+def make_engine(url: str, pool_size: int, max_overflow: int, *, hide_parameters: bool = False, **connect_args):
     return create_engine(
         url,
         pool_pre_ping=True,
         pool_size=pool_size,
         max_overflow=max_overflow,
         pool_timeout=settings.db_pool_timeout,
+        hide_parameters=hide_parameters,
         connect_args={'options': '-c timezone=UTC', **connect_args},
     )
 
