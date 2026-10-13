@@ -13,6 +13,15 @@ Bulk statements (db.execute(update(...)) / delete(...)) skip the ORM events, so 
 mirror_ids themselves. delete_old_emails is not mirrored: it is off, and #502 switches it on against
 Heroku once Heroku is the primary.
 
+mirror_rows treats DATABASE_URL as the truth: it deletes mirror rows the primary lacks and
+overwrites the rest. So the switch goes in this order, or a process still on the old settings copies
+RDS over the new primary:
+1. Stop writes to RDS: maintenance on, worker and beat scaled to 0 (mirror keeps running).
+2. Wait for the mirror queue to drain.
+3. Run reconcile_mirror_companies and the content check, then setval the sequences.
+4. In one config change, point DATABASE_URL at Heroku and unset MIRROR_DATABASE_URL.
+5. Scale mirror to 0, worker and beat back up, maintenance off.
+
 Delete this module once Heroku Postgres is the primary database.
 """
 
