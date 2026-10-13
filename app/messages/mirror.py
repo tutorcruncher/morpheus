@@ -18,7 +18,7 @@ from sqlalchemy import Table, delete, event, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Mapper, object_session
+from sqlalchemy.orm import Mapper, SessionTransaction, object_session
 from sqlmodel import SQLModel
 
 from app.core.celery import celery_app
@@ -29,8 +29,10 @@ from app.messages.models import Company, Event, Link, Message, MessageGroup
 logger = logging.getLogger('worker.mirror')
 
 MIRRORED_MODELS = (Company, MessageGroup, Message, Event, Link)
-# Session.info key holding {table name: ids} written in the open transaction, queued on commit.
+# Session.info keys holding {table name: ids}: written in the open transaction, then committed and
+# waiting for the session to hand its connection back before they are queued.
 PENDING_KEY = 'mirror_pending'
+READY_KEY = 'mirror_ready'
 # The mirror's create_tsvector trigger fills messages.vector on insert, so it is never copied.
 SKIPPED_COLUMNS = {'vector'}
 # mirror_rows shares the worker with sends: an unreachable mirror must cost a worker child seconds
@@ -74,19 +76,31 @@ def _record_write(mapper: Mapper, connection: Connection, target: SQLModel) -> N
     pending.setdefault(mapper.local_table.name, set()).add(target.id)  # ty:ignore[unresolved-attribute]
 
 
-def _queue_pending(session: DBSession) -> None:
+def _mark_committed(session: DBSession) -> None:
+    ready = session.info.setdefault(READY_KEY, {})
     for table_name, ids in session.info.pop(PENDING_KEY, {}).items():
-        mirror_ids(table_name, sorted(ids))
+        ready.setdefault(table_name, set()).update(ids)
+
+
+def _queue_ready(session: DBSession, transaction: SessionTransaction) -> None:
+    # after_commit fires while the session still holds its pooled connection, so queueing there
+    # would hold the connection across a broker round trip (MORPHEUS-3DNG). The root transaction's
+    # after_transaction_end fires once the connection has gone back to the pool.
+    if transaction.parent is None:
+        for table_name, ids in session.info.pop(READY_KEY, {}).items():
+            mirror_ids(table_name, sorted(ids))
 
 
 def _drop_pending(session: DBSession) -> None:
     session.info.pop(PENDING_KEY, None)
+    session.info.pop(READY_KEY, None)
 
 
 for _model in MIRRORED_MODELS:
     for _event_name in ('after_insert', 'after_update', 'after_delete'):
         event.listen(_model, _event_name, _record_write)
-event.listen(DBSession, 'after_commit', _queue_pending)
+event.listen(DBSession, 'after_commit', _mark_committed)
+event.listen(DBSession, 'after_transaction_end', _queue_ready)
 event.listen(DBSession, 'after_rollback', _drop_pending)
 
 

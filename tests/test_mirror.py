@@ -154,6 +154,16 @@ def test_rolled_back_writes_are_not_queued(db, monkeypatch, mirror):
     assert queued == [('companies', [2])]
 
 
+def test_copy_queued_after_connection_returned(db, monkeypatch, mirror):
+    in_transaction = []
+    monkeypatch.setattr(mirror_module.mirror_rows, 'delay', lambda *args: in_transaction.append(db.in_transaction()))
+
+    db.add(Company(code='foobar'))
+    db.commit()
+
+    assert in_transaction == [False]
+
+
 def test_queue_failure_does_not_fail_the_write(send_email, monkeypatch, caplog, mirror):
     def broker_down(*args):
         raise ConnectionError('broker down')
