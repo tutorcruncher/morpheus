@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
     database_url: str = 'postgresql://postgres@localhost:5432/morpheus'
+    # Second database every write is copied to while Morpheus moves from RDS to Heroku Postgres
+    # (issue #502); unset turns the copying off. See app/messages/mirror.py.
+    mirror_database_url: str | None = None
     # Heroku's rediscloud add-on sets REDISCLOUD_URL; honour it as the source of truth and
     # only fall back to REDIS_URL. AliasChoices checks the names in order, first found wins,
     # matching the legacy foxglove env=['REDISCLOUD_URL', 'REDIS_URL'] precedence.
@@ -74,10 +77,10 @@ class Settings(BaseSettings):
     testing: bool = False
     dev_mode: bool = False
 
-    @field_validator('database_url')
+    @field_validator('database_url', 'mirror_database_url')
     @classmethod
-    def heroku_ready_database_url(cls, v: str) -> str:
-        return v.replace('postgres://', 'postgresql://')
+    def heroku_ready_database_url(cls, v: str | None) -> str | None:
+        return v and v.replace('postgres://', 'postgresql://')
 
     @property
     def mandrill_webhook_url(self) -> str:

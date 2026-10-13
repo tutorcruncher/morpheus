@@ -11,6 +11,7 @@ from app.common.api.errors import HTTP400, HTTP404, HTTP409
 from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.ext.clients import Mandrill
+from app.messages.mirror import mirror_ids
 from app.messages.models import DELETED_COMPANY_PREFIX, Company, SendMethod
 from app.messages.schemas import SubaccountModel
 from app.messages.tasks import delete_company_messages
@@ -81,6 +82,8 @@ def delete_subaccount(method: SendMethod, m: SubaccountModel, db: DBSession = De
             .values(code=func.concat(DELETED_COMPANY_PREFIX, Company.id))
         )
         db.commit()
+        # A bulk UPDATE skips the ORM events that mirror every other write (app/messages/mirror.py).
+        mirror_ids('companies', list(company_ids))
         delete_company_messages.delay(list(company_ids), m.company_code)
         logger.info('queued deletion of company=%s companies=%s', m.company_code, company_ids)
 
