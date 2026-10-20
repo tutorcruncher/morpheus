@@ -77,6 +77,41 @@ def get_redis() -> redis_lib.Redis:
     return _redis_client
 
 
+# A bulk send stores its shared message (m_base) once instead of in every queued task: per-recipient
+# copies of a few large sends filled Redis to maxmemory. A day covers the full email retry chain
+# (EMAIL_RETRYING, ~13h41m) with ~10h to spare for queue backlog, then the key expires on its own.
+SEND_BASE_TTL = 86400
+
+
+class SendBaseMissing(RuntimeError):
+    pass
+
+
+def _send_base_key(group_id: int) -> str:
+    return f'send-base:{group_id}'
+
+
+def share_send_base(group_id: int, m_base: dict, recipient_count: int) -> tuple[dict, ...]:
+    """Return the trailing send_email/send_sms args for each recipient of a send.
+
+    Bulk sends store m_base once and pass nothing; a single-recipient send keeps m_base inline, the
+    form tasks queued by older releases use, so its copy is freed as soon as it is sent.
+    """
+    if recipient_count <= 1:
+        return (m_base,)
+    get_redis().set(_send_base_key(group_id), json.dumps(m_base), ex=SEND_BASE_TTL)
+    return ()
+
+
+def load_send_base(group_id: int, m: dict | None = None) -> dict:
+    if m is not None:
+        return m
+    raw = get_redis().get(_send_base_key(group_id))
+    if raw is None:
+        raise SendBaseMissing(f'stored message for group {group_id} has expired or was never written')
+    return json.loads(raw)
+
+
 def utcnow() -> datetime:
     return datetime.now(tz=timezone.utc)
 
@@ -96,9 +131,9 @@ class _SendEmailTask(Task):
         if not isinstance(exc, MaxRetriesExceededError):
             return
         try:
-            group_id, company_id, recipient_payload, m_payload = args
+            group_id, company_id, recipient_payload, *m_payload = args
             recipient = EmailRecipientModel.model_validate(recipient_payload)
-            m = EmailSendModel.model_validate(m_payload)
+            m = EmailSendModel.model_validate(load_send_base(group_id, *m_payload))
         except Exception:
             main_logger.exception('failed to record send_email exhaustion for task %s', task_id)
             return
@@ -127,9 +162,9 @@ class _SendEmailTask(Task):
     bind=True,
     max_retries=len(EMAIL_RETRYING),
 )
-def send_email(self: Task, group_id: int, company_id: int, recipient: dict, m: dict) -> None:
+def send_email(self: Task, group_id: int, company_id: int, recipient: dict, m: dict | None = None) -> None:
     recipient_model = EmailRecipientModel.model_validate(recipient)
-    m_model = EmailSendModel.model_validate(m)
+    m_model = EmailSendModel.model_validate(load_send_base(group_id, m))
     SendEmail(self, group_id, company_id, recipient_model, m_model).run()
 
 
@@ -423,9 +458,9 @@ class _SendSMSTask(Task):
         if not isinstance(exc, MaxRetriesExceededError):
             return
         try:
-            group_id, company_id, recipient_payload, m_payload = args
+            group_id, company_id, recipient_payload, *m_payload = args
             recipient = SmsRecipientModel.model_validate(recipient_payload)
-            m = SmsSendModel.model_validate(m_payload)
+            m = SmsSendModel.model_validate(load_send_base(group_id, *m_payload))
         except Exception:
             main_logger.exception('failed to record send_sms exhaustion for task %s', task_id)
             return
@@ -454,9 +489,9 @@ class _SendSMSTask(Task):
     bind=True,
     max_retries=SMS_MAX_RETRIES,
 )
-def send_sms(self: Task, group_id: int, company_id: int, recipient: dict, m: dict) -> None:
+def send_sms(self: Task, group_id: int, company_id: int, recipient: dict, m: dict | None = None) -> None:
     recipient_model = SmsRecipientModel.model_validate(recipient)
-    m_model = SmsSendModel.model_validate(m)
+    m_model = SmsSendModel.model_validate(load_send_base(group_id, m))
     SendSMS(self, group_id, company_id, recipient_model, m_model).run()
 
 
