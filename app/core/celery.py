@@ -6,17 +6,17 @@ from app.core.config import settings
 celery_app = Celery(
     'morpheus',
     broker=settings.redis_url,
-    backend=settings.redis_url,
     include=['app.messages.tasks'],
 )
 
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
-    result_serializer='json',
     timezone='UTC',
     enable_utc=True,
-    task_track_started=True,
+    # Nothing reads task results; every send outcome is a Message row in Postgres. Storing them kept a
+    # celery-task-meta key per task in Redis for a day, and a large send filled Redis to maxmemory.
+    task_ignore_result=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
