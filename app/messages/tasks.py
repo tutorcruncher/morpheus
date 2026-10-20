@@ -78,9 +78,9 @@ def get_redis() -> redis_lib.Redis:
 
 
 # A bulk send stores its shared message (m_base) once instead of in every queued task: per-recipient
-# copies of a few large sends filled Redis to maxmemory. The key outlives a queue backlog plus the
-# full email retry chain (EMAIL_RETRYING, ~13h41m) and then expires on its own.
-SEND_BASE_TTL = 2 * 86400
+# copies of a few large sends filled Redis to maxmemory. A day covers the full email retry chain
+# (EMAIL_RETRYING, ~13h41m) with ~10h to spare for queue backlog, then the key expires on its own.
+SEND_BASE_TTL = 86400
 
 
 class SendBaseMissing(RuntimeError):
