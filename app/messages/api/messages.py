@@ -32,6 +32,7 @@ MESSAGE_COLUMNS = (
     Message.method,
     Message.attachments,
     Message.cost,
+    Message.tags,
 )
 MESSAGE_COLUMN_NAMES = (
     'id',
@@ -48,6 +49,7 @@ MESSAGE_COLUMN_NAMES = (
     'method',
     'attachments',
     'cost',
+    'tags',
 )
 
 
