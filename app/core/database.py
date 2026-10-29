@@ -97,7 +97,7 @@ def get_db():
 def create_db_and_tables() -> None:
     raw_conn = engine.raw_connection()
     try:
-        with raw_conn.cursor() as cur:
+        with raw_conn.cursor() as cur:  # ty:ignore[invalid-context-manager]
             cur.execute(f"SET lock_timeout = '{BOOTSTRAP_LOCK_TIMEOUT}'")
             cur.execute('CREATE EXTENSION IF NOT EXISTS btree_gin')
             cur.execute(BOOTSTRAP_SQL_PATH.read_text())
@@ -115,7 +115,7 @@ def create_db_and_tables() -> None:
 
     raw_conn = engine.raw_connection()
     try:
-        with raw_conn.cursor() as cur:
+        with raw_conn.cursor() as cur:  # ty:ignore[invalid-context-manager]
             cur.execute(f"SET lock_timeout = '{BOOTSTRAP_LOCK_TIMEOUT}'")
             cur.execute(POST_BOOTSTRAP_SQL_PATH.read_text())
         raw_conn.commit()
