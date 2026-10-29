@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, SQLModel, select
@@ -46,7 +46,9 @@ class DBSession(Session):
             return instance, False
 
 
-def make_engine(url: str, pool_size: int, max_overflow: int, *, hide_parameters: bool = False, **connect_args):
+def make_engine(
+    url: str, pool_size: int, max_overflow: int, *, hide_parameters: bool = False, **connect_args: Any
+) -> Engine:
     return create_engine(
         url,
         pool_pre_ping=True,
