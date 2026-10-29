@@ -62,20 +62,19 @@ def assert_mirror_matches_primary(mirror_engine) -> None:
 
 
 @pytest.fixture
-def mirror_deletes(mirror):
-    """The tables the mirror runs a DELETE on."""
-    tables = []
+def mirror_statements(mirror):
+    """The mirror's statements, cut to their first three words, e.g. 'DELETE FROM companies'."""
+    statements = []
 
     def record(conn, cursor, statement, *args):
-        if statement.startswith('DELETE FROM '):
-            tables.append(statement.split()[2])
+        statements.append(' '.join(statement.split()[:3]))
 
     event.listen(mirror, 'before_cursor_execute', record)
-    yield tables
+    yield statements
     event.remove(mirror, 'before_cursor_execute', record)
 
 
-def test_send_email_copies_rows_with_primary_ids(send_email, tmpdir, mirror, mirror_deletes):
+def test_send_email_copies_rows_with_primary_ids(send_email, tmpdir, mirror, mirror_statements):
     send_with_link(send_email, tmpdir)
 
     assert_mirror_matches_primary(mirror)
@@ -83,7 +82,7 @@ def test_send_email_copies_rows_with_primary_ids(send_email, tmpdir, mirror, mir
     assert len(rows(mirror, 'links')) == 1
     # Not copied: the mirror's own create_tsvector trigger builds the same search vector.
     assert rows(mirror, 'messages')[0]['vector']
-    assert mirror_deletes == []
+    assert not [s for s in mirror_statements if s.startswith('DELETE')]
 
 
 def test_primary_connection_returned_before_mirror_statements(send_email, mirror):
@@ -159,7 +158,7 @@ def test_click_reaches_mirror(cli: TestClient, send_email, tmpdir, mirror):
     assert event['status'] == 'click'
 
 
-def test_delete_subaccount_removes_company_from_mirror(cli: TestClient, send_email, mirror):
+def test_delete_subaccount_removes_company_from_mirror(cli: TestClient, send_email, mirror, mirror_statements):
     send_email(company_code='foobar')
     send_email(company_code='other')
 
@@ -171,6 +170,9 @@ def test_delete_subaccount_removes_company_from_mirror(cli: TestClient, send_ema
     assert_mirror_matches_primary(mirror)
     assert [c['code'] for c in rows(mirror, 'companies')] == ['other']
     assert len(rows(mirror, 'messages')) == 1
+    # The cascade runs without the mirror's statement timeout.
+    purge = mirror_statements.index('DELETE FROM companies')
+    assert mirror_statements[purge - 1] == 'SET LOCAL statement_timeout'
 
 
 def test_delete_subaccount_rename_reaches_mirror(cli: TestClient, send_email, monkeypatch, mirror):

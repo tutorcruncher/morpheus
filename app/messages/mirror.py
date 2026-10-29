@@ -200,6 +200,10 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
         _sync_message_state(mirror_conn, {row['message_id'] for row in rows})
 
     if gone := set(ids).difference(row['id'] for row in rows):
+        if table.name == 'companies':
+            # A purged company's CASCADE foreign keys take its whole history in this one statement,
+            # which runs for minutes, as the primary's purge does. Only the mirror worker waits.
+            mirror_conn.exec_driver_sql('SET LOCAL statement_timeout = 0')
         mirror_conn.execute(delete(table).where(table.c.id.in_(gone)))
     if rows:
         upsert = pg_insert(table).values([dict(row) for row in rows])
