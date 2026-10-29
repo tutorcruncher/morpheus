@@ -80,6 +80,8 @@ The audience is developers reviewing the PR — evidence must look like a dev's 
 - **Crop terminal captures tight** — the xterm page is mostly empty black below short output, and a screenshot that is 90% void buries the evidence. `uv run --with pillow python <checkout>/.claude/commands/pr-uat/crop-terminal.py <image> [...]` trims everything below the last line of output. Read the image after cropping.
 - The journey runs in the checkout with its `.venv` active, but NOT with the stack's environment: export the stack's `DATABASE_URL`/`REDIS_URL` (from `stack.sh status`) at the top of the journey when they did not come from `.env`.
 - Keep `curl` output readable: `curl -sS -w '\nHTTP %{http_code}\n'`, and pipe JSON through `python -m json.tool`. Use `psql -x` for wide rows.
+- `export PAGER=cat` at the top of every journey. A wide `psql` result otherwise opens `less`, and the screenshot shows one page and `(END)`.
+- Show each command before its output with a small helper at the top of the journey, e.g. `run() { printf '$ %s\n' "$*"; eval "$*"; }`, then `run "psql ..."`. Keep the URLs and the helper in a file in `$RUN_DIR` and `source` it.
 - In journeys, don't `2>/dev/null` a command — in the PTY its output vanishes with it. Use `2>&1 | grep -v claude-code-hint`.
 - Technical content in the terminal is good: real commands, real tracebacks, real return values. Minimal shell-native context (the command line itself, an exit code) is all the framing a terminal needs.
 - **Bare temporary print statements inside the actual code under test are allowed** when they surface something real (e.g. which rows a task selects). They are local-only and never committed. Restart the stack after adding one: the worker does not reload.
@@ -157,6 +159,8 @@ Append a `### Manual Testing` section to the PR body. Rules:
 - `/webhook/mandrill/` checks an HMAC-SHA1 signature over `https://<HOST_NAME>/webhook/mandrill/mandrill_events<body>` with `MANDRILL_WEBHOOK_KEY`; build it in Python, see `app/messages/api/webhooks.py`. `/webhook/test/` needs no signature and updates `email-test` sends.
 - Mandrill webhook events carry `_id` = the message's `external_id` (`<group uid>-<address with non-alphanumerics stripped>`); read it from the `messages` row rather than building it by hand.
 - A send returns 201 before the worker sends anything. The row appears after the worker's `send_email` task logs success.
+- Tracked links come from `context` values that look like URLs (`apply_short_links` in `app/render/main.py`), not from links written in `main_template`. A click case sends `"context": {"lesson_link": "https://..."}` and a template using `{{ lesson_link }}`; the `links` row then holds the token for `/l<token>`.
+- A restarted worker takes back the tasks the old one held unacked, retries waiting on a countdown included, so a stack restart does not lose them.
 
 **checkdb**
 - `psql "$DATABASE_URL"` (from `.env` or `stack.sh status`). Tables: `companies`, `message_groups`, `messages`, `events`, `links`. The `update_message` trigger on `events` sets `messages.status` and `update_ts`, so a webhook's effect shows on `messages`, not only `events`.

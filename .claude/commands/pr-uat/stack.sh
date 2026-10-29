@@ -31,8 +31,17 @@ stop() {
     fi
   done
   # uvicorn and celery fork children; the parent pid alone can leave them on the port.
-  pkill -f "uvicorn app.main:app --port $(cat "$STACK_DIR/port" 2>/dev/null || echo none)" 2>/dev/null || true
-  pkill -f "celery -A app.worker worker -n $(basename "$STACK_DIR")@" 2>/dev/null || true
+  local web="uvicorn app.main:app --port $(cat "$STACK_DIR/port" 2>/dev/null || echo none)"
+  local worker="celery -A app.worker worker -n $(basename "$STACK_DIR")@"
+  pkill -f "$web" 2>/dev/null || true
+  pkill -f "$worker" 2>/dev/null || true
+  # Celery's warm shutdown finishes the running tasks first: wait, so a restart never runs two workers.
+  for _ in $(seq 40); do
+    pgrep -f "$web" >/dev/null || pgrep -f "$worker" >/dev/null || return 0
+    sleep 0.5
+  done
+  pkill -9 -f "$web" 2>/dev/null || true
+  pkill -9 -f "$worker" 2>/dev/null || true
 }
 
 status() {
