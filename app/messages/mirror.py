@@ -18,7 +18,8 @@ overwrites the rest. So the switch goes in this order, or a process still on the
 RDS over the new primary:
 1. Stop writes to RDS: maintenance on, worker and beat scaled to 0 (mirror keeps running).
 2. Wait for the mirror queue to drain.
-3. Run reconcile_mirror_companies and check_mirror, wait for the mirror queue to drain, and repeat
+3. Run reconcile_mirror_companies and check_mirror (with the backfill's start ids), wait for the
+   mirror queue to drain, and repeat
    until check_mirror returns all zeros: both only queue copies, which step 4 would drop. Then
    setval the sequences.
 4. In one config change, point DATABASE_URL at Heroku and unset MIRROR_DATABASE_URL.
@@ -199,13 +200,16 @@ def reconcile_mirror_companies() -> int:
     return len(out_of_step)
 
 
-def check_mirror() -> dict[str, int]:
+def check_mirror(backfill_start: dict[str, int]) -> dict[str, int]:
     """Compare the mirror with the primary and queue a copy of every row that differs.
 
     Run with `heroku run` after the backfill, and again in the switch window while
-    MIRROR_DATABASE_URL is still set. Each id range is compared by one md5 per side, then row by row
-    where the two differ. Returns the rows queued per table: let the mirror queue drain and run it
-    again until every count is 0.
+    MIRROR_DATABASE_URL is still set. backfill_start holds the lowest id the backfill copied in each
+    table but companies: below it the primary keeps history the mirror never takes, and
+    delete_old_emails removes it after the switch. Companies, a row per agency or branch, are
+    compared whole. Each id range is compared by one md5 per side, then row by row where the two
+    differ. Returns the rows queued per table: let the mirror queue drain and run it again until
+    every count is 0.
     """
     queued = {}
     for table_name, columns in CHECKED_COLUMNS.items():
@@ -217,7 +221,10 @@ def check_mirror() -> dict[str, int]:
         bounds = [v for rows in _on_both(text(f'SELECT min(id), max(id) FROM {table_name}')) for v in rows[0] if v]
         if not bounds:
             continue
-        for lo in range(min(bounds), max(bounds) + 1, CHECK_RANGE):
+        # Not the mirror's own lowest id: an event on an old message copies the message, its group
+        # and its company across as missing parents, far below the backfill.
+        start = min(bounds) if table_name == 'companies' else backfill_start[table_name]
+        for lo in range(start, max(bounds) + 1, CHECK_RANGE):
             params = {'lo': lo, 'hi': lo + CHECK_RANGE}
             primary, mirror = _on_both(range_md5, params)
             if primary == mirror:

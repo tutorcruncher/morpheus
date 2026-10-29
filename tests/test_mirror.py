@@ -17,6 +17,8 @@ from app.messages.models import Company, Event, Message
 from tests.test_email import send_with_link
 
 TABLES = ('companies', 'message_groups', 'messages', 'events', 'links')
+# check_mirror's backfill_start when the mirror has had every row since id 1.
+FROM_FIRST_ID = dict.fromkeys(('message_groups', 'messages', 'events', 'links'), 1)
 
 
 @pytest.fixture(scope='session')
@@ -288,7 +290,7 @@ def test_check_mirror_requeues_rows_that_differ(send_sms, send_webhook, monkeypa
         conn.execute(text('UPDATE messages SET cost = NULL WHERE id = 1'))
         conn.execute(text('DELETE FROM events'))
 
-    assert mirror_module.check_mirror() == {
+    assert mirror_module.check_mirror(FROM_FIRST_ID) == {
         'companies': 0,
         'message_groups': 0,
         'messages': 1,
@@ -297,7 +299,33 @@ def test_check_mirror_requeues_rows_that_differ(send_sms, send_webhook, monkeypa
     }
 
     assert_mirror_matches_primary(mirror)
-    assert set(mirror_module.check_mirror().values()) == {0}
+    assert set(mirror_module.check_mirror(FROM_FIRST_ID).values()) == {0}
+
+
+def test_check_mirror_leaves_history_before_backfill(send_sms, send_webhook, monkeypatch, mirror, mirror_url):
+    monkeypatch.setattr(mirror_module, 'CHECK_RANGE', 2)
+    # Messages 1 and 2: history from before the backfill's cutoff, on the primary only.
+    monkeypatch.setattr(app_settings, 'mirror_database_url', None)
+    old_ext_id = send_sms()
+    send_sms(company_code='old')
+    monkeypatch.setattr(app_settings, 'mirror_database_url', mirror_url)
+    send_sms()
+    # A late delivery on message 1 copies it and its group across, below the backfill's first id.
+    send_webhook(old_ext_id, 0.07)
+
+    start = {'message_groups': 3, 'messages': 3, 'events': 1, 'links': 1}
+    # Only the company the backfill skipped: companies are compared whole.
+    assert mirror_module.check_mirror(start) == {
+        'companies': 1,
+        'message_groups': 0,
+        'messages': 0,
+        'events': 0,
+        'links': 0,
+    }
+
+    assert [m['id'] for m in rows(mirror, 'messages')] == [1, 3]
+    assert [c['code'] for c in rows(mirror, 'companies')] == ['foobar', 'old']
+    assert set(mirror_module.check_mirror(start).values()) == {0}
 
 
 def test_reconcile_does_nothing_without_mirror_url():
