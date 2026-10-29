@@ -30,7 +30,7 @@ import logging
 from sqlalchemy import Table, delete, event, make_url, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Mapper, SessionTransaction, object_session
 from sqlmodel import SQLModel
 
@@ -132,16 +132,22 @@ event.listen(DBSession, 'after_rollback', _drop_pending)
 
 @celery_app.task(
     name='app.messages.mirror.mirror_rows',
-    autoretry_for=(SQLAlchemyError,),
+    # Errors a later attempt gets past: the mirror down or restarting, a statement or lock timeout
+    # (all OperationalError), or a race with another copy (IntegrityError). A DataError or
+    # ProgrammingError, e.g. an enum value the mirror lacks, fails the same way every time.
+    autoretry_for=(OperationalError, IntegrityError),
+    # Waits double from 1s up to 10 minutes: 14 retries span about an hour.
     retry_backoff=True,
-    max_retries=5,
+    retry_backoff_max=600,
+    retry_jitter=False,
+    max_retries=14,
     ignore_result=True,
 )
 def mirror_rows(table_name: str, ids: list[int]) -> None:
     """Make the mirror's copy of these rows match the primary: upsert the rows still on the primary
     and delete the ones gone from it.
 
-    Retries ride out a mirror blip, or a race with another copy, e.g. a re-created company whose
+    Retries ride out an hour-long mirror outage, or a race with another copy, e.g. a re-created company whose
     code the mirror still holds on the renamed row. An exhausted task fails into Sentry.
     """
     if not settings.mirror_database_url:

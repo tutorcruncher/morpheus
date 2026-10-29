@@ -1,9 +1,10 @@
 """Writes copied to the mirror database while Morpheus moves from RDS to Heroku Postgres (issue #502)."""
 
 import pytest
+from celery.exceptions import Retry
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, make_url, select, text
-from sqlalchemy.exc import DataError
+from sqlalchemy.exc import DataError, OperationalError
 from sqlmodel import SQLModel
 
 from app.core import database as db_module
@@ -204,6 +205,23 @@ def test_reconcile_recopies_companies_out_of_step(db, mirror):
 
 def test_reconcile_does_nothing_without_mirror_url():
     assert mirror_module.reconcile_mirror_companies() == 0
+
+
+@pytest.mark.parametrize(
+    'error, raised',
+    [
+        (OperationalError('copy', {}, Exception('mirror restarting')), Retry),
+        (DataError('copy', {}, Exception('invalid enum value')), DataError),
+    ],
+)
+def test_copy_retries_only_transient_errors(error, raised, monkeypatch, mirror):
+    def copy(*args):
+        raise error
+
+    monkeypatch.setattr(mirror_module, '_copy', copy)
+
+    with pytest.raises(raised):
+        mirror_module.mirror_rows.delay('companies', [1])
 
 
 def test_copies_run_on_their_own_queue():
