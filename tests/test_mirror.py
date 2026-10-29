@@ -299,7 +299,7 @@ def test_reconcile_recopies_companies_out_of_step(db, mirror):
     assert_mirror_matches_primary(mirror)
 
 
-def test_check_mirror_requeues_rows_that_differ(send_sms, send_webhook, monkeypatch, mirror):
+def test_check_mirror_requeues_rows_that_differ(send_sms, send_webhook, monkeypatch, mirror, mirror_statements):
     monkeypatch.setattr(mirror_module, 'CHECK_RANGE', 2)
     ext_id = send_sms()
     send_sms()
@@ -319,6 +319,8 @@ def test_check_mirror_requeues_rows_that_differ(send_sms, send_webhook, monkeypa
 
     assert_mirror_matches_primary(mirror)
     assert set(mirror_module.check_mirror(FROM_FIRST_ID).values()) == {0}
+    # Its reads on the mirror run without the copies' statement timeout.
+    assert 'SET LOCAL statement_timeout' in mirror_statements
 
 
 def test_check_mirror_leaves_history_before_backfill(send_sms, send_webhook, monkeypatch, mirror, mirror_url):

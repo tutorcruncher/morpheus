@@ -29,6 +29,7 @@ Delete this module once Heroku Postgres is the primary database.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 from typing import Any
 
@@ -230,7 +231,8 @@ def check_mirror(backfill_start: dict[str, int]) -> dict[str, int]:
     delete_old_emails removes it after the switch. Companies, a row per agency or branch, are
     compared whole. Each id range is compared by one md5 per side, then row by row where the two
     differ. Returns the rows queued per table: let the mirror queue drain and run it again until
-    every count is 0.
+    every count is 0. A pass reads every row compared, so run it live until it returns all zeros
+    before the switch window, where the passes then only pick up the last writes.
     """
     queued = {}
     for table_name, columns in CHECKED_COLUMNS.items():
@@ -260,11 +262,23 @@ def check_mirror(backfill_start: dict[str, int]) -> dict[str, int]:
 
 
 def _on_both(query: TextClause, params: dict | None = None) -> tuple[list[Row], list[Row]]:
+    # Both sides at once: a pass reads every row compared, so it takes half the time.
+    with ThreadPoolExecutor(2) as pool:
+        mirror = pool.submit(_on_mirror, query, params)
+        primary = pool.submit(_on_primary, query, params)
+        return primary.result(), mirror.result()
+
+
+def _on_primary(query: TextClause, params: dict | None) -> list[Row]:
     with get_session() as db:
-        primary = list(db.execute(query, params))  # ty:ignore[deprecated]
-    with get_mirror_engine().connect() as mirror_conn:
-        mirror = list(mirror_conn.execute(query, params))
-    return primary, mirror
+        return list(db.execute(query, params))  # ty:ignore[deprecated]
+
+
+def _on_mirror(query: TextClause, params: dict | None) -> list[Row]:
+    with get_mirror_engine().begin() as mirror_conn:
+        # A cold 100k-id range can take longer than a copy's limit, and one would end the whole run.
+        mirror_conn.exec_driver_sql('SET LOCAL statement_timeout = 0')
+        return list(mirror_conn.execute(query, params))
 
 
 def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
