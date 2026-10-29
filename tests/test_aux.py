@@ -3,6 +3,7 @@ import base64
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings
 from app.ext.clients import ApiError, ApiSession
 from app.messages import tasks
 from tests.conftest import SyncDb
@@ -417,7 +418,9 @@ def test_api_error(settings, dummy_server: DummyServer):
     assert str(exc_info.value) == f'GET {dummy_server.server_name}/foobar, unexpected response 404'
 
 
-def test_settings(settings):
+def test_settings():
+    # An explicit URL: the test database's own URL differs per checkout (TEST_DATABASE_URL).
+    settings = Settings(database_url='postgresql://postgres@localhost:5432/morpheus_test')
     assert settings.pg_host == 'localhost'
     assert settings.pg_port == 5432
     assert settings.pg_name == 'morpheus_test'
