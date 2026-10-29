@@ -133,6 +133,24 @@ def test_older_message_copy_does_not_overwrite_newer(send_sms, mirror):
     assert rows(mirror, 'messages')[0]['status'] == 'delivered'
 
 
+def test_copy_read_before_cost_landed_keeps_mirror_cost(db, send_sms, monkeypatch, mirror, mirror_url):
+    send_sms()
+    monkeypatch.setattr(app_settings, 'mirror_database_url', None)
+    db.add(Event(message_id=1, status='delivered', ts=datetime(2032, 6, 6, 12, tzinfo=timezone.utc)))
+    db.commit()
+    monkeypatch.setattr(app_settings, 'mirror_database_url', mirror_url)
+    # The cost's copy landed first; these copies read the primary before the cost was set there.
+    with mirror.begin() as conn:
+        conn.execute(text('UPDATE messages SET cost = 0.07'))
+
+    mirror_module.mirror_rows('messages', [1])
+    mirror_module.mirror_rows('events', [1])
+
+    message = rows(mirror, 'messages')[0]
+    assert message['cost'] == 0.07
+    assert message['status'] == 'delivered'
+
+
 def test_event_on_message_sent_before_mirror_brings_message_across(
     send_sms, send_webhook, monkeypatch, mirror, mirror_url
 ):

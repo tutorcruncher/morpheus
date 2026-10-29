@@ -29,8 +29,9 @@ Delete this module once Heroku Postgres is the primary database.
 
 import logging
 from itertools import batched
+from typing import Any
 
-from sqlalchemy import Row, Table, TextClause, delete, event, make_url, or_, select, text, update
+from sqlalchemy import Row, Table, TextClause, delete, event, func, make_url, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -243,7 +244,10 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
     # Read and released before the mirror is touched, so the primary never sits idle in a
     # transaction while the mirror answers.
     with get_session() as db:
-        rows = db.execute(select(*columns).where(table.c.id.in_(ids))).mappings().all()  # ty:ignore[deprecated]
+        # In id order, so the upsert renames an old company before its re-created twin takes the
+        # code, and two copies touching the same rows lock them in the same order.
+        query = select(*columns).where(table.c.id.in_(ids)).order_by(table.c.id)
+        rows = db.execute(query).mappings().all()  # ty:ignore[deprecated]
     # Parents first, so the upsert below never trips a foreign key. A parent is missing when it
     # predates the mirror, e.g. an open event on an email sent before MIRROR_DATABASE_URL was set.
     for fk in table.foreign_keys:
@@ -265,13 +269,16 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
         mirror_conn.execute(delete(table).where(table.c.id.in_(gone)))
     if rows:
         upsert = pg_insert(table).values([dict(row) for row in rows])
+        set_: dict[str, Any] = {c.name: upsert.excluded[c.name] for c in columns if c.name != 'id'}
+        if table.name == 'messages':
+            set_['cost'] = func.coalesce(upsert.excluded.cost, table.c.cost)
         mirror_conn.execute(
             upsert.on_conflict_do_update(
                 index_elements=[table.c.id],
-                set_={c.name: upsert.excluded[c.name] for c in columns if c.name != 'id'},
+                set_=set_,
                 # A message's update_ts only moves forward on the primary, so a copy read before one
                 # that has already landed must not undo it. Equal still copies: a cost update leaves
-                # update_ts as it is.
+                # update_ts as it is, and a copy read before the cost landed keeps the mirror's.
                 where=table.c.update_ts <= upsert.excluded.update_ts if table.name == 'messages' else None,
             )
         )
@@ -287,16 +294,20 @@ def _sync_message_state(mirror_conn: Connection, message_ids: set[int]) -> None:
     body on every event.
     """
     messages = SQLModel.metadata.tables['messages']
-    state = (messages.c.status, messages.c.update_ts, messages.c.cost)
+    query = select(messages.c.id, messages.c.status, messages.c.update_ts, messages.c.cost)
     with get_session() as db:
-        primary = db.execute(select(messages.c.id, *state).where(messages.c.id.in_(message_ids))).all()  # ty:ignore[deprecated]
-    for id_, *values in primary:
+        primary = db.execute(query.where(messages.c.id.in_(message_ids)).order_by(messages.c.id)).all()  # ty:ignore[deprecated]
+    for id_, status, update_ts, cost in primary:
+        state = {'status': status, 'update_ts': update_ts}
+        # Never NULL over a cost: the primary only sets one, so a NULL was read before it landed.
+        if cost is not None:
+            state['cost'] = cost
         mirror_conn.execute(
             update(messages)
             .where(
                 messages.c.id == id_,
-                messages.c.update_ts <= values[1],
-                or_(*(column.is_distinct_from(value) for column, value in zip(state, values))),
+                messages.c.update_ts <= update_ts,
+                or_(*(messages.c[name].is_distinct_from(value) for name, value in state.items())),
             )
-            .values(dict(zip([c.name for c in state], values)))
+            .values(state)
         )
