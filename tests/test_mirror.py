@@ -259,6 +259,28 @@ def test_reconcile_recopies_companies_out_of_step(db, mirror):
     assert_mirror_matches_primary(mirror)
 
 
+def test_check_mirror_requeues_rows_that_differ(send_sms, send_webhook, monkeypatch, mirror):
+    monkeypatch.setattr(mirror_module, 'CHECK_RANGE', 2)
+    ext_id = send_sms()
+    send_sms()
+    send_webhook(ext_id, 0.07)
+    # A cost update and an event whose copies were lost.
+    with mirror.begin() as conn:
+        conn.execute(text('UPDATE messages SET cost = NULL WHERE id = 1'))
+        conn.execute(text('DELETE FROM events'))
+
+    assert mirror_module.check_mirror() == {
+        'companies': 0,
+        'message_groups': 0,
+        'messages': 1,
+        'events': 1,
+        'links': 0,
+    }
+
+    assert_mirror_matches_primary(mirror)
+    assert set(mirror_module.check_mirror().values()) == {0}
+
+
 def test_reconcile_does_nothing_without_mirror_url():
     assert mirror_module.reconcile_mirror_companies() == 0
 

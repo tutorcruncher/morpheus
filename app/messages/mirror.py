@@ -18,7 +18,9 @@ overwrites the rest. So the switch goes in this order, or a process still on the
 RDS over the new primary:
 1. Stop writes to RDS: maintenance on, worker and beat scaled to 0 (mirror keeps running).
 2. Wait for the mirror queue to drain.
-3. Run reconcile_mirror_companies and the content check, then setval the sequences.
+3. Run reconcile_mirror_companies and check_mirror, wait for the mirror queue to drain, and repeat
+   until check_mirror returns all zeros: both only queue copies, which step 4 would drop. Then
+   setval the sequences.
 4. In one config change, point DATABASE_URL at Heroku and unset MIRROR_DATABASE_URL.
 5. Scale mirror to 0, worker and beat back up, maintenance off.
 
@@ -26,8 +28,9 @@ Delete this module once Heroku Postgres is the primary database.
 """
 
 import logging
+from itertools import batched
 
-from sqlalchemy import Table, delete, event, make_url, or_, select, update
+from sqlalchemy import Row, Table, TextClause, delete, event, make_url, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -58,6 +61,21 @@ MIRROR_CONNECT_ARGS = {
     'keepalives_idle': 30,
     'keepalives_interval': 10,
     'keepalives_count': 3,
+}
+
+# check_mirror compares this many ids per query, an index range scan well inside the mirror's
+# statement_timeout, and queues the rows that differ this many per copy.
+CHECK_RANGE = 100_000
+CHECK_COPY_SIZE = 1000
+# The columns check_mirror compares. A row missing on either side shows in its id; the others are
+# the ones that change after insert (message_groups, events and links never do). cost::numeric, as
+# float8's text form differs between Postgres versions.
+CHECKED_COLUMNS = {
+    'companies': 'id, code',
+    'message_groups': 'id',
+    'messages': 'id, status, update_ts, cost::numeric',
+    'events': 'id',
+    'links': 'id',
 }
 
 _mirror_engine: Engine | None = None
@@ -178,6 +196,46 @@ def reconcile_mirror_companies() -> int:
         logger.info('re-copying mirror companies out of step with the primary: %s', out_of_step)
         mirror_ids('companies', out_of_step)
     return len(out_of_step)
+
+
+def check_mirror() -> dict[str, int]:
+    """Compare the mirror with the primary and queue a copy of every row that differs.
+
+    Run with `heroku run` after the backfill, and again in the switch window while
+    MIRROR_DATABASE_URL is still set. Each id range is compared by one md5 per side, then row by row
+    where the two differ. Returns the rows queued per table: let the mirror queue drain and run it
+    again until every count is 0.
+    """
+    queued = {}
+    for table_name, columns in CHECKED_COLUMNS.items():
+        queued[table_name] = 0
+        row_md5 = f'md5(row({columns})::text)'
+        in_range = f'FROM {table_name} WHERE id >= :lo AND id < :hi'
+        range_md5 = text(f"SELECT md5(string_agg({row_md5}, '' ORDER BY id)) {in_range}")
+        row_md5s = text(f'SELECT id, {row_md5} {in_range}')
+        bounds = [v for rows in _on_both(text(f'SELECT min(id), max(id) FROM {table_name}')) for v in rows[0] if v]
+        if not bounds:
+            continue
+        for lo in range(min(bounds), max(bounds) + 1, CHECK_RANGE):
+            params = {'lo': lo, 'hi': lo + CHECK_RANGE}
+            primary, mirror = _on_both(range_md5, params)
+            if primary == mirror:
+                continue
+            primary, mirror = (dict(rows) for rows in _on_both(row_md5s, params))  # ty:ignore[no-matching-overload]
+            ids = sorted(id_ for id_ in primary.keys() | mirror.keys() if primary.get(id_) != mirror.get(id_))
+            logger.info('re-copying %d %s rows from id %d', len(ids), table_name, lo)
+            for batch in batched(ids, CHECK_COPY_SIZE):
+                mirror_ids(table_name, list(batch))
+            queued[table_name] += len(ids)
+    return queued
+
+
+def _on_both(query: TextClause, params: dict | None = None) -> tuple[list[Row], list[Row]]:
+    with get_session() as db:
+        primary = list(db.execute(query, params))  # ty:ignore[deprecated]
+    with get_mirror_engine().connect() as mirror_conn:
+        mirror = list(mirror_conn.execute(query, params))
+    return primary, mirror
 
 
 def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
