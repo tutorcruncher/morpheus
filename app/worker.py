@@ -1,5 +1,7 @@
 """Celery worker entry point that ensures all tasks are imported."""
 
+import signal
+
 from celery.signals import worker_init, worker_process_init
 
 from app.core.celery import celery_app
@@ -23,10 +25,15 @@ def init_worker_sentry(**kwargs):
 
 @worker_process_init.connect
 def init_worker_process(**kwargs):
-    """Initialise Logfire and shrink the DB pool, per prefork child (post-fork)."""
+    """Ignore SIGTERM, initialise Logfire and shrink the DB pool, per prefork child (post-fork)."""
     from app.core.database import configure_worker_engine
     from app.core.logging import configure_logfire
 
+    # Heroku SIGTERMs every process in the dyno on restart. Left to billiard, each child died
+    # mid-task and the parent acked the lost task away (MORPHEUS-3DWV/3DWW). The parent's warm
+    # shutdown finishes and acks in-flight tasks itself; billiard's reset_signals() runs after this
+    # hook and keeps SIG_IGN. Heroku's SIGKILL 30s later is still the hard stop.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     configure_logfire()
     # A prefork child needs only a couple of connections; rebuild the engine off the parent's
     # web-sized pool so many children don't exhaust RDS max_connections (MORPHEUS-3DNG).
