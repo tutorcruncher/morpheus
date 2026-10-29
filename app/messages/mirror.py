@@ -102,7 +102,7 @@ def get_mirror_engine() -> Engine:
 
 def mirror_ids(table_name: str, ids: list[int]) -> None:
     """Queue a copy of these rows to the mirror database; a no-op unless MIRROR_DATABASE_URL is set."""
-    if not settings.mirror_database_url or not ids:
+    if not settings.mirror_database_url:
         return
     try:
         mirror_rows.delay(table_name, ids)

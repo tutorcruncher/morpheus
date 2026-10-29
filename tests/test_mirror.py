@@ -242,6 +242,7 @@ def test_nothing_queued_without_mirror_url(send_email, monkeypatch):
     monkeypatch.setattr(mirror_module.mirror_rows, 'delay', lambda *args: queued.append(args))
 
     send_email()
+    mirror_module.mirror_ids('companies', [1])
 
     assert queued == []
 
