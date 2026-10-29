@@ -3,7 +3,7 @@
 import pytest
 from celery.exceptions import Retry
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, make_url, select, text
+from sqlalchemy import create_engine, event, make_url, select, text
 from sqlalchemy.exc import DataError, OperationalError
 from sqlmodel import SQLModel
 
@@ -59,7 +59,21 @@ def assert_mirror_matches_primary(mirror_engine) -> None:
         assert rows(mirror_engine, table) == rows(db_module.engine, table), table
 
 
-def test_send_email_copies_rows_with_primary_ids(send_email, tmpdir, mirror):
+@pytest.fixture
+def mirror_deletes(mirror):
+    """The tables the mirror runs a DELETE on."""
+    tables = []
+
+    def record(conn, cursor, statement, *args):
+        if statement.startswith('DELETE FROM '):
+            tables.append(statement.split()[2])
+
+    event.listen(mirror, 'before_cursor_execute', record)
+    yield tables
+    event.remove(mirror, 'before_cursor_execute', record)
+
+
+def test_send_email_copies_rows_with_primary_ids(send_email, tmpdir, mirror, mirror_deletes):
     send_with_link(send_email, tmpdir)
 
     assert_mirror_matches_primary(mirror)
@@ -67,6 +81,18 @@ def test_send_email_copies_rows_with_primary_ids(send_email, tmpdir, mirror):
     assert len(rows(mirror, 'links')) == 1
     # Not copied: the mirror's own create_tsvector trigger builds the same search vector.
     assert rows(mirror, 'messages')[0]['vector']
+    assert mirror_deletes == []
+
+
+def test_primary_connection_returned_before_mirror_statements(send_email, mirror):
+    send_email()
+    idle = db_module.engine.pool.checkedout()
+    checked_out = []
+    event.listen(mirror, 'before_cursor_execute', lambda *args: checked_out.append(db_module.engine.pool.checkedout()))
+
+    mirror_module.mirror_rows('messages', [1])
+
+    assert set(checked_out) == {idle}
 
 
 def test_webhook_event_and_cost_reach_mirror(send_sms, send_webhook, mirror):

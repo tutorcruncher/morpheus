@@ -153,8 +153,8 @@ def mirror_rows(table_name: str, ids: list[int]) -> None:
     if not settings.mirror_database_url:
         # Unset while copies were still queued: nothing to copy to.
         return
-    with get_session() as db, get_mirror_engine().begin() as mirror_conn:
-        _copy(db, mirror_conn, SQLModel.metadata.tables[table_name], ids)
+    with get_mirror_engine().begin() as mirror_conn:
+        _copy(mirror_conn, SQLModel.metadata.tables[table_name], ids)
 
 
 @celery_app.task(name='app.messages.mirror.reconcile_mirror_companies', ignore_result=True)
@@ -180,9 +180,12 @@ def reconcile_mirror_companies() -> int:
     return len(out_of_step)
 
 
-def _copy(db: DBSession, mirror_conn: Connection, table: Table, ids: list[int]) -> None:
+def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
     columns = [c for c in table.c if c.name not in SKIPPED_COLUMNS]
-    rows = db.execute(select(*columns).where(table.c.id.in_(ids))).mappings().all()  # ty:ignore[deprecated]
+    # Read and released before the mirror is touched, so the primary never sits idle in a
+    # transaction while the mirror answers.
+    with get_session() as db:
+        rows = db.execute(select(*columns).where(table.c.id.in_(ids))).mappings().all()  # ty:ignore[deprecated]
     # Parents first, so the upsert below never trips a foreign key. A parent is missing when it
     # predates the mirror, e.g. an open event on an email sent before MIRROR_DATABASE_URL was set.
     for fk in table.foreign_keys:
@@ -191,10 +194,10 @@ def _copy(db: DBSession, mirror_conn: Connection, table: Table, ids: list[int]) 
             continue
         present = mirror_conn.execute(select(fk.column).where(fk.column.in_(parent_ids))).scalars().all()
         if missing := parent_ids.difference(present):
-            _copy(db, mirror_conn, fk.column.table, sorted(missing))
+            _copy(mirror_conn, fk.column.table, sorted(missing))
 
-    found = [row['id'] for row in rows]
-    mirror_conn.execute(delete(table).where(table.c.id.in_(ids), table.c.id.not_in(found)))
+    if gone := set(ids).difference(row['id'] for row in rows):
+        mirror_conn.execute(delete(table).where(table.c.id.in_(gone)))
     if rows:
         upsert = pg_insert(table).values([dict(row) for row in rows])
         mirror_conn.execute(
