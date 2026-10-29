@@ -7,5 +7,6 @@ build/
 dist/
 .coverage
 .env
-.claude/
+/.claude/*
+!/.claude/commands/
 packaging/morpheus-mail/morpheus/
