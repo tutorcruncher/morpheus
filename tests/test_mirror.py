@@ -257,6 +257,25 @@ def test_queue_failure_does_not_fail_the_write(send_email, monkeypatch, caplog, 
     assert 'failed to queue mirror of messages' in caplog.text
 
 
+def test_copies_not_queued_past_backlog_cap(send_email, monkeypatch, caplog, mirror):
+    monkeypatch.setattr(app_settings, 'mirror_max_backlog', 2)
+    monkeypatch.setattr(mirror_module, '_backlog_full', False)
+    redis = tasks.get_redis()
+    redis.rpush('mirror', 'copy', 'copy')
+
+    send_email()
+    send_email()
+
+    assert rows(mirror, 'messages') == []
+    assert caplog.text.count('mirror queue past 2 copies') == 1
+
+    redis.delete('mirror')
+    send_email()
+
+    assert len(rows(mirror, 'messages')) == 1
+    assert 'mirror queue below 2 copies' in caplog.text
+
+
 def test_nothing_queued_without_mirror_url(send_email, monkeypatch):
     queued = []
     monkeypatch.setattr(mirror_module.mirror_rows, 'delay', lambda *args: queued.append(args))

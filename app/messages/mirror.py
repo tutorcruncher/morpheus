@@ -81,6 +81,8 @@ CHECKED_COLUMNS = {
 }
 
 _mirror_engine: Engine | None = None
+# Whether this process last found the mirror queue past mirror_max_backlog, so it logs only the change.
+_backlog_full = False
 
 
 def get_mirror_engine() -> Engine:
@@ -107,10 +109,29 @@ def mirror_ids(table_name: str, ids: list[int]) -> None:
     if not settings.mirror_database_url:
         return
     try:
-        mirror_rows.delay(table_name, ids)
+        if not _backlog_full_check():
+            mirror_rows.delay(table_name, ids)
     except Exception:
         # The primary write has already committed: a broker blip must not turn it into an error.
         logger.exception('failed to queue mirror of %s ids=%s', table_name, ids)
+
+
+def _backlog_full_check() -> bool:
+    global _backlog_full
+    # Imported here: app.messages.tasks imports this module.
+    from app.messages.tasks import get_redis
+
+    # The Redis list Celery keeps the mirror queue in, shared with the send tasks' queue.
+    full = get_redis().llen('mirror') >= settings.mirror_max_backlog
+    if full and not _backlog_full:
+        logger.error(
+            'mirror queue past %d copies, not queueing more: run check_mirror once it drains',
+            settings.mirror_max_backlog,
+        )
+    elif _backlog_full and not full:
+        logger.info('mirror queue below %d copies, queueing again', settings.mirror_max_backlog)
+    _backlog_full = full
+    return full
 
 
 def _record_write(mapper: Mapper, connection: Connection, target: SQLModel) -> None:
