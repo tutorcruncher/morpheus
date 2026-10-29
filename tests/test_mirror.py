@@ -1,5 +1,7 @@
 """Writes copied to the mirror database while Morpheus moves from RDS to Heroku Postgres (issue #502)."""
 
+from datetime import datetime, timezone
+
 import pytest
 from celery.exceptions import Retry
 from fastapi.testclient import TestClient
@@ -11,7 +13,7 @@ from app.core import database as db_module
 from app.core.celery import celery_app
 from app.core.config import settings as app_settings
 from app.messages import mirror as mirror_module, tasks
-from app.messages.models import Company, Message
+from app.messages.models import Company, Event, Message
 from tests.test_email import send_with_link
 
 TABLES = ('companies', 'message_groups', 'messages', 'events', 'links')
@@ -104,6 +106,32 @@ def test_webhook_event_and_cost_reach_mirror(send_sms, send_webhook, mirror):
     assert message['status'] == 'delivered'
     assert message['cost'] == 0.07
     assert len(rows(mirror, 'events')) == 1
+
+
+def test_events_with_same_ts_take_message_status_from_primary(db, send_sms, monkeypatch, mirror, mirror_url):
+    send_sms()
+    monkeypatch.setattr(app_settings, 'mirror_database_url', None)
+    ts = datetime(2032, 6, 6, 12, tzinfo=timezone.utc)
+    db.add_all([Event(message_id=1, status='delivered', ts=ts), Event(message_id=1, status='delivery_failed', ts=ts)])
+    db.commit()
+    monkeypatch.setattr(app_settings, 'mirror_database_url', mirror_url)
+
+    # In the other order to the primary: the mirror's trigger alone would settle on delivery_failed.
+    mirror_module.mirror_rows('events', [2])
+    mirror_module.mirror_rows('events', [1])
+
+    assert_mirror_matches_primary(mirror)
+    assert rows(mirror, 'messages')[0]['status'] == 'delivered'
+
+
+def test_older_message_copy_does_not_overwrite_newer(send_sms, mirror):
+    send_sms()
+    with mirror.begin() as conn:
+        conn.execute(text("UPDATE messages SET status = 'delivered', update_ts = update_ts + interval '1 hour'"))
+
+    mirror_module.mirror_rows('messages', [1])
+
+    assert rows(mirror, 'messages')[0]['status'] == 'delivered'
 
 
 def test_event_on_message_sent_before_mirror_brings_message_across(

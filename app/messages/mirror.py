@@ -27,7 +27,7 @@ Delete this module once Heroku Postgres is the primary database.
 
 import logging
 
-from sqlalchemy import Table, delete, event, make_url, select
+from sqlalchemy import Table, delete, event, make_url, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -196,6 +196,9 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
         if missing := parent_ids.difference(present):
             _copy(mirror_conn, fk.column.table, sorted(missing))
 
+    if table.name == 'events' and rows:
+        _sync_message_state(mirror_conn, {row['message_id'] for row in rows})
+
     if gone := set(ids).difference(row['id'] for row in rows):
         mirror_conn.execute(delete(table).where(table.c.id.in_(gone)))
     if rows:
@@ -204,5 +207,34 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
             upsert.on_conflict_do_update(
                 index_elements=[table.c.id],
                 set_={c.name: upsert.excluded[c.name] for c in columns if c.name != 'id'},
+                # A message's update_ts only moves forward on the primary, so a copy read before one
+                # that has already landed must not undo it. Equal still copies: a cost update leaves
+                # update_ts as it is.
+                where=table.c.update_ts <= upsert.excluded.update_ts if table.name == 'messages' else None,
             )
+        )
+
+
+def _sync_message_state(mirror_conn: Connection, message_ids: set[int]) -> None:
+    """Set these messages' status, update_ts and cost on the mirror to the primary's.
+
+    The update_message trigger moves a message's status and update_ts as its events land, and the
+    mirror's events land in a different order to the primary's: a tie on ts goes to whichever lands
+    first. Synced before the events are upserted, the message's update_ts is at least each event's
+    ts, so the mirror's trigger leaves it alone. Only these columns, as a full copy would rewrite the
+    body on every event.
+    """
+    messages = SQLModel.metadata.tables['messages']
+    state = (messages.c.status, messages.c.update_ts, messages.c.cost)
+    with get_session() as db:
+        primary = db.execute(select(messages.c.id, *state).where(messages.c.id.in_(message_ids))).all()  # ty:ignore[deprecated]
+    for id_, *values in primary:
+        mirror_conn.execute(
+            update(messages)
+            .where(
+                messages.c.id == id_,
+                messages.c.update_ts <= values[1],
+                or_(*(column.is_distinct_from(value) for column, value in zip(state, values))),
+            )
+            .values(dict(zip([c.name for c in state], values)))
         )
