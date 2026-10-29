@@ -49,8 +49,16 @@ READY_KEY = 'mirror_ready'
 # The mirror's create_tsvector trigger fills messages.vector on insert, so it is never copied.
 SKIPPED_COLUMNS = {'vector'}
 # An unreachable mirror must cost a mirror worker child seconds per attempt, not the OS's
-# minutes-long TCP connect timeout.
-CONNECT_TIMEOUT = 5
+# minutes-long TCP connect timeout. A stalled one (a lock wait, a half-open connection after a
+# failover) fails the statement into a retry rather than pinning the child. `options` replaces
+# make_engine's, so the timezone is repeated.
+MIRROR_CONNECT_ARGS = {
+    'connect_timeout': 5,
+    'options': '-c timezone=UTC -c statement_timeout=30s -c lock_timeout=5s',
+    'keepalives_idle': 30,
+    'keepalives_interval': 10,
+    'keepalives_count': 3,
+}
 
 _mirror_engine: Engine | None = None
 
@@ -68,7 +76,7 @@ def get_mirror_engine() -> Engine:
             settings.db_worker_max_overflow,
             # A failed copy's error, logged and retried, then names only the SQL, not the row values.
             hide_parameters=True,
-            connect_timeout=CONNECT_TIMEOUT,
+            **MIRROR_CONNECT_ARGS,
             **tls,
         )
     return _mirror_engine
@@ -127,6 +135,7 @@ event.listen(DBSession, 'after_rollback', _drop_pending)
     autoretry_for=(SQLAlchemyError,),
     retry_backoff=True,
     max_retries=5,
+    ignore_result=True,
 )
 def mirror_rows(table_name: str, ids: list[int]) -> None:
     """Make the mirror's copy of these rows match the primary: upsert the rows still on the primary
@@ -142,7 +151,7 @@ def mirror_rows(table_name: str, ids: list[int]) -> None:
         _copy(db, mirror_conn, SQLModel.metadata.tables[table_name], ids)
 
 
-@celery_app.task(name='app.messages.mirror.reconcile_mirror_companies')
+@celery_app.task(name='app.messages.mirror.reconcile_mirror_companies', ignore_result=True)
 def reconcile_mirror_companies() -> int:
     """Re-copy every company on the mirror that no longer matches the primary.
 

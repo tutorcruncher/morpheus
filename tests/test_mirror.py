@@ -224,6 +224,15 @@ def test_mirror_requires_tls_unless_url_sets_sslmode(monkeypatch):
     assert [kwargs.get('sslmode') for kwargs in engine_kwargs] == ['require', None]
 
 
+def test_mirror_statements_are_bounded(mirror):
+    with mirror.connect() as conn:
+        values = [
+            conn.execute(text(f'SHOW {name}')).scalar() for name in ('statement_timeout', 'lock_timeout', 'TimeZone')
+        ]
+
+    assert values == ['30s', '5s', 'UTC']
+
+
 def test_mirror_errors_omit_row_values(mirror):
     with pytest.raises(DataError) as exc_info, mirror.connect() as conn:
         conn.execute(text('select CAST(:v AS text), 1/0'), {'v': 'marker-c41d'})
