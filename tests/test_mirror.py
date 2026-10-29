@@ -125,6 +125,24 @@ def test_events_with_same_ts_take_message_status_from_primary(db, send_sms, monk
     assert rows(mirror, 'messages')[0]['status'] == 'delivered'
 
 
+@pytest.mark.parametrize('table_name', ['messages', 'events'])
+def test_message_locked_on_mirror_before_primary_read(table_name, send_sms, send_webhook, mirror):
+    send_webhook(send_sms(), 0.07)
+    statements = []
+    event.listen(
+        db_module.engine,
+        'before_cursor_execute',
+        lambda *args: statements.append('primary messages read' if 'FROM messages' in args[2] else 'primary'),
+    )
+    event.listen(mirror, 'before_cursor_execute', lambda *args: statements.append(args[2]))
+
+    mirror_module.mirror_rows(table_name, [1])
+
+    lock = next(i for i, s in enumerate(statements) if 'pg_advisory_xact_lock' in s)
+    assert 'primary messages read' not in statements[:lock]
+    assert 'primary messages read' in statements[lock:]
+
+
 def test_older_message_copy_does_not_overwrite_newer(send_sms, mirror):
     send_sms()
     with mirror.begin() as conn:

@@ -29,6 +29,7 @@ Delete this module once Heroku Postgres is the primary database.
 """
 
 import logging
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 from typing import Any
@@ -80,6 +81,9 @@ CHECKED_COLUMNS = {
     'events': 'id',
     'links': 'id',
 }
+
+# pg_advisory_xact_lock's first key for a message's lock, the second being its id.
+MESSAGE_LOCK = 502
 
 _mirror_engine: Engine | None = None
 # Whether this process last found the mirror queue past mirror_max_backlog, so it logs only the change.
@@ -283,7 +287,9 @@ def _on_mirror(query: TextClause, params: dict | None) -> list[Row]:
 
 def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
     columns = [c for c in table.c if c.name not in SKIPPED_COLUMNS]
-    # Read and released before the mirror is touched, so the primary never sits idle in a
+    if table.name == 'messages':
+        _lock_messages(mirror_conn, ids)
+    # Read and released before the mirror is written, so the primary never sits idle in a
     # transaction while the mirror answers.
     with get_session() as db:
         # In id order, so the upsert renames an old company before its re-created twin takes the
@@ -337,6 +343,7 @@ def _sync_message_state(mirror_conn: Connection, message_ids: set[int]) -> None:
     """
     messages = SQLModel.metadata.tables['messages']
     query = select(messages.c.id, messages.c.status, messages.c.update_ts, messages.c.cost)
+    _lock_messages(mirror_conn, message_ids)
     with get_session() as db:
         primary = db.execute(query.where(messages.c.id.in_(message_ids)).order_by(messages.c.id)).all()  # ty:ignore[deprecated]
     for id_, status, update_ts, cost in primary:
@@ -353,3 +360,16 @@ def _sync_message_state(mirror_conn: Connection, message_ids: set[int]) -> None:
             )
             .values(state)
         )
+
+
+def _lock_messages(mirror_conn: Connection, ids: Iterable[int]) -> None:
+    """Hold these messages' locks on the mirror until the copy commits.
+
+    Taken before the primary is read, so of two copies of a message the one that reads later also
+    writes later. Otherwise an older read could land last and undo a cost change, which leaves
+    update_ts as it is.
+    """
+    mirror_conn.execute(
+        text('SELECT count(pg_advisory_xact_lock(:lock, id)) FROM unnest(CAST(:ids AS integer[])) AS id'),
+        {'lock': MESSAGE_LOCK, 'ids': sorted(ids)},
+    )
