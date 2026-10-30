@@ -9,25 +9,25 @@ work, so the children must ignore SIGTERM and leave shutdown to the parent.
 
 import signal
 
-from billiard.common import reset_signals
-from celery.signals import worker_process_init
+from billiard.pool import Pool
+from celery.concurrency.prefork import process_initializer
 
-import app.worker  # noqa: F401  -- connects the worker_process_init receiver
-from app.core import database, logging
+from app.worker import celery_app
+
+
+def _sigterm_handler():
+    return repr(signal.getsignal(signal.SIGTERM))
 
 
 def test_prefork_child_ignores_sigterm(monkeypatch):
-    """Celery resets a child's SIGTERM to SIG_DFL, sends worker_process_init, then billiard's
-    reset_signals() installs _shutdown_cleanup on any SIGTERM that isn't SIG_IGN. Replay that order
-    and check the child ends up ignoring SIGTERM."""
-    monkeypatch.setattr(logging, 'configure_logfire', lambda: None)
-    monkeypatch.setattr(database, 'configure_worker_engine', lambda: None)
+    """Fork a real pool child, so this also fails if a celery or billiard upgrade reorders the
+    signal resets that run either side of the worker_process_init hook."""
+    monkeypatch.setattr('app.core.logging.configure_logfire', lambda: None)
+    monkeypatch.setattr('app.core.database.configure_worker_engine', lambda: None)
 
-    saved = signal.getsignal(signal.SIGTERM)
+    pool = Pool(1, initializer=process_initializer, initargs=(celery_app, 'test'))
     try:
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-        worker_process_init.send(sender=None)
-        reset_signals()
-        assert signal.getsignal(signal.SIGTERM) is signal.SIG_IGN
+        assert pool.apply_async(_sigterm_handler).get(timeout=10) == repr(signal.SIG_IGN)
     finally:
-        signal.signal(signal.SIGTERM, saved)
+        pool.close()
+        pool.join()

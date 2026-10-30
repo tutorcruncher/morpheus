@@ -32,7 +32,8 @@ def init_worker_process(**kwargs):
     # Heroku SIGTERMs every process in the dyno on restart. Left to billiard, each child died
     # mid-task and the parent acked the lost task away (MORPHEUS-3DWV/3DWW). The parent's warm
     # shutdown finishes and acks in-flight tasks itself; billiard's reset_signals() runs after this
-    # hook and keeps SIG_IGN. Heroku's SIGKILL 30s later is still the hard stop.
+    # hook and keeps SIG_IGN. Heroku's SIGKILL 30s later is still the hard stop. Billiard's own
+    # SIGTERMs to a child (cold shutdown, revoke --terminate) now wait for the task; use SIGKILL.
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     configure_logfire()
     # A prefork child needs only a couple of connections; rebuild the engine off the parent's
