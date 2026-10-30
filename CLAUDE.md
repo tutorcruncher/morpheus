@@ -175,7 +175,9 @@ rules and carry their own Morpheus checks; there is no separate context skill to
 - **Skills**: `/full-review` (gates, four agents in parallel, one GitHub review, PR stamp;
   report-only), `/bug-investigate` (evidence first, stop before editing, then test-first fix),
   `/start-issue` (plan with the four deploy questions, approval stop, implement, review loop, PR
-  description, finalize on explicit go), `/pr-description`.
+  description, finalize on explicit go), `/pr-description`, `/pr-uat` (runs a PR's cases, or any test
+  you describe, on a real local stack: web, worker, fake providers and test keys, so nothing real is
+  reachable; captures terminal screenshots and publishes them to the PR, or stays local with no PR).
 - **Tools** (`.claude/tools/`): `post_pr_review.py` (one review with inline comments, `CLAUDE SAYS:`
   prefix, dry-run first), `pr_review_stamp.py` (reviewed-commit stamp in the PR body),
   `pii_scan.py` and `pii_guard_hook.py` (below). `uv run pytest .claude/tools/test_pii_scan.py`

@@ -78,7 +78,7 @@ ALLOWED_NUMBERS = frozenset(
 
 # `user:password@host` inside a connection URL is a credential, not an address: the `secret` rule owns it.
 URL_CREDENTIAL_RE = re.compile(r'://[^\s/@]+:[^@\s/]+@')
-EMAIL_RE = re.compile(r'(?<![\w.+-])([\w.+-]+)@([\w-]+(?:\.[\w-]+)+)(?![\w-])')
+EMAIL_RE = re.compile(r'(?<![\w.+-])([\w.+-]+)@([\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,})(?![\w-])')
 # Candidate phone shapes: an optional +, then 10-15 digits with optional spaces, dots, dashes or
 # brackets between groups. Pure digit runs without a + or a separator are only treated as a phone
 # when they start with a trunk 0 (UK local form), so ids and timestamps do not trip it.

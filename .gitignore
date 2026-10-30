@@ -19,3 +19,4 @@ packaging/morpheus-mail/morpheus/
 !.claude/settings.json
 .claude/tools/__pycache__/
 .claude/tools/.pytest_cache/
+.playwright-mcp/

@@ -41,6 +41,11 @@ def test_allowlisted_addresses_pass():
     assert pii_scan.scan_text(text, 'x.py') == []
 
 
+def test_package_version_pins_pass():
+    assert pii_scan.scan_text('https://cdn.jsdelivr.net/npm/xterm' + AT + '5.3.0/lib/xterm.js', 'x.sh') == []
+    assert [h.rule for h in pii_scan.scan_text('person' + AT + 'mail.co.uk', 'x.py')] == ['email']
+
+
 def test_phone_number_hits():
     hits = pii_scan.scan_text(f'number = "{FAKE_PHONE}"', 'x.py')
     assert [h.rule for h in hits] == ['phone']
