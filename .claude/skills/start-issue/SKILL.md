@@ -6,7 +6,7 @@ description: >-
   /bug-investigate, consult the architect for a feature, write a plan that answers the four
   Morpheus deploy questions, STOP for approval, then implement on a branch off fresh origin/master
   (bugs test-first), run scoped tests and make lint, loop /full-review until APPROVED, draft the PR
-  description and STOP. Pushes and opens the PR only on an explicit go. Use when the user runs
+  description and STOP. Pushes, opens the PR and runs /pr-uat only on an explicit go. Use when the user runs
   /start-issue, says "start this issue", "implement this ticket", or hands over an issue.
 ---
 
@@ -122,5 +122,8 @@ When the user says push, finalize or hand it off:
 5. `uv run python .claude/tools/pr_review_stamp.py stamp <pr> "$(git rev-parse HEAD)" --verdict APPROVED`
    (the verdict from Step 7).
 6. `gh pr checks <pr> --watch`; report the result. A red check comes back to Step 6.
+7. Once CI is green, run `/pr-uat <pr>`. Skip it only when the diff cannot change how the service behaves
+   (docs, tooling, tests only), and say so. A failed case comes back to Step 6, then Step 7 and this list
+   again from item 2, re-stamping the new commit.
 
-Then report the PR URL. Merging is the user's call.
+Then report the PR URL and the UAT result. Merging is the user's call.
