@@ -29,12 +29,9 @@ def init_worker_process(**kwargs):
     from app.core.database import configure_worker_engine
     from app.core.logging import configure_logfire
 
-    # Heroku SIGTERMs every process in the dyno on restart. Left to billiard, a busy child died
-    # before its task ended and the parent acked the lost task away (MORPHEUS-3DWV/3DWW). The
-    # parent's warm shutdown finishes and acks in-flight tasks itself; billiard's reset_signals()
-    # runs after this hook and keeps SIG_IGN. Heroku's SIGKILL 30s later is still the hard stop.
-    # Billiard's own SIGTERMs to a child (cold shutdown, revoke --terminate) now wait for the task;
-    # use SIGKILL.
+    # Heroku SIGTERMs every process in the dyno on restart. Children ignore it so the parent's warm
+    # shutdown can finish and ack their tasks (MORPHEUS-3DWV/3DWW). Cold shutdown and
+    # revoke --terminate also send SIGTERM, so stopping a busy child now takes SIGKILL.
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     configure_logfire()
     # A prefork child needs only a couple of connections; rebuild the engine off the parent's
