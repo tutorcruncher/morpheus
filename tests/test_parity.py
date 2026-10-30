@@ -10,7 +10,6 @@ import base64
 import hashlib
 import hmac
 import logging
-import signal
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -319,16 +318,13 @@ def test_sentry_initialised_on_worker_startup_before_fork(monkeypatch):
     # Ordering guard: Sentry must init strictly pre-fork. Re-adding it to the post-fork
     # worker_process_init (double-init) would reintroduce the #514 fragility, so assert it does
     # NOT fire there — worker_process_init only ignores SIGTERM and sets up Logfire + the per-child
-    # DB engine (stubbed here so firing the signal doesn't rebuild the shared engine).
+    # DB engine (stubbed here so firing the signal doesn't rebuild the shared engine or make the
+    # test process ignore SIGTERM).
+    monkeypatch.setattr('app.worker.signal.signal', lambda *args: None)
     monkeypatch.setattr('app.core.logging.configure_logfire', lambda: None)
     monkeypatch.setattr('app.core.database.configure_worker_engine', lambda: None)
     calls.clear()
-    # The hook makes this process ignore SIGTERM, so put it back for the rest of the test run.
-    saved_sigterm = signal.getsignal(signal.SIGTERM)
-    try:
-        worker_process_init.send(sender=None)
-    finally:
-        signal.signal(signal.SIGTERM, saved_sigterm)
+    worker_process_init.send(sender=None)
     assert calls == []
 
 
