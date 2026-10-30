@@ -4,6 +4,7 @@ from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 
 from app.common.api.errors import HTTP409
+from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.messages.api.sms import _get_or_create_company
 from app.messages.models import MessageGroup
@@ -11,7 +12,7 @@ from app.messages.schemas import EmailSendModel
 from app.messages.tasks import get_redis, send_email, share_send_base
 
 logger = logging.getLogger('views.email')
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(AdminAuth)])
 
 
 @router.post('/send/email/')
