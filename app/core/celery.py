@@ -44,10 +44,13 @@ celery_app.conf.beat_schedule = {
         'task': 'app.messages.tasks.purge_deleted_companies',
         'schedule': crontab(hour='5', minute='45'),
     },
-    # Mirror database (issue #502): re-copies companies whose purge or rename never reached it.
-    # Returns straight away while MIRROR_DATABASE_URL is unset.
-    'reconcile-mirror-companies': {
+}
+
+# Mirror database (issue #502): re-copies companies whose purge or rename never reached it. Only
+# scheduled with MIRROR_DATABASE_URL set: it runs on the mirror queue, which has no consumer before
+# that, so every firing would wait in Redis.
+if settings.mirror_database_url:
+    celery_app.conf.beat_schedule['reconcile-mirror-companies'] = {
         'task': 'app.messages.mirror.reconcile_mirror_companies',
         'schedule': crontab(minute='50'),
-    },
-}
+    }

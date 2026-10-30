@@ -1,5 +1,8 @@
 """Writes copied to the mirror database while Morpheus moves from RDS to Heroku Postgres (issue #502)."""
 
+import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 
 import pytest
@@ -143,14 +146,15 @@ def test_message_locked_on_mirror_before_primary_read(table_name, send_sms, send
     assert 'primary messages read' in statements[lock:]
 
 
-def test_older_message_copy_does_not_overwrite_newer(send_sms, mirror):
-    send_sms()
+@pytest.mark.parametrize('table_name', ['messages', 'events'])
+def test_copy_repairs_mirror_message_ahead_of_primary(table_name, send_sms, send_webhook, mirror):
+    send_webhook(send_sms(), 0.07)
     with mirror.begin() as conn:
-        conn.execute(text("UPDATE messages SET status = 'delivered', update_ts = update_ts + interval '1 hour'"))
+        conn.execute(text("UPDATE messages SET status = 'open', update_ts = update_ts + interval '1 hour'"))
 
-    mirror_module.mirror_rows('messages', [1])
+    mirror_module.mirror_rows(table_name, [1])
 
-    assert rows(mirror, 'messages')[0]['status'] == 'delivered'
+    assert_mirror_matches_primary(mirror)
 
 
 def test_copy_read_before_cost_landed_keeps_mirror_cost(db, send_sms, monkeypatch, mirror, mirror_url):
@@ -169,6 +173,25 @@ def test_copy_read_before_cost_landed_keeps_mirror_cost(db, send_sms, monkeypatc
     message = rows(mirror, 'messages')[0]
     assert message['cost'] == 0.07
     assert message['status'] == 'delivered'
+
+
+def test_copy_keeps_sql_null_and_json_null_apart(db, send_sms, mirror):
+    send_sms()
+    send_sms()
+    send_sms()
+    db.execute(
+        text(
+            'UPDATE messages SET extra = CASE id '
+            """WHEN 1 THEN NULL WHEN 2 THEN 'null'::jsonb ELSE '{"key": "value"}'::jsonb END"""
+        )
+    )
+    db.commit()
+
+    mirror_module.mirror_rows('messages', [1, 2, 3])
+
+    query = text('SELECT id, extra::text FROM messages ORDER BY id')
+    with mirror.connect() as conn:
+        assert conn.execute(query).all() == [(1, None), (2, 'null'), (3, '{"key": "value"}')]
 
 
 def test_event_on_message_sent_before_mirror_brings_message_across(
@@ -294,6 +317,18 @@ def test_copies_not_queued_past_backlog_cap(send_email, monkeypatch, caplog, mir
     assert 'mirror queue below 2 copies' in caplog.text
 
 
+def test_backlog_cap_counts_copies_waiting_to_retry(send_email, monkeypatch, mirror):
+    monkeypatch.setattr(app_settings, 'mirror_max_backlog', 2)
+    monkeypatch.setattr(mirror_module, '_backlog_full', False)
+    redis = tasks.get_redis()
+    redis.rpush('mirror', 'copy')
+    redis.hset('unacked', 'tag', 'copy')
+
+    send_email()
+
+    assert rows(mirror, 'messages') == []
+
+
 def test_nothing_queued_without_mirror_url(send_email, monkeypatch):
     queued = []
     monkeypatch.setattr(mirror_module.mirror_rows, 'delay', lambda *args: queued.append(args))
@@ -341,6 +376,18 @@ def test_check_mirror_requeues_rows_that_differ(send_sms, send_webhook, monkeypa
     assert 'SET LOCAL statement_timeout' in mirror_statements
 
 
+def test_check_mirror_counts_rows_past_backlog_cap(send_sms, monkeypatch, mirror):
+    send_sms()
+    with mirror.begin() as conn:
+        conn.execute(text('DELETE FROM messages'))
+    monkeypatch.setattr(app_settings, 'mirror_max_backlog', 0)
+
+    # Not queued, but a 0 here would say the row is in step.
+    assert mirror_module.check_mirror(FROM_FIRST_ID)['messages'] == 1
+
+    assert rows(mirror, 'messages') == []
+
+
 def test_check_mirror_leaves_history_before_backfill(send_sms, send_webhook, monkeypatch, mirror, mirror_url):
     monkeypatch.setattr(mirror_module, 'CHECK_RANGE', 2)
     # Messages 1 and 2: history from before the backfill's cutoff, on the primary only.
@@ -367,6 +414,18 @@ def test_check_mirror_leaves_history_before_backfill(send_sms, send_webhook, mon
     assert set(mirror_module.check_mirror(start).values()) == {0}
 
 
+@pytest.mark.parametrize('url, scheduled', [('', False), ('postgresql://u@db.example.com/x', True)])
+def test_reconcile_scheduled_only_with_mirror_url(url, scheduled):
+    code = (
+        "from app.core.celery import celery_app; print('reconcile-mirror-companies' in celery_app.conf.beat_schedule)"
+    )
+    env = os.environ | {'MIRROR_DATABASE_URL': url}
+
+    result = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True, text=True, check=True)
+
+    assert result.stdout.strip() == str(scheduled)
+
+
 def test_reconcile_does_nothing_without_mirror_url():
     assert mirror_module.reconcile_mirror_companies() == 0
 
@@ -386,6 +445,10 @@ def test_copy_retries_only_transient_errors(error, raised, monkeypatch, mirror):
 
     with pytest.raises(raised):
         mirror_module.mirror_rows.delay('companies', [1])
+
+
+def test_copy_put_back_when_its_child_is_killed():
+    assert mirror_module.mirror_rows.reject_on_worker_lost is True
 
 
 def test_copies_run_on_their_own_queue():

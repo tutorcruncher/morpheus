@@ -17,7 +17,7 @@ mirror_rows treats DATABASE_URL as the truth: it deletes mirror rows the primary
 overwrites the rest. So the switch goes in this order, or a process still on the old settings copies
 RDS over the new primary:
 1. Stop writes to RDS: maintenance on, worker and beat scaled to 0 (mirror keeps running).
-2. Wait for the mirror queue to drain.
+2. Wait for the mirror queue to drain: LLEN mirror and HLEN unacked both 0, as a retry waits in unacked.
 3. Run reconcile_mirror_companies and check_mirror (with the backfill's start ids), wait for the
    mirror queue to drain, and repeat
    until check_mirror returns all zeros: both only queue copies, which step 4 would drop. Then
@@ -34,9 +34,24 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 from typing import Any
 
-from sqlalchemy import Row, Table, TextClause, delete, event, func, make_url, or_, select, text, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy import (
+    Row,
+    Table,
+    Text,
+    TextClause,
+    cast,
+    delete,
+    event,
+    func,
+    literal,
+    make_url,
+    or_,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
+from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Mapper, SessionTransaction, object_session
 from sqlmodel import SQLModel
@@ -126,8 +141,11 @@ def _backlog_full_check() -> bool:
     # Imported here: app.messages.tasks imports this module.
     from app.messages.tasks import get_redis
 
-    # The Redis list Celery keeps the mirror queue in, shared with the send tasks' queue.
-    full = get_redis().llen('mirror') >= settings.mirror_max_backlog
+    redis = get_redis()
+    # The Redis list Celery keeps the mirror queue in, shared with the send tasks' queue, plus the hash
+    # of tasks workers hold: a copy waiting to retry sits there, so in a mirror outage the list reads 0.
+    # The hash holds send tasks too, which also use the Redis this cap protects.
+    full = redis.llen('mirror') + redis.hlen('unacked') >= settings.mirror_max_backlog
     if full and not _backlog_full:
         logger.error(
             'mirror queue past %d copies, not queueing more: run check_mirror once it drains',
@@ -187,6 +205,9 @@ event.listen(DBSession, 'after_rollback', _drop_pending)
     retry_backoff_max=600,
     retry_jitter=False,
     max_retries=14,
+    # A child killed mid-copy (the OOM killer, kill -9) puts the copy back: without this, task_acks_late
+    # acks it as failed and it is lost. A copy only re-reads the primary, so running it twice is safe.
+    reject_on_worker_lost=True,
     ignore_result=True,
 )
 def mirror_rows(table_name: str, ids: list[int]) -> None:
@@ -234,13 +255,14 @@ def check_mirror(backfill_start: dict[str, int]) -> dict[str, int]:
     table but companies: below it the primary keeps history the mirror never takes, and
     delete_old_emails removes it after the switch. Companies, a row per agency or branch, are
     compared whole. Each id range is compared by one md5 per side, then row by row where the two
-    differ. Returns the rows queued per table: let the mirror queue drain and run it again until
+    differ. Returns the rows that differ per table, including any mirror_ids skipped past
+    mirror_max_backlog, so a 0 always means in step: let the mirror queue drain and run it again until
     every count is 0. A pass reads every row compared, so run it live until it returns all zeros
     before the switch window, where the passes then only pick up the last writes.
     """
-    queued = {}
+    differing = {}
     for table_name, columns in CHECKED_COLUMNS.items():
-        queued[table_name] = 0
+        differing[table_name] = 0
         row_md5 = f'md5(row({columns})::text)'
         in_range = f'FROM {table_name} WHERE id >= :lo AND id < :hi'
         range_md5 = text(f"SELECT md5(string_agg({row_md5}, '' ORDER BY id)) {in_range}")
@@ -261,8 +283,8 @@ def check_mirror(backfill_start: dict[str, int]) -> dict[str, int]:
             logger.info('re-copying %d %s rows from id %d', len(ids), table_name, lo)
             for batch in batched(ids, CHECK_COPY_SIZE):
                 mirror_ids(table_name, list(batch))
-            queued[table_name] += len(ids)
-    return queued
+            differing[table_name] += len(ids)
+    return differing
 
 
 def _on_both(query: TextClause, params: dict | None = None) -> tuple[list[Row], list[Row]]:
@@ -294,7 +316,8 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
     with get_session() as db:
         # In id order, so the upsert renames an old company before its re-created twin takes the
         # code, and two copies touching the same rows lock them in the same order.
-        query = select(*columns).where(table.c.id.in_(ids)).order_by(table.c.id)
+        read = [cast(c, Text).label(c.name) if isinstance(c.type, JSONB) else c for c in columns]
+        query = select(*read).where(table.c.id.in_(ids)).order_by(table.c.id)
         rows = db.execute(query).mappings().all()  # ty:ignore[deprecated]
     # Parents first, so the upsert below never trips a foreign key. A parent is missing when it
     # predates the mirror, e.g. an open event on an email sent before MIRROR_DATABASE_URL was set.
@@ -316,20 +339,25 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
             mirror_conn.exec_driver_sql('SET LOCAL statement_timeout = 0')
         mirror_conn.execute(delete(table).where(table.c.id.in_(gone)))
     if rows:
-        upsert = pg_insert(table).values([dict(row) for row in rows])
+        upsert = pg_insert(table).values([_row_values(table, row) for row in rows])
         set_: dict[str, Any] = {c.name: upsert.excluded[c.name] for c in columns if c.name != 'id'}
         if table.name == 'messages':
             set_['cost'] = func.coalesce(upsert.excluded.cost, table.c.cost)
-        mirror_conn.execute(
-            upsert.on_conflict_do_update(
-                index_elements=[table.c.id],
-                set_=set_,
-                # A message's update_ts only moves forward on the primary, so a copy read before one
-                # that has already landed must not undo it. Equal still copies: a cost update leaves
-                # update_ts as it is, and a copy read before the cost landed keeps the mirror's.
-                where=table.c.update_ts <= upsert.excluded.update_ts if table.name == 'messages' else None,
-            )
-        )
+        # No update_ts guard: _lock_messages lands the later read last, so the primary's state is never
+        # stale here, and a guard would stop check_mirror repairing a mirror message ahead of the primary.
+        mirror_conn.execute(upsert.on_conflict_do_update(index_elements=[table.c.id], set_=set_))
+
+
+def _row_values(table: Table, row: RowMapping) -> dict[str, Any]:
+    """The upsert's values for a row _copy read, with its JSONB columns as text.
+
+    A SQL NULL and a JSON null both read as None, and None writes as a JSON null, so the text keeps
+    each as the primary holds it.
+    """
+    return {
+        name: cast(literal(value, Text), JSONB) if isinstance(table.c[name].type, JSONB) else value
+        for name, value in row.items()
+    }
 
 
 def _sync_message_state(mirror_conn: Connection, message_ids: set[int]) -> None:
@@ -354,9 +382,7 @@ def _sync_message_state(mirror_conn: Connection, message_ids: set[int]) -> None:
         mirror_conn.execute(
             update(messages)
             .where(
-                messages.c.id == id_,
-                messages.c.update_ts <= update_ts,
-                or_(*(messages.c[name].is_distinct_from(value) for name, value in state.items())),
+                messages.c.id == id_, or_(*(messages.c[name].is_distinct_from(value) for name, value in state.items()))
             )
             .values(state)
         )

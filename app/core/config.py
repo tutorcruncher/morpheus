@@ -13,8 +13,9 @@ class Settings(BaseSettings):
     # Second database every write is copied to while Morpheus moves from RDS to Heroku Postgres
     # (issue #502); unset turns the copying off. See app/messages/mirror.py.
     mirror_database_url: str | None = None
-    # Copies waiting in the mirror queue past which writes stop queueing them, so a stopped mirror
-    # worker cannot fill the Redis the send tasks share; check_mirror re-queues the rows skipped.
+    # Copies waiting in the mirror queue or held for a retry past which writes stop queueing them, so
+    # a stopped mirror worker cannot fill the Redis the send tasks share; check_mirror re-queues the
+    # rows skipped. A copy takes about 1.7 KB of Redis, so this default is about 340 MB.
     mirror_max_backlog: int = 200_000
     # Heroku's rediscloud add-on sets REDISCLOUD_URL; honour it as the source of truth and
     # only fall back to REDIS_URL. AliasChoices checks the names in order, first found wins,
