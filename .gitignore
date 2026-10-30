@@ -7,5 +7,15 @@ build/
 dist/
 .coverage
 .env
-.claude/
 packaging/morpheus-mail/morpheus/
+
+# Claude Code tooling: commit the agents, skills, tools and shared settings; ignore everything else
+# under .claude/ (review reports in reviews/ architect/ security/ performance/, investigations/, uat/,
+# worktrees/, plans/, settings.local.json, pii-denylist.txt, caches).
+.claude/*
+!.claude/agents/
+!.claude/skills/
+!.claude/tools/
+!.claude/settings.json
+.claude/tools/__pycache__/
+.claude/tools/.pytest_cache/
