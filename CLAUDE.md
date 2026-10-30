@@ -159,18 +159,43 @@ changes; an unchanged version skips the upload.
 - Pushing a tag runs the test job, then deploys `master` to Heroku and publishes `morpheus-mail`.
 - The base branch is `master`. Open PRs against `tutorcruncher/morpheus`.
 
-## Local Claude tooling (`.claude/`)
+## Claude Code tooling (`.claude/`)
 
-`.claude/` is gitignored, so its contents exist only in clones where someone has added them. Where
-present:
+`.claude/agents/`, `.claude/skills/`, `.claude/tools/` and `.claude/settings.json` are committed;
+everything else under `.claude/` (review reports, investigations, plans, worktrees,
+`settings.local.json`, `pii-denylist.txt`) is gitignored. The agents read this file for the repo
+rules and carry their own Morpheus checks; there is no separate context skill to keep in sync.
 
-- **`project-context` skill** (`.claude/skills/project-context/SKILL.md`): stack, layout, commands,
-  local databases, test infrastructure, the TC2 contract and the operational rules above. The
-  review agents in `.claude/agents/` load it through `skills: project-context`. Keep it consistent
-  with this file.
-- **`terminal-record` skill** (`.claude/skills/terminal-record/`): captures real terminal
-  screenshots (a PTY rendered with xterm.js and screenshotted through the Playwright MCP) and posts
-  them under `### Testing` in a PR. Screenshots upload to the `pr-screenshots` branch through the
-  GitHub REST API, never a git push. They are public, so they show synthetic data only.
-- Commands `/full-review`, `/fix-issue`, `/pr-uat` and `/pr-record` live in `.claude/commands/`;
-  `/fix-issue` creates worktrees under `.claude/worktrees/`.
+- **Agents** (`.claude/agents/`): `architect` (schema and production SQL, Celery compatibility
+  across a deploy, TC2 contract, morpheus-mail versioning), `code-reviewer`, `security-auditor`,
+  `performance-reviewer`. Each writes a timestamped report under a gitignored directory
+  (`.claude/{architect,reviews,security,performance}/`), anchors findings to changed lines, and
+  returns APPROVED / CHANGES_REQUESTED / DISCUSSION_NEEDED. They never run pytest in a shared
+  checkout: tests truncate every table and flush Redis.
+- **Skills**: `/full-review` (gates, four agents in parallel, one GitHub review, PR stamp;
+  report-only), `/bug-investigate` (evidence first, stop before editing, then test-first fix),
+  `/start-issue` (plan with the four deploy questions, approval stop, implement, review loop, PR
+  description, finalize on explicit go), `/pr-description`, `/pr-uat` (runs a PR's cases, or any test
+  you describe, on a real local stack: web, worker, fake providers and test keys, so nothing real is
+  reachable; captures terminal screenshots and publishes them to the PR, or stays local with no PR).
+- **Tools** (`.claude/tools/`): `post_pr_review.py` (one review with inline comments, `CLAUDE SAYS:`
+  prefix, dry-run first), `pr_review_stamp.py` (reviewed-commit stamp in the PR body),
+  `pii_scan.py` and `pii_guard_hook.py` (below). `uv run pytest .claude/tools/test_pii_scan.py`
+  tests the scanner and hook; CI does not run it.
+
+### Customer data never reaches the repository
+
+Customer data may be read to diagnose a problem but is never written out. No names, email
+addresses, phone numbers, company codes, message bodies, recipient lists or webhook payloads from
+Logfire, Sentry, any database or a provider may appear in code, tests, fixtures, commit messages,
+branch names, PR bodies, issue or review comments, screenshots or saved reports. Prefer ids. Use
+placeholders (`foobar@example.org`, `<company_code>`, `billing-test`) when a value must be shown,
+and quote the minimum in the terminal too. Every subagent brief restates this rule.
+
+`.claude/tools/pii_scan.py` enforces part of it: a PreToolUse hook in `.claude/settings.json` scans
+the staged diff before `git commit`, the outgoing commits before `git push`, and the command text
+and body files before `gh pr`, `gh issue` and `gh api` writes, and blocks on a hit (or when the
+scan cannot run). `post_pr_review.py` scans every comment before posting, and `/full-review` treats
+a hit as a BLOCKER. The scan recognises addresses, phone-number shapes, key shapes and provider
+hostnames, plus literal terms from an optional gitignored `.claude/pii-denylist.txt`. It cannot
+recognise a customer name or company code on its own, so the written rule still applies in full.
