@@ -20,6 +20,9 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
+    # Copies to the mirror database (issue #502) run on their own queue, served by the Procfile's
+    # mirror process, so a slow or unreachable mirror never holds up sends.
+    task_routes={'app.messages.mirror.*': {'queue': 'mirror'}},
 )
 
 
@@ -42,3 +45,12 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(hour='5', minute='45'),
     },
 }
+
+# Mirror database (issue #502): re-copies companies whose purge or rename never reached it. Only
+# scheduled with MIRROR_DATABASE_URL set: it runs on the mirror queue, which has no consumer before
+# that, so every firing would wait in Redis.
+if settings.mirror_database_url:
+    celery_app.conf.beat_schedule['reconcile-mirror-companies'] = {
+        'task': 'app.messages.mirror.reconcile_mirror_companies',
+        'schedule': crontab(minute='50'),
+    }
