@@ -22,8 +22,12 @@ RDS over the new primary:
    mirror queue to drain, and repeat
    until check_mirror returns all zeros: both only queue copies, which step 4 would drop. Then
    setval the sequences.
-4. In one config change, point DATABASE_URL at Heroku and unset MIRROR_DATABASE_URL.
-5. Scale mirror to 0, worker and beat back up, maintenance off.
+4. Point DATABASE_URL at Heroku, then remove MIRROR_DATABASE_URL. On Heroku these are two releases,
+   each restarting every dyno: `heroku pg:promote MIRROR_DATABASE`, then
+   `heroku addons:detach MIRROR_DATABASE` (an attachment's config var is removed by detaching it).
+   Between the two, both URLs name Heroku and a copy rewrites rows onto themselves, which is harmless
+   while writes are stopped. Not checked: that pg:promote replaces a DATABASE_URL set by hand.
+5. Once both releases are out: scale mirror to 0, worker and beat back up, maintenance off.
 
 Delete this module once Heroku Postgres is the primary database.
 """

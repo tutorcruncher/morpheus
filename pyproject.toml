@@ -96,6 +96,8 @@ env = [
     # `D:` = default; lets the GHA workflow override DATABASE_URL/REDIS_URL with credentialed values.
     "D:DATABASE_URL=postgresql://postgres@localhost:5432/morpheus_test",
     "D:REDIS_URL=redis://localhost:6379/4",
+    # Mirroring off unless a test turns it on, whatever a local .env sets.
+    "MIRROR_DATABASE_URL=",
     "AUTH_KEY=testing",
     "USER_AUTH_KEY=insecure",
     "MANDRILL_KEY=good-mandrill-testing-key",

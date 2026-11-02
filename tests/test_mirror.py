@@ -132,14 +132,16 @@ def test_events_with_same_ts_take_message_status_from_primary(db, send_sms, monk
 def test_message_locked_on_mirror_before_primary_read(table_name, send_sms, send_webhook, mirror):
     send_webhook(send_sms(), 0.07)
     statements = []
-    event.listen(
-        db_module.engine,
-        'before_cursor_execute',
-        lambda *args: statements.append('primary messages read' if 'FROM messages' in args[2] else 'primary'),
-    )
-    event.listen(mirror, 'before_cursor_execute', lambda *args: statements.append(args[2]))
 
-    mirror_module.mirror_rows(table_name, [1])
+    def record_primary(*args):
+        statements.append('primary messages read' if 'FROM messages' in args[2] else 'primary')
+
+    event.listen(db_module.engine, 'before_cursor_execute', record_primary)
+    event.listen(mirror, 'before_cursor_execute', lambda *args: statements.append(args[2]))
+    try:
+        mirror_module.mirror_rows(table_name, [1])
+    finally:
+        event.remove(db_module.engine, 'before_cursor_execute', record_primary)
 
     lock = next(i for i, s in enumerate(statements) if 'pg_advisory_xact_lock' in s)
     assert 'primary messages read' not in statements[:lock]
@@ -414,7 +416,7 @@ def test_check_mirror_leaves_history_before_backfill(send_sms, send_webhook, mon
     assert set(mirror_module.check_mirror(start).values()) == {0}
 
 
-@pytest.mark.parametrize('url, scheduled', [('', False), ('postgresql://u@db.example.com/x', True)])
+@pytest.mark.parametrize('url, scheduled', [('', False), ('postgresql://db.example.com/x', True)])
 def test_reconcile_scheduled_only_with_mirror_url(url, scheduled):
     code = (
         "from app.core.celery import celery_app; print('reconcile-mirror-companies' in celery_app.conf.beat_schedule)"
@@ -461,7 +463,7 @@ def test_copies_run_on_their_own_queue():
 def test_mirror_requires_tls_unless_url_sets_sslmode(monkeypatch):
     engine_kwargs = []
     monkeypatch.setattr(mirror_module, 'make_engine', lambda *args, **kwargs: engine_kwargs.append(kwargs))
-    for url in ('postgresql://u@db.example.com/x', 'postgresql://u@localhost/x?sslmode=prefer'):
+    for url in ('postgresql://db.example.com/x', 'postgresql://u@localhost/x?sslmode=prefer'):
         monkeypatch.setattr(mirror_module, '_mirror_engine', None)
         monkeypatch.setattr(app_settings, 'mirror_database_url', url)
         mirror_module.get_mirror_engine()

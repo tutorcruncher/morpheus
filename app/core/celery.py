@@ -6,7 +6,7 @@ from app.core.config import settings
 celery_app = Celery(
     'morpheus',
     broker=settings.redis_url,
-    include=['app.messages.tasks'],
+    include=['app.messages.tasks', 'app.messages.mirror'],
 )
 
 celery_app.conf.update(
