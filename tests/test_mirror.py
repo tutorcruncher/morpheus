@@ -157,22 +157,22 @@ def test_copy_repairs_mirror_message_ahead_of_primary(table_name, send_sms, send
     assert_mirror_matches_primary(mirror)
 
 
-def test_copy_read_before_cost_landed_keeps_mirror_cost(db, send_sms, monkeypatch, mirror, mirror_url):
+@pytest.mark.parametrize('table_name', ['messages', 'events'])
+def test_copy_repairs_mirror_cost_primary_lacks(table_name, db, send_sms, monkeypatch, mirror, mirror_url):
     send_sms()
     monkeypatch.setattr(app_settings, 'mirror_database_url', None)
     db.add(Event(message_id=1, status='delivered', ts=datetime(2032, 6, 6, 12, tzinfo=timezone.utc)))
     db.commit()
     monkeypatch.setattr(app_settings, 'mirror_database_url', mirror_url)
-    # The cost's copy landed first; these copies read the primary before the cost was set there.
+    mirror_module.mirror_rows('messages', [1])
     with mirror.begin() as conn:
         conn.execute(text('UPDATE messages SET cost = 0.07'))
 
-    mirror_module.mirror_rows('messages', [1])
-    mirror_module.mirror_rows('events', [1])
+    mirror_module.mirror_rows(table_name, [1])
 
-    message = rows(mirror, 'messages')[0]
-    assert message['cost'] == 0.07
-    assert message['status'] == 'delivered'
+    # Messages only: the event was written with the mirror off, and only the events copy takes it across.
+    assert rows(mirror, 'messages') == rows(db_module.engine, 'messages')
+    assert rows(mirror, 'messages')[0]['cost'] is None
 
 
 def test_copy_keeps_sql_null_and_json_null_apart(db, send_sms, mirror):

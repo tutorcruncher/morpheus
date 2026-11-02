@@ -42,7 +42,6 @@ from sqlalchemy import (
     cast,
     delete,
     event,
-    func,
     literal,
     make_url,
     or_,
@@ -341,10 +340,9 @@ def _copy(mirror_conn: Connection, table: Table, ids: list[int]) -> None:
     if rows:
         upsert = pg_insert(table).values([_row_values(table, row) for row in rows])
         set_: dict[str, Any] = {c.name: upsert.excluded[c.name] for c in columns if c.name != 'id'}
-        if table.name == 'messages':
-            set_['cost'] = func.coalesce(upsert.excluded.cost, table.c.cost)
-        # No update_ts guard: _lock_messages lands the later read last, so the primary's state is never
-        # stale here, and a guard would stop check_mirror repairing a mirror message ahead of the primary.
+        # No update_ts or cost guard: _lock_messages lands the later read last, so the primary's state is
+        # never stale here, and a guard would stop check_mirror repairing a mirror message ahead of the
+        # primary.
         mirror_conn.execute(upsert.on_conflict_do_update(index_elements=[table.c.id], set_=set_))
 
 
@@ -375,10 +373,7 @@ def _sync_message_state(mirror_conn: Connection, message_ids: set[int]) -> None:
     with get_session() as db:
         primary = db.execute(query.where(messages.c.id.in_(message_ids)).order_by(messages.c.id)).all()  # ty:ignore[deprecated]
     for id_, status, update_ts, cost in primary:
-        state = {'status': status, 'update_ts': update_ts}
-        # Never NULL over a cost: the primary only sets one, so a NULL was read before it landed.
-        if cost is not None:
-            state['cost'] = cost
+        state = {'status': status, 'update_ts': update_ts, 'cost': cost}
         mirror_conn.execute(
             update(messages)
             .where(
