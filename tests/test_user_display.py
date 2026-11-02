@@ -52,12 +52,14 @@ def test_user_list(cli, settings, send_email, sync_db: SyncDb):
         'method': 'email-test',
         'subject': 'test message',
         'cost': 0,
+        'tags': [expected_msg_ids[3][:36]],
     }
 
 
 def test_user_list_no_ext(cli, settings, send_email, sync_db: SyncDb):
+    uid = str(uuid.uuid4())
     send_email(
-        uid=str(uuid.uuid4()),
+        uid=uid,
         company_code='testing',
         recipients=[{'address': '3@t.com'}],
         subject_template='test message',
@@ -81,6 +83,7 @@ def test_user_list_no_ext(cli, settings, send_email, sync_db: SyncDb):
         'method': 'email-test',
         'subject': 'test message',
         'cost': 0,
+        'tags': [uid],
     }
 
 
@@ -249,6 +252,7 @@ def test_user_tags(cli, settings, send_email):
     data = r.json()
     assert data['count'] == 1, json.dumps(data, indent=2)
     assert data['items'][0]['external_id'] == f'{uid1}-2tcom'
+    assert data['items'][0]['tags'] == sorted(['broadcast:123', 'shoesize:8', 'trigger:broadcast', uid1, 'user:2'])
 
     r = cli.get(modify_url('/messages/email-test/', settings, 'tagtest') + '&tags=trigger:other&tags=shoesize:8')
     assert r.status_code == 200, r.text
@@ -296,6 +300,7 @@ def test_message_details(cli, settings, send_email, sync_db: SyncDb, worker, loo
         'events': [{'status': 'Opened', 'datetime': IsStr(regex=r'\d{4}-\d{2}-\d{2}.*')}],
         'attachments': [],
         'cost': 0,
+        'tags': [msg_ext_id[:36]],
     }
 
 
@@ -349,6 +354,7 @@ def test_message_details_links(cli, settings, send_email, sync_db: SyncDb, worke
         'events': [{'status': 'Opened', 'datetime': IsStr(regex=r'\d{4}-\d{2}-\d{2}.*')}],
         'attachments': [['/attachment-doc/123/', 'testing.pdf'], ['#', 'different.pdf']],
         'cost': 0,
+        'tags': [msg_ext_id[:36]],
     }
 
 
@@ -428,6 +434,7 @@ def test_user_sms_list(cli, settings, send_sms, sync_db: SyncDb):
                 'status': 'Sent',
                 'method': 'sms-test',
                 'cost': 0,
+                'tags': [ext_id[:36]],
             },
         ],
         'count': 1,
@@ -459,6 +466,7 @@ def test_user_sms_list_after_webhook(cli, settings, send_sms, worker, send_webho
                 'status': 'Delivered',
                 'method': 'sms-test',
                 'cost': 0.07,
+                'tags': [ext_id[:36]],
             },
         ],
         'count': 1,

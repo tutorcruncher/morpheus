@@ -13,7 +13,7 @@ from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.messages.models import Company, Message, MessageGroup, SmsSendMethod
 from app.messages.schemas import SmsNumbersModel, SmsSendModel
-from app.messages.tasks import get_redis, send_sms, validate_number
+from app.messages.tasks import get_redis, send_sms, share_send_base, validate_number
 
 logger = logging.getLogger('views.sms')
 router = APIRouter(dependencies=[Depends(AdminAuth)])
@@ -98,8 +98,9 @@ def send_sms_view(m: SmsSendModel, db: DBSession = Depends(get_db)):
 
     recipients = m.recipients
     m_base = m.model_copy(update={'recipients': []}).model_dump(mode='json')
+    m_args = share_send_base(group_id, m_base, len(recipients))  # ty:ignore[invalid-argument-type]
     for recipient in recipients:
-        send_sms.delay(group_id, company_id, recipient.model_dump(mode='json'), m_base)
+        send_sms.delay(group_id, company_id, recipient.model_dump(mode='json'), *m_args)
 
     return JSONResponse(content={'status': 'enqueued', 'spend': month_spend}, status_code=201)
 

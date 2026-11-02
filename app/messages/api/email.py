@@ -4,14 +4,15 @@ from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 
 from app.common.api.errors import HTTP409
+from app.common.auth import AdminAuth
 from app.core.database import DBSession, get_db
 from app.messages.api.sms import _get_or_create_company
 from app.messages.models import MessageGroup
 from app.messages.schemas import EmailSendModel
-from app.messages.tasks import get_redis, send_email
+from app.messages.tasks import get_redis, send_email, share_send_base
 
 logger = logging.getLogger('views.email')
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(AdminAuth)])
 
 
 @router.post('/send/email/')
@@ -53,6 +54,7 @@ def email_send_view(
 
     recipients = m.recipients
     m_base = m.model_copy(update={'recipients': []}).model_dump(mode='json')
+    m_args = share_send_base(group_id, m_base, len(recipients))  # ty:ignore[invalid-argument-type]
     for recipient in recipients:
-        send_email.delay(group_id, company_id, recipient.model_dump(mode='json'), m_base)
+        send_email.delay(group_id, company_id, recipient.model_dump(mode='json'), *m_args)
     return JSONResponse({'message': '201 job enqueued'}, status_code=201)

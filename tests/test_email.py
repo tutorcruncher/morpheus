@@ -917,6 +917,24 @@ def test_link_shortening_not_image(send_email, tmpdir, cli):
     assert re.search(r'<p>https://click.example.com/l(\S+) http://whatever\.com/img\.jpg</p>', msg_file), msg_file
 
 
+@pytest.mark.parametrize('headers', [{}, {'Authorization': 'wrong-key'}], ids=['missing', 'wrong'])
+def test_send_email_requires_auth(cli: TestClient, send_email, headers):
+    uid = str(uuid4())
+    data = {
+        'uid': uid,
+        'company_code': 'foobar',
+        'from_address': 'Sam Sender <sam@example.com>',
+        'method': 'email-test',
+        'subject_template': 'test email',
+        'recipients': [{'address': 'foobar@example.org'}],
+    }
+    r = cli.post('/send/email/', json=data, headers=headers)
+    assert r.status_code == 403, r.text
+    assert r.json() == {'message': 'Invalid token'}
+    # the rejected request must not claim the uid, or a later authorised send would get a 409
+    send_email(uid=uid)
+
+
 def test_not_json(cli: TestClient, tmpdir):
     r = cli.post('/send/email/', data='xxx', headers={'Authorization': 'testing-key'})
     assert r.status_code == 422, r.text

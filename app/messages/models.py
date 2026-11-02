@@ -219,6 +219,7 @@ class Message(SQLModel, table=True):
             'status': self.get_status_display(),
             'method': self.method,
             'cost': self.cost or 0,
+            'tags': sorted(self.tags or []),
         }
 
     def get_attachments(self):

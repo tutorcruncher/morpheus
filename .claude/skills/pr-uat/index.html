@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="tsh-dir" content="__DIR__" />
+    <link rel="stylesheet" href="/xterm.css" />
+    <script src="/xterm.js"></script>
+    <style>
+      html, body { margin: 0; background: #0c0c0c; }
+      #t { padding: 10px; }
+    </style>
+  </head>
+  <body>
+    <div id="t"></div>
+    <script>
+      // setup-terminal.sh fills in the size (TSH_ROWS x TSH_COLS, default 40x118) and the harness dir.
+      const term = new Terminal({
+        fontSize: 14,
+        cols: __COLS__,
+        rows: __ROWS__,
+        convertEol: true,
+        theme: { background: '#0c0c0c', foreground: '#e0e0e0' },
+      });
+      term.open(document.getElementById('t'));
+      const ws = new WebSocket('ws://' + location.host + '/websocket');
+      ws.onopen = () => ws.send(JSON.stringify(['set_size', __ROWS__, __COLS__]));
+      ws.onmessage = (e) => {
+        const m = JSON.parse(e.data);
+        if (m[0] === 'stdout') term.write(m[1]);
+      };
+      term.onData((d) => ws.send(JSON.stringify(['stdin', d])));
+    </script>
+  </body>
+</html>
