@@ -7,8 +7,7 @@ commands below, runs pii_scan.py over what the command is about to publish:
   git commit            the staged diff (plus the working tree with -a), anything a `git add` earlier
                         in the same command will stage, and the message (-m, -F file or heredoc)
   git push              the diff and commit messages of every commit not yet on the upstream
-                        (or origin/master when the branch has no upstream), leaving out what
-                        origin/master already holds
+                        (or origin/master when the branch has no upstream)
   gh pr create|edit|comment|review, gh issue create|edit|comment, gh api writes
                         the command text itself and any --body-file / -F file / --input file
 
@@ -102,37 +101,14 @@ def _run(args: list[str], cwd: Path) -> str:
     return r.stdout
 
 
-def _ref_exists(ref: str, cwd: Path) -> bool:
-    r = subprocess.run(['git', 'rev-parse', '--verify', '-q', ref], capture_output=True, text=True, cwd=cwd)
-    return r.returncode == 0
-
-
 def _push_base(cwd: Path) -> str:
     for ref in ('@{push}', '@{upstream}', 'origin/master'):
-        if _ref_exists(ref, cwd):
+        r = subprocess.run(['git', 'rev-parse', '--verify', '-q', ref], capture_output=True, text=True, cwd=cwd)
+        if r.returncode == 0:
             return ref
     raise pii_scan.ScanError(
         'no upstream and no origin/master to compare the pushed commits against; run `git fetch origin master` first'
     )
-
-
-def _file_lines(rev: str, path: str, cwd: Path) -> list[str]:
-    r = subprocess.run(['git', 'show', f'{rev}:{path}'], capture_output=True, text=True, cwd=cwd)
-    return r.stdout.splitlines() if r.returncode == 0 else []
-
-
-def _not_on_master(hits: list[pii_scan.Hit], cwd: Path) -> list[pii_scan.Hit]:
-    """Drop hits on lines origin/master already holds, e.g. those a merge of master brings in."""
-    head, master = {}, {}
-    kept = []
-    for hit in hits:
-        if hit.path not in head:
-            head[hit.path] = _file_lines('HEAD', hit.path, cwd)
-            master[hit.path] = set(_file_lines('origin/master', hit.path, cwd))
-        lines = head[hit.path]
-        if not (0 < hit.line <= len(lines) and lines[hit.line - 1] in master[hit.path]):
-            kept.append(hit)
-    return kept
 
 
 def _scan_git_add(tokens: list[str], cwd: Path, denylist: list[str]) -> list[pii_scan.Hit]:
@@ -163,13 +139,7 @@ def _scan_git_commit(tokens: list[str], command: str, cwd: Path, denylist: list[
 def _scan_git_push(tokens: list[str], cwd: Path, denylist: list[str]) -> list[pii_scan.Hit]:
     base = _push_base(cwd)
     hits = pii_scan.scan_diff(_run(['git', 'diff', f'{base}...HEAD'], cwd), denylist)
-    # A branch that merges master would otherwise push master's commits through the scan again;
-    # they are public already, and a hit there cannot be fixed on the branch.
-    not_master = []
-    if base != 'origin/master' and _ref_exists('origin/master', cwd):
-        hits = _not_on_master(hits, cwd)
-        not_master = ['--not', 'origin/master']
-    messages = _run(['git', 'log', '--format=%H%n%B', f'{base}..HEAD', *not_master], cwd)
+    messages = _run(['git', 'log', '--format=%H%n%B', f'{base}..HEAD'], cwd)
     hits += pii_scan.scan_text(messages, '<commit messages>', denylist)
     return hits
 

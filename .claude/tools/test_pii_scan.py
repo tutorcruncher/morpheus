@@ -201,45 +201,6 @@ def test_hook_scans_commits_being_pushed(repo):
     assert 'a.txt:1: phone' in out['hookSpecificOutput']['permissionDecisionReason']
 
 
-def _branch_with_master_merged(repo):
-    """A pushed feature branch that has just merged a master commit holding a phone number."""
-    remote = repo.parent / f'{repo.name}-remote.git'
-    subprocess.run(['git', 'init', '-q', '--bare', remote], check=True)
-    subprocess.run(['git', '-C', repo, 'remote', 'add', 'origin', remote], check=True)
-    subprocess.run(['git', '-C', repo, 'push', '-q', '-u', 'origin', 'master'], check=True)
-    subprocess.run(['git', '-C', repo, 'checkout', '-qb', 'feature'], check=True)
-    subprocess.run(['git', '-C', repo, 'push', '-q', '-u', 'origin', 'feature'], check=True)
-    subprocess.run(['git', '-C', repo, 'checkout', '-q', 'master'], check=True)
-    (repo / 'm.txt').write_text(f'{FAKE_PHONE}\n')
-    subprocess.run(['git', '-C', repo, 'add', 'm.txt'], check=True)
-    subprocess.run(['git', '-C', repo, 'commit', '-qm', f'call {FAKE_PHONE}'], check=True)
-    subprocess.run(['git', '-C', repo, 'push', '-q', 'origin', 'master'], check=True)
-    subprocess.run(['git', '-C', repo, 'checkout', '-q', 'feature'], check=True)
-    subprocess.run(['git', '-C', repo, 'merge', '-q', '--no-edit', 'master'], check=True)
-
-
-def test_hook_skips_master_commits_a_merge_brings_in(repo):
-    _branch_with_master_merged(repo)
-
-    assert _run_hook('git push', repo) == {}
-
-
-@pytest.mark.parametrize('where', ['file', 'message'])
-def test_hook_still_scans_branch_commits_after_master_merge(where, repo):
-    _branch_with_master_merged(repo)
-    (repo / 'b.txt').write_text(f'{FAKE_PHONE}\n' if where == 'file' else 'fine\n')
-    subprocess.run(['git', '-C', repo, 'add', 'b.txt'], check=True)
-    subprocess.run(
-        ['git', '-C', repo, 'commit', '-qm', f'call {FAKE_PHONE}' if where == 'message' else 'b'], check=True
-    )
-
-    out = _run_hook('git push', repo)
-
-    assert _decision(out) == 'deny'
-    expected = 'b.txt:1: phone' if where == 'file' else '<commit messages>'
-    assert expected in out['hookSpecificOutput']['permissionDecisionReason']
-
-
 def test_hook_blocks_push_when_range_cannot_be_resolved(repo):
     # No upstream and no origin/master: the scanner has nothing to compare against, so it must
     # refuse rather than wave the push through.
