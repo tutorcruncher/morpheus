@@ -17,7 +17,7 @@ def test_index(cli: TestClient):
     assert r.status_code == 200
     body = r.content.decode()
     assert 'Morpheus - The Greek God' in body
-    # School web filters blocked this domain, and so every tracked email link, over the image on this page.
+    # School web filters blocked this domain, and every tracked email link, over an image here (TutorCruncher2#18611).
     assert '<img' not in body
     assert 'morpheus.png' not in body
 
