@@ -33,9 +33,6 @@ section p {
   body {
     font-size: 2.3vw;
   }
-  img {
-    width: 80vw;
-  }
 }
 
 body.index pre {
