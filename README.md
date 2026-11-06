@@ -16,10 +16,6 @@ What *morpheus* does:
 * generate PDFs for attachments given HTML using wkhtmltopdf.
 * provide a searchable history of sent messages and delivery analytics.
 
-Here's a picture to help explain:
-
-![Morpheus and Iris](https://raw.githubusercontent.com/tutorcruncher/morpheus/master/morpheus.png)
-
 ## Usage
 
 Morpheus is built with [FastAPI](https://fastapi.tiangolo.com/), using [asyncpg](https://github.com/MagicStack/asyncpg) 
