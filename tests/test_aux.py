@@ -15,7 +15,11 @@ Client = TestClient
 def test_index(cli: TestClient):
     r = cli.get('/')
     assert r.status_code == 200
-    assert 'Morpheus - The Greek God' in r.content.decode()
+    body = r.content.decode()
+    assert 'Morpheus - The Greek God' in body
+    # School web filters blocked this domain, and every tracked email link, over an image here (TutorCruncher2#18611).
+    assert '<img' not in body
+    assert 'morpheus.png' not in body
 
 
 def test_index_head(cli: TestClient):
