@@ -323,7 +323,7 @@ def test_message_details_always_blanks_links(cli, settings, send_email, sync_db:
     assert base64.urlsafe_b64encode(LINKED_URL.encode()).decode() not in r.text
 
 
-def test_message_details_blanks_single_quoted_and_spaced_links(cli, settings, send_email, sync_db: SyncDb):
+def test_message_details_blanks_every_href_quote_style(cli, settings, send_email, sync_db: SyncDb):
     msg_ext_id = _send_with_link(
         send_email,
         main_template=(
