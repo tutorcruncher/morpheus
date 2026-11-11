@@ -181,5 +181,5 @@ def message_details(
                 details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2)),
             )
         )
-    body = re.sub('(href=").*?"', r'\1#"', msg.body or '', flags=re.S | re.I)
+    body = re.sub(r'(\bhref\s*=\s*)(["\']).*?\2', r'\1\2#\2', msg.body or '', flags=re.S | re.I)
     return dict(**msg.parsed_details, events=events_data, body=body, attachments=list(msg.get_attachments()))

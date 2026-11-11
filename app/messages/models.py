@@ -265,6 +265,7 @@ class Event(SQLModel, table=True):
     def parsed_details(self) -> dict:
         event_data: dict = dict(status=self.get_status_display(), datetime=self.ts)
         if self.extra:
+            # the clicked URL is kept on the event but not shown in message details
             details = {k: v for k, v in self.extra.items() if k != 'target'}
             event_data['details'] = Markup(json.dumps(details, indent=2))
         return event_data
