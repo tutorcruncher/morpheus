@@ -265,7 +265,8 @@ class Event(SQLModel, table=True):
     def parsed_details(self) -> dict:
         event_data: dict = dict(status=self.get_status_display(), datetime=self.ts)
         if self.extra:
-            event_data['details'] = Markup(json.dumps(self.extra, indent=2))
+            details = {k: v for k, v in self.extra.items() if k != 'target'}
+            event_data['details'] = Markup(json.dumps(details, indent=2))
         return event_data
 
 

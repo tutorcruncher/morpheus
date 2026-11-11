@@ -151,7 +151,6 @@ def message_details(
     id: int,
     user_session=Depends(UserSession),
     db: DBSession = Depends(get_db),
-    safe: bool = True,
 ):
     company = _get_or_create_company(db, user_session.company)
     m = db.exec(
@@ -182,7 +181,5 @@ def message_details(
                 details=Markup(json.dumps({'msg': 'extra values not shown'}, indent=2)),
             )
         )
-    body = msg.body or ''
-    if safe:
-        body = re.sub('(href=").*?"', r'\1#"', body, flags=re.S | re.I)
+    body = re.sub(r'(\bhref\s*=\s*)(["\']).*?\2', r'\1\2#\2', msg.body or '', flags=re.S | re.I)
     return dict(**msg.parsed_details, events=events_data, body=body, attachments=list(msg.get_attachments()))

@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import json
@@ -302,6 +303,60 @@ def test_message_details(cli, settings, send_email, sync_db: SyncDb, worker, loo
         'cost': 0,
         'tags': [msg_ext_id[:36]],
     }
+
+
+LINKED_URL = 'https://www.example.org/linked/abc123/'
+
+
+def _send_with_link(send_email, main_template='<body><a href="{{ the_link }}">go</a></body>'):
+    return send_email(company_code='test-details', main_template=main_template, context={'the_link': LINKED_URL})
+
+
+def test_message_details_always_blanks_links(cli, settings, send_email, sync_db: SyncDb):
+    msg_ext_id = _send_with_link(send_email)
+    message_id = sync_db.fetchval('select id from messages where external_id = $1', msg_ext_id)
+
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details') + '&safe=false')
+    assert r.status_code == 200, r.text
+    assert r.json()['body'] == '<body><a href="#">go</a></body>'
+    assert LINKED_URL not in r.text
+    assert base64.urlsafe_b64encode(LINKED_URL.encode()).decode() not in r.text
+
+
+def test_message_details_blanks_every_href_quote_style(cli, settings, send_email, sync_db: SyncDb):
+    msg_ext_id = _send_with_link(
+        send_email,
+        main_template=(
+            '<body><a href=\'{{ the_link }}\'>a</a><a HREF = "{{ the_link }}">b</a>'
+            '<a href="{{ the_link }}?x=\'1\'">c</a></body>'
+        ),
+    )
+    message_id = sync_db.fetchval('select id from messages where external_id = $1', msg_ext_id)
+
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details'))
+    assert r.status_code == 200, r.text
+    assert r.json()['body'] == '<body><a href=\'#\'>a</a><a HREF = "#">b</a><a href="#">c</a></body>'
+
+
+def test_message_details_click_event_omits_target(cli, settings, send_email, sync_db: SyncDb, worker):
+    msg_ext_id = _send_with_link(send_email)
+    message_id = sync_db.fetchval('select id from messages where external_id = $1', msg_ext_id)
+    token = sync_db.fetchval('select token from links where message_id = $1', message_id)
+
+    r = cli.get('/l' + token, follow_redirects=False, headers={'X-Forwarded-For': '192.0.2.1'})
+    assert r.status_code == 307, r.text
+    worker.test_run()
+
+    r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details'))
+    assert r.status_code == 200, r.text
+    events = r.json()['events']
+    assert [e['status'] for e in events] == ['Opened & clicked on']
+    assert json.loads(events[0]['details']) == {
+        'ip': '192.0.2.1',
+        'user_agent': 'testclient',
+        'user_agent_display': 'Other None on Other',
+    }
+    assert LINKED_URL not in r.text
 
 
 def _wkhtml_works() -> bool:
