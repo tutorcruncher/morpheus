@@ -325,13 +325,17 @@ def test_message_details_always_blanks_links(cli, settings, send_email, sync_db:
 
 def test_message_details_blanks_single_quoted_and_spaced_links(cli, settings, send_email, sync_db: SyncDb):
     msg_ext_id = _send_with_link(
-        send_email, main_template='<body><a href=\'{{ the_link }}\'>a</a><a HREF = "{{ the_link }}">b</a></body>'
+        send_email,
+        main_template=(
+            '<body><a href=\'{{ the_link }}\'>a</a><a HREF = "{{ the_link }}">b</a>'
+            '<a href="{{ the_link }}?x=\'1\'">c</a></body>'
+        ),
     )
     message_id = sync_db.fetchval('select id from messages where external_id = $1', msg_ext_id)
 
     r = cli.get(modify_url(f'/messages/email-test/{message_id}/', settings, 'test-details'))
     assert r.status_code == 200, r.text
-    assert r.json()['body'] == '<body><a href=\'#\'>a</a><a HREF = "#">b</a></body>'
+    assert r.json()['body'] == '<body><a href=\'#\'>a</a><a HREF = "#">b</a><a href="#">c</a></body>'
 
 
 def test_message_details_click_event_omits_target(cli, settings, send_email, sync_db: SyncDb, worker):
