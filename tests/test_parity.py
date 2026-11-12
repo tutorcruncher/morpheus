@@ -9,6 +9,7 @@ trigger output, enum round-trip) that the framework swap could plausibly break.
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import sys
 import uuid
@@ -21,7 +22,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from logfire.testing import TestExporter
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from sentry_sdk.utils import event_from_exception
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DataError, OperationalError
 
 from app import sentry as sentry_pkg
 from app.core import logging as core_logging
@@ -295,6 +298,56 @@ def test_init_sentry_with_dsn(monkeypatch):
     monkeypatch.setattr('sentry_sdk.init', fake_init)
     sentry_pkg.setup.init_sentry()
     assert called['dsn'] == 'https://example@sentry.io/1'
+
+
+def _sentry_event_scrubber(monkeypatch):
+    """The event_scrubber init_sentry passes to sentry_sdk.init (the real init is never called)."""
+    monkeypatch.setattr(app_settings, 'sentry_dsn', 'https://example@sentry.io/1')
+    called = {}
+    monkeypatch.setattr('sentry_sdk.init', lambda **kwargs: called.update(kwargs))
+    sentry_pkg.setup.init_sentry()
+    return called['event_scrubber']
+
+
+def _sentry_event():
+    """A Sentry event, with frame locals, for the exception currently being handled."""
+    client_options = {'include_local_variables': True, 'include_source_context': False, 'max_value_length': None}
+    event, _ = event_from_exception(sys.exc_info(), client_options=client_options)
+    return event
+
+
+def _frame_vars(event) -> str:
+    return json.dumps(
+        [fr.get('vars') for ex in event['exception']['values'] for fr in ex['stacktrace']['frames']], default=str
+    )
+
+
+# Marker values are inline literals so they never sit in the test frame's own locals.
+
+
+def test_sentry_scrubber_filters_connection_settings(monkeypatch):
+    """Connection settings in driver/SQLAlchemy frame locals are filtered from the whole event."""
+    scrubber = _sentry_event_scrubber(monkeypatch)
+    try:
+        create_engine('postgresql://u:marker-7f3a@127.0.0.1:1/x', connect_args={'connect_timeout': 2}).connect()
+    except OperationalError:
+        event = _sentry_event()
+    assert 'marker-7f3a' in json.dumps(event, default=str)
+    scrubber.scrub_event(event)
+    assert json.dumps(event, default=str).count('marker-7f3a') == 0
+
+
+def test_sentry_scrubber_filters_bound_values_from_frame_vars(monkeypatch):
+    """Bound SQL values in SQLAlchemy/driver frame locals are filtered from frame vars."""
+    scrubber = _sentry_event_scrubber(monkeypatch)
+    with engine.connect() as conn:
+        try:
+            conn.execute(text('select CAST(:v AS text), 1/0'), {'v': 'marker-b21c'})
+        except DataError:
+            event = _sentry_event()
+    assert 'marker-b21c' in _frame_vars(event)
+    scrubber.scrub_event(event)
+    assert 'marker-b21c' not in _frame_vars(event)
 
 
 def test_sentry_initialised_on_worker_startup_before_fork(monkeypatch):
