@@ -43,9 +43,11 @@ make reset-db   # DROPS and recreates the local `morpheus` database, then runs c
 Run only the test files you change: `uv run pytest tests/test_sms.py`. Tests need a local Postgres
 and Redis. pytest-env (`[tool.pytest.ini_options]` in `pyproject.toml`) defaults `DATABASE_URL` to
 `postgresql://postgres@localhost:5432/morpheus_test` and `REDIS_URL` to `redis://localhost:6379/4`;
-export either variable to override it (for example when your Postgres user needs a password). The
-test session creates the schema itself; every test flushes that Redis database, and every test that
-uses the `db` fixture truncates all tables.
+export either variable to override it (for example when your Postgres user needs a password).
+`TEST_DATABASE_URL` and `TEST_REDIS_URL`, from the environment or `.env`, override both: set them to
+give a worktree its own test database and Redis (`tests/conftest.py`). The test session creates the
+database if it is missing, and the schema; every test flushes that Redis database, and every test
+that uses the `db` fixture truncates all tables.
 
 Settings come from environment variables or `.env` (`app/core/config.py`, pydantic-settings).
 `.env` is gitignored.

@@ -1,16 +1,30 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+from dotenv import dotenv_values
+
+# TEST_DATABASE_URL / TEST_REDIS_URL, from the environment or else `.env`, point the tests at a
+# Postgres database and Redis that this checkout owns, such as one per git worktree. The tests
+# truncate every table and flush that Redis database, so they must never share them with another
+# checkout. They replace DATABASE_URL / REDIS_URL here, before `app` reads its settings. Only these
+# two keys are read from `.env`; everything else comes from pyproject's pytest env block.
+_env_file_values = dotenv_values(Path(__file__).parent.parent / '.env')
+for _test_var, _var in (('TEST_DATABASE_URL', 'DATABASE_URL'), ('TEST_REDIS_URL', 'REDIS_URL')):
+    _url = os.environ.get(_test_var) or _env_file_values.get(_test_var)
+    if _url:
+        os.environ[_var] = _url
+
 import httpx
 import pytest
 from celery import current_app as celery_current_app
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 
 from app.core import database as db_module
 from app.core.celery import celery_app
@@ -33,9 +47,22 @@ def _truncate_all(conn) -> None:
     conn.execute(text('REFRESH MATERIALIZED VIEW message_aggregation'))
 
 
+def _create_database() -> None:
+    """Create the test database if it does not exist, as a new TEST_DATABASE_URL names one nobody has made."""
+    maintenance = create_engine(engine.url.set(database='postgres'), isolation_level='AUTOCOMMIT')
+    try:
+        with maintenance.connect() as conn:
+            name = engine.url.database
+            if not conn.execute(text('SELECT 1 FROM pg_database WHERE datname = :name'), {'name': name}).first():
+                conn.execute(text(f'CREATE DATABASE "{name}"'))
+    finally:
+        maintenance.dispose()
+
+
 @pytest.fixture(scope='session', autouse=True)
 def _create_schema():
     """Create the schema once per test session. Tests reset state via TRUNCATE between tests."""
+    _create_database()
     db_module.create_db_and_tables()
     yield
 
