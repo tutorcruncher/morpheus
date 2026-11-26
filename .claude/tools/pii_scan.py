@@ -51,6 +51,10 @@ ALLOWED_EMAIL_DOMAINS = frozenset(
         'users.noreply.github.com',
     }
 )
+# RFC 2606 reserves these for documentation, with every name under them: nobody can register
+# `reply.example.com` or `evil.example`, so an address there is never a real person's. `.test` is reserved
+# too but stays a hit: this tool's own tests use it as the address that must be caught.
+RESERVED_EMAIL_DOMAIN_SUFFIXES = ('.example.com', '.example.org', '.example.net', '.example')
 ALLOWED_ADDRESSES = frozenset(
     {
         'tom@tutorcruncher.com',  # packaging/morpheus-mail/setup.py author_email
@@ -141,7 +145,11 @@ def load_denylist(path: Path | None = None) -> list[str]:
 def _email_hit(line: str) -> bool:
     for m in EMAIL_RE.finditer(URL_CREDENTIAL_RE.sub('://', line)):
         address, domain = m.group(0).lower(), m.group(2).lower()
-        if address in ALLOWED_ADDRESSES or domain in ALLOWED_EMAIL_DOMAINS:
+        if (
+            address in ALLOWED_ADDRESSES
+            or domain in ALLOWED_EMAIL_DOMAINS
+            or domain.endswith(RESERVED_EMAIL_DOMAIN_SUFFIXES)
+        ):
             continue
         return True
     return False
