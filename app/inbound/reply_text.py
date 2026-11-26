@@ -13,8 +13,9 @@ from mailparser_reply.constants import MAIL_LANGUAGES
 # an email body is cut to this before anything parses it
 BODY_LIMIT = 100_000
 # Python decodes a whole part before it can be cut to `BODY_LIMIT`. Punycode takes time that grows with the square
-# of the text (measured: a minute for 1.2 MB), and idna raises on text that is not a domain name
-UNREADABLE_CHARSETS = ('punycode', 'idna')
+# of the text (measured: a minute for 1.2 MB), idna raises on text that is not a domain name, and undefined
+# raises on any text
+UNREADABLE_CHARSETS = ('punycode', 'idna', 'undefined')
 HIDDEN_STYLES = ('display:none', 'visibility:hidden')
 UNSHOWN_ELEMENTS = ('script', 'style', 'head', 'title')
 BLOCK_ELEMENTS = ('p', 'div', 'li', 'tr', 'blockquote')
@@ -82,7 +83,8 @@ def _charset_name(part: MIMEPart) -> str | None:
     """Python's own name for the character set a part says it is in, or None when it says none Python knows."""
     try:
         return codecs.lookup(part.get_content_charset() or '').name
-    except LookupError:
+    except (LookupError, ValueError):
+        # ValueError is a name with a NUL in it
         return None
 
 
@@ -95,7 +97,8 @@ def _part_text(part: MIMEPart) -> str:
         if _charset_name(part) in UNREADABLE_CHARSETS:
             raise LookupError
         text = part.get_content()
-    except LookupError:
+    except (LookupError, ValueError):
+        # ValueError is a name with a NUL in it, or a character set that raises on the text
         text = part.get_payload(decode=True).decode(errors='replace')  # ty:ignore[unresolved-attribute]
     return text[:BODY_LIMIT]
 

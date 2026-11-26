@@ -862,7 +862,7 @@ def test_html_that_is_not_shown_is_not_text():
     assert read(signed(raw))['text'] == 'Tuesday works.'
 
 
-@pytest.mark.parametrize('charset', ['punycode', 'IDNA', 'Punycode'])
+@pytest.mark.parametrize('charset', ['punycode', 'IDNA', 'Punycode', 'undefined', 'utf\x008'])
 def test_text_in_a_character_set_no_mail_app_writes_is_read_as_utf8(charset):
     """Python is slow to read one and raises on the other."""
     raw = raw_email(body='Tuesday works.. thanks').replace(b'charset="utf-8"', f'charset="{charset}"'.encode())
