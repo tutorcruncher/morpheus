@@ -3,6 +3,7 @@ import hashlib
 import logging
 import string
 from datetime import datetime, timedelta, timezone
+from email import message_from_bytes
 from email.message import EmailMessage
 from email.policy import SMTP, EmailPolicy
 from email.utils import format_datetime
@@ -30,6 +31,7 @@ from app.inbound.sender_proof import (
     SIGNED_HEADER_NAMES_LIMIT,
     WHITESPACE_RUNS_LIMIT,
     DkimDnsError,
+    _BoundedHeaderPolicy,
     readable_message,
 )
 
@@ -658,6 +660,12 @@ def test_what_a_header_meant_is_not_kept_for_the_next_email():
     second = readable_message(_with_a_file())
     assert first.policy.parsed is not second.policy.parsed
     assert first.policy.parsed and second.policy.parsed
+
+
+def test_policy_made_without_somewhere_to_keep_one_emails_headers_reads_nothing():
+    """A place shared by every email would fill, and each email after that be refused."""
+    with pytest.raises(TypeError, match='parsed'):
+        message_from_bytes(raw_email(), policy=_BoundedHeaderPolicy())['Subject']
 
 
 def test_header_on_a_part_that_python_cannot_read_is_unreadable():

@@ -159,13 +159,15 @@ class _BoundedHeaderPolicy(EmailPolicy):
     `PARSED_HEADERS_LIMIT_BYTES` of headers: past that the email is refused.
     """
 
-    # a policy takes only the attributes its class has
-    parsed: dict = {}
+    # a policy takes only the attributes its class has. None, and not a dict here, which every email would share
+    parsed: dict | None = None
 
     def header_fetch_parse(self, name, value):
         is_part_header = name.lower() in PART_PARSED_HEADERS
         if len(value) > (PART_HEADER_VALUE_LIMIT_BYTES if is_part_header else HEADER_VALUE_LIMIT_BYTES):
             raise ValueError(f'{name} header is over the size limit')
+        if self.parsed is None:
+            raise TypeError('made without `parsed={}`, which holds what the headers of one email meant')
         key = (name.lower(), value)
         if key not in self.parsed:
             if len(value) + sum(len(kept) for __, kept in self.parsed) > PARSED_HEADERS_LIMIT_BYTES:
