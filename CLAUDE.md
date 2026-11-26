@@ -88,7 +88,7 @@ Settings come from environment variables or `.env` (`app/core/config.py`, pydant
 - Get a session with `db: DBSession = Depends(get_db)`. On high-volume endpoints, call `db.close()`
   before slow work such as a Celery enqueue loop or template rendering (see `email.py`, `sms.py`,
   `common.py`; MORPHEUS-3DNG).
-- `/webhook/mandrill/inbound/` reads its form from the request (`await request.form()`), never from
+- `/webhook/mandrill/inbound/` reads its form from the request (`await request.body()`), never from
   `Form(...)` parameters, so Logfire never records it: the body is people's emails. Nothing of an
   inbound email (reply address, sender, subject, text) is logged, and the two inbound tasks keep
   their arguments out of Celery's log records (`_PrivateArgsTask`) and their exception messages
