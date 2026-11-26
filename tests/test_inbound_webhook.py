@@ -196,8 +196,7 @@ def test_post_of_more_fields_than_mandrill_sends_is_refused_unread(cli: TestClie
         b'mandrill_events=%5B%7B%22a%22%3A+%22b+c%22%7D%5D',
         b'a=1&b=&c&&a=2',
         b'a=%2B+%20&%61=b%3Dc=d',
-        b'a=100%&b=%zz&c=%4',
-        b'a=' + b'%41' * 50 + b'x%4',
+        b'a=' + b'%41' * 50 + b'x%4a%c3%a9',
         b'',
     ],
 )
@@ -206,6 +205,12 @@ def test_form_fields_are_read_as_python_reads_them_at_any_slice_size(body, monke
     for slice_bytes in (3, 4, 7, 1024):
         monkeypatch.setattr(webhooks, 'FORM_DECODE_SLICE_BYTES', slice_bytes)
         assert webhooks._form_fields(body) == expected
+
+
+@pytest.mark.parametrize('body', [b'a=100%', b'a=%zz', b'%4=b', b'a=%ff', b'a=\xc3'])
+def test_form_fields_with_an_escape_or_text_mandrill_never_sends_are_refused(body):
+    with pytest.raises(ValueError):
+        webhooks._form_fields(body)
 
 
 def test_body_that_is_not_text_is_refused(cli: TestClient, settings, queued):

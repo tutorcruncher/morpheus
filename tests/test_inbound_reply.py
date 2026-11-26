@@ -23,6 +23,7 @@ from app.inbound.sender_proof import (
     DKIM_KEY_RECORD_LIMIT_BYTES,
     HEADER_VALUE_LIMIT_BYTES,
     HEADERS_LIMIT_BYTES,
+    PARSED_HEADERS_LIMIT_BYTES,
     PART_HEADER_VALUE_LIMIT_BYTES,
     PART_LINES_LIMIT,
     RAW_LINES_LIMIT,
@@ -611,6 +612,30 @@ def test_header_on_a_part_is_held_to_a_lower_limit_than_one_on_the_email(resolve
     assert_not_proven(read(signed(on_a_part)), 'unreadable', from_address=None)
 
 
+def _with_files(names: list[str]) -> bytes:
+    email = built_email()
+    email.set_content('Homework attached.')
+    for name in names:
+        email.add_attachment(b'%PDF-1.4', maintype='application', subtype='pdf', filename=name)
+    return email.as_bytes(policy=SMTP)
+
+
+def test_long_file_name_in_another_alphabet_is_read():
+    name = '作' * 60 + '.pdf'
+    assert read(signed(_with_files([name])))['attachment_names'] == [name]
+
+
+def test_more_headers_than_are_kept_for_an_email_are_unreadable(resolve, monkeypatch):
+    """What each header meant is kept while the email is read, at up to a thousand times the header's size."""
+    names = [f'{number} {"work " * 100}.pdf' for number in range(90)]
+    raw = signed(_with_files(names))
+    assert_not_proven(read(raw), 'unreadable', from_address=None)
+    resolve.assert_not_called()
+    # it is this limit that refuses it, and no other
+    monkeypatch.setattr('app.inbound.sender_proof.PARSED_HEADERS_LIMIT_BYTES', 10 * PARSED_HEADERS_LIMIT_BYTES)
+    assert read(raw)['attachment_names'] == names
+
+
 def test_each_header_is_worked_out_once_for_an_email(monkeypatch):
     """Python works a header out again on every read, and a part's headers are read many times over."""
     worked_out = []
@@ -827,6 +852,13 @@ def test_html_that_is_not_shown_is_not_text():
     )
     raw = raw_email(body=html).replace(b'text/plain', b'text/html')
     assert read(signed(raw))['text'] == 'Tuesday works.'
+
+
+@pytest.mark.parametrize('charset', ['punycode', 'IDNA', 'Punycode'])
+def test_text_in_a_character_set_no_mail_app_writes_is_read_as_utf8(charset):
+    """Python is slow to read one and raises on the other."""
+    raw = raw_email(body='Tuesday works.. thanks').replace(b'charset="utf-8"', f'charset="{charset}"'.encode())
+    assert read(signed(raw))['text'] == 'Tuesday works.. thanks'
 
 
 def test_text_in_a_character_set_python_does_not_know_is_read():

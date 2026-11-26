@@ -1,5 +1,6 @@
 """What somebody wrote in an email they sent in reply to one of ours."""
 
+import codecs
 import re
 import warnings
 from collections.abc import Iterator
@@ -11,6 +12,9 @@ from mailparser_reply.constants import MAIL_LANGUAGES
 
 # an email body is cut to this before anything parses it
 BODY_LIMIT = 100_000
+# Python decodes a whole part before it can be cut to `BODY_LIMIT`. Punycode takes time that grows with the square
+# of the text (measured: a minute for 1.2 MB), and idna raises on text that is not a domain name
+UNREADABLE_CHARSETS = ('punycode', 'idna')
 HIDDEN_STYLES = ('display:none', 'visibility:hidden')
 UNSHOWN_ELEMENTS = ('script', 'style', 'head', 'title')
 BLOCK_ELEMENTS = ('p', 'div', 'li', 'tr', 'blockquote')
@@ -74,11 +78,22 @@ def body_text(message: EmailMessage) -> str:
         return ''
 
 
+def _charset_name(part: MIMEPart) -> str | None:
+    """Python's own name for the character set a part says it is in, or None when it says none Python knows."""
+    try:
+        return codecs.lookup(part.get_content_charset() or '').name
+    except LookupError:
+        return None
+
+
 def _part_text(part: MIMEPart) -> str:
     """
-    The text of one part of the email, cut to `BODY_LIMIT`. A character set Python has no name for is read as UTF-8.
+    The text of one part of the email, cut to `BODY_LIMIT`. A character set Python has no name for is read as
+    UTF-8. So is one of `UNREADABLE_CHARSETS`, which no mail app writes a body in.
     """
     try:
+        if _charset_name(part) in UNREADABLE_CHARSETS:
+            raise LookupError
         text = part.get_content()
     except LookupError:
         text = part.get_payload(decode=True).decode(errors='replace')  # ty:ignore[unresolved-attribute]

@@ -29,7 +29,10 @@ MAX_INBOUND_POST_BYTES = 15 * 1024 * 1024
 # Mandrill posts one field. A body of millions of empty fields costs seconds and hundreds of megabytes to read
 # into a form, and anybody can post one: the signature can only be checked once the fields are known
 MAX_INBOUND_POST_FIELDS = 10
+# at least 3: an escape is three bytes and is never cut in two
 FORM_DECODE_SLICE_BYTES = 1024 * 1024
+# a percent sign that does not start an escape, which Mandrill never sends and Python is slow to pass over
+INVALID_ESCAPE = re.compile(rb'%(?![0-9A-Fa-f]{2})')
 # an address a chat email gave out to reply to: a mailbox name, then a plus tag of 26 base32 characters. Only
 # TutorCruncher knows whose it is; an email for any other address is not worth a worker's time
 CHAT_REPLY_ADDRESS = re.compile(r'^[^+@\s]+\+[a-z2-7]{26}@', re.IGNORECASE)
@@ -111,8 +114,11 @@ def _form_value(encoded: bytes) -> str:
     """
     One name or value of a form-encoded body, decoded. Python's own decoding splits the whole value at every
     escape, which for a value of megabytes of escapes holds twenty times its size, before any signature has
-    been checked; this decodes a slice at a time. Bytes that are not UTF-8 raise `ValueError`.
+    been checked; this decodes a slice at a time. An invalid escape, or a value that is not UTF-8 once decoded,
+    raises `ValueError`.
     """
+    if INVALID_ESCAPE.search(encoded):
+        raise ValueError('invalid escape')
     encoded = encoded.replace(b'+', b' ')
     decoded = []
     start = 0
@@ -128,8 +134,9 @@ def _form_value(encoded: bytes) -> str:
 
 def _form_fields(body: bytes) -> dict[str, str]:
     """
-    The fields of a form-encoded POST body, as `urllib.parse.parse_qsl` reads them (blank values kept, the last
-    of a repeated name). More than `MAX_INBOUND_POST_FIELDS`, or bytes that are not UTF-8, raise `ValueError`.
+    The fields of a form-encoded POST body, read as `urllib.parse.parse_qsl` reads one that is valid (blank
+    values kept, the last of a repeated name). More than `MAX_INBOUND_POST_FIELDS`, an invalid escape, or a name
+    or value that is not UTF-8, raise `ValueError`.
     """
     if body.count(b'&') >= MAX_INBOUND_POST_FIELDS:
         raise ValueError('too many fields')

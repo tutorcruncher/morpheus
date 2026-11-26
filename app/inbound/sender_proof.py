@@ -62,8 +62,13 @@ PART_PARSED_HEADERS = ('content-type', 'content-disposition', 'content-transfer-
 # From, To and Subject run to a few hundred bytes in real mail
 HEADER_VALUE_LIMIT_BYTES = 2048
 # The headers of a part are read for every part, by the parser and again by whatever looks for the text and the
-# files, so they are held to less. The longest real one is a file's name in another alphabet, encoded
+# files, so they are held to less. The longest real one is a file's name in another alphabet, encoded: the limit
+# is reached by a name of about 90 Chinese or 130 Cyrillic characters, and that email is then unreadable
 PART_HEADER_VALUE_LIMIT_BYTES = 1024
+# What a header meant is kept while the email is read, and Python holds up to a thousand times a header's size
+# for it (measured: 1.2 MB for a 1 KB Content-Type of empty parameters, 335 MB for 98 parts of them). The
+# headers read of real mail, a dozen files attached, come to a few kilobytes
+PARSED_HEADERS_LIMIT_BYTES = 32 * 1024
 # every part of an email has its Content-Type parsed. A part starts at a line beginning "--", or, in a delivery
 # report or an email inside an email, wherever a Content-Type header can be read. A reply has a handful of either
 PART_LINES_LIMIT = 100
@@ -76,8 +81,9 @@ RAW_LINES_LIMIT = 300_000
 # The headers of real mail, signatures and delivery trail included, come to a few tens of kilobytes
 HEADERS_LIMIT_BYTES = 256 * 1024
 # dkimpy rewrites every run of spaces and tabs in the body before it hashes it, and holds about 180 bytes for
-# each while it does (measured: 1.4 GB for a 15 MB body of single words). A file attached to an email has none,
-# as it is encoded; half a million is megabytes of written text
+# each while it does (measured: 1.4 GB for a 15 MB body of single words). Every space and tab is counted, which
+# is never fewer than the runs. A file attached in base64, as mail apps attach them, has none; half a million
+# is megabytes of written text, so a very large text file attached as it is makes the email unreadable
 WHITESPACE_RUNS_LIMIT = 500_000
 # the only signatures RFC 8301 lets a verifier accept: rsa-sha1 is not one
 SIGNATURE_ALGORITHMS = (b'rsa-sha256', b'ed25519-sha256')
@@ -149,20 +155,21 @@ class _BoundedHeaderPolicy(EmailPolicy):
     Content-Type to find the parts, so the limit has to hold while it parses.
 
     Python works a header's meaning out again each time it is read, and a part's headers are read a dozen times
-    over. One policy is made for each email (`parsed={}`) and keeps what each header meant.
+    over. One policy is made for each email (`parsed={}`) and keeps what each header meant, for at most
+    `PARSED_HEADERS_LIMIT_BYTES` of headers: past that the email is refused.
     """
 
     # a policy takes only the attributes its class has
-    parsed: dict | None = None
+    parsed: dict = {}
 
     def header_fetch_parse(self, name, value):
         is_part_header = name.lower() in PART_PARSED_HEADERS
         if len(value) > (PART_HEADER_VALUE_LIMIT_BYTES if is_part_header else HEADER_VALUE_LIMIT_BYTES):
             raise ValueError(f'{name} header is over the size limit')
-        elif self.parsed is None:
-            return super().header_fetch_parse(name, value)
         key = (name.lower(), value)
         if key not in self.parsed:
+            if len(value) + sum(len(kept) for __, kept in self.parsed) > PARSED_HEADERS_LIMIT_BYTES:
+                raise ValueError('the headers read are over the size limit')
             self.parsed[key] = super().header_fetch_parse(name, value)
         return self.parsed[key]
 
@@ -175,9 +182,9 @@ def _is_cheap_to_parse(raw_message: bytes) -> bool:
     return (
         len(headers_of(raw_message)) <= HEADERS_LIMIT_BYTES
         and raw_message.count(b' ') + raw_message.count(b'\t') <= WHITESPACE_RUNS_LIMIT
+        and raw_message.count(b'\n') <= RAW_LINES_LIMIT
         and raw_message.count(PART_LINE) <= PART_LINES_LIMIT
         and len(CONTENT_TYPE_LINE.findall(raw_message)) <= PART_LINES_LIMIT
-        and raw_message.count(b'\n') <= RAW_LINES_LIMIT
     )
 
 
