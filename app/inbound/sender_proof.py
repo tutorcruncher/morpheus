@@ -61,6 +61,9 @@ PARSED_HEADERS = frozenset(
 PART_PARSED_HEADERS = ('content-type', 'content-disposition', 'content-transfer-encoding', 'content-id')
 # From, To and Subject run to a few hundred bytes in real mail
 HEADER_VALUE_LIMIT_BYTES = 2048
+# The headers of a part are read for every part, by the parser and again by whatever looks for the text and the
+# files, so they are held to less. The longest real one is a file's name in another alphabet, encoded
+PART_HEADER_VALUE_LIMIT_BYTES = 1024
 # every part of an email has its Content-Type parsed. A part starts at a line beginning "--", or, in a delivery
 # report or an email inside an email, wherever a Content-Type header can be read. A reply has a handful of either
 PART_LINES_LIMIT = 100
@@ -72,6 +75,10 @@ RAW_LINES_LIMIT = 300_000
 # (measured on Python 3.12: 21 seconds for one header folded over 290,000 lines, and it reads the email twice).
 # The headers of real mail, signatures and delivery trail included, come to a few tens of kilobytes
 HEADERS_LIMIT_BYTES = 256 * 1024
+# dkimpy rewrites every run of spaces and tabs in the body before it hashes it, and holds about 180 bytes for
+# each while it does (measured: 1.4 GB for a 15 MB body of single words). A file attached to an email has none,
+# as it is encoded; half a million is megabytes of written text
+WHITESPACE_RUNS_LIMIT = 500_000
 # the only signatures RFC 8301 lets a verifier accept: rsa-sha1 is not one
 SIGNATURE_ALGORITHMS = (b'rsa-sha256', b'ed25519-sha256')
 # dkimpy looks through every header once for each name a signature lists. Real signatures list under 40
@@ -137,18 +144,27 @@ def headers_of(raw_message: bytes) -> bytes:
 
 class _BoundedHeaderPolicy(EmailPolicy):
     """
-    Python's email policy, refusing to work out the meaning of a header over `HEADER_VALUE_LIMIT_BYTES`. The parser
-    itself reads each part's Content-Type to find the parts, so the limit has to hold while it parses.
+    Python's email policy, refusing to work out the meaning of a header over `HEADER_VALUE_LIMIT_BYTES`, or of one
+    of `PART_PARSED_HEADERS` over `PART_HEADER_VALUE_LIMIT_BYTES`. The parser itself reads each part's
+    Content-Type to find the parts, so the limit has to hold while it parses.
+
+    Python works a header's meaning out again each time it is read, and a part's headers are read a dozen times
+    over. One policy is made for each email (`parsed={}`) and keeps what each header meant.
     """
 
+    # a policy takes only the attributes its class has
+    parsed: dict | None = None
+
     def header_fetch_parse(self, name, value):
-        if len(value) > HEADER_VALUE_LIMIT_BYTES:
+        is_part_header = name.lower() in PART_PARSED_HEADERS
+        if len(value) > (PART_HEADER_VALUE_LIMIT_BYTES if is_part_header else HEADER_VALUE_LIMIT_BYTES):
             raise ValueError(f'{name} header is over the size limit')
-        else:
+        elif self.parsed is None:
             return super().header_fetch_parse(name, value)
-
-
-BOUNDED_HEADER_POLICY = _BoundedHeaderPolicy()  # ty:ignore[invalid-argument-type]
+        key = (name.lower(), value)
+        if key not in self.parsed:
+            self.parsed[key] = super().header_fetch_parse(name, value)
+        return self.parsed[key]
 
 
 def _is_cheap_to_parse(raw_message: bytes) -> bool:
@@ -158,6 +174,7 @@ def _is_cheap_to_parse(raw_message: bytes) -> bool:
     """
     return (
         len(headers_of(raw_message)) <= HEADERS_LIMIT_BYTES
+        and raw_message.count(b' ') + raw_message.count(b'\t') <= WHITESPACE_RUNS_LIMIT
         and raw_message.count(PART_LINE) <= PART_LINES_LIMIT
         and len(CONTENT_TYPE_LINE.findall(raw_message)) <= PART_LINES_LIMIT
         and raw_message.count(b'\n') <= RAW_LINES_LIMIT
@@ -171,7 +188,7 @@ def readable_message(raw_message: bytes) -> EmailMessage | None:
     verify over headers, or a body, that nothing else read. A lone carriage return ends a line for one parser and
     not the other, and a line starting "From " is skipped by dkimpy and can start the body for Python, so neither is
     allowed, nor is a header line dkimpy cannot read. An email `_is_cheap_to_parse` turns down is
-    refused before either parser runs, and `BOUNDED_HEADER_POLICY` refuses a long header when Python reads it with
+    refused before either parser runs, and `_BoundedHeaderPolicy` refuses a long header when Python reads it with
     `get` or `[...]`. Serialising the message (`as_string`, `as_bytes`) or calling `get_content()` on a part that is
     not text refolds its headers without that policy, so never do either.
     """
@@ -181,7 +198,8 @@ def readable_message(raw_message: bytes) -> EmailMessage | None:
         if not _is_cheap_to_parse(raw_message):
             return None
         dkim.rfc822_parse(raw_message)
-        message = message_from_bytes(raw_message, policy=BOUNDED_HEADER_POLICY)
+        policy = _BoundedHeaderPolicy(parsed={})  # ty:ignore[no-matching-overload]
+        message = message_from_bytes(raw_message, policy=policy)
         # a delivery report's blocks are parts that no line `_is_cheap_to_parse` counts has to start
         if len(list(message.walk())) > PART_LINES_LIMIT:
             return None
@@ -191,7 +209,8 @@ def readable_message(raw_message: bytes) -> EmailMessage | None:
         for part in message.walk():
             for name in PART_PARSED_HEADERS:
                 part.get(name)
-    except (dkim.DKIMException, IndexError, RecursionError, ValueError, LookupError):
+    except (dkim.DKIMException, IndexError, RecursionError, ValueError, LookupError, AttributeError):
+        # AttributeError is Python 3.12's parser on a group inside a group in an address header ("a:b:;;")
         return None
     if any(line.startswith(MBOX_FROM_LINE) for line in LINE_END.split(headers_of(raw_message))):
         return None

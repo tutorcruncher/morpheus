@@ -15,7 +15,7 @@ import httpx
 import redis as redis_lib
 import sentry_sdk
 from celery import Task
-from celery.exceptions import MaxRetriesExceededError
+from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 from chevron import ChevronError
 from phonenumbers import (
     NumberParseException,
@@ -923,7 +923,8 @@ def deliver_chat_reply(self: Task, payload: dict) -> None:
         return
     try:
         r = post_chat_reply(payload)
-    except httpx.TransportError as e:
+    except (httpx.TransportError, SoftTimeLimitExceeded) as e:
+        # the soft time limit is TutorCruncher answering a little at a time for longer than any one read waits
         failure = type(e).__name__
     except Exception as e:
         # not raised, for the reason given in `read_inbound_reply`

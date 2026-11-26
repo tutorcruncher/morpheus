@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode
 
 import pytest
 from fastapi.testclient import TestClient
@@ -188,6 +188,24 @@ def test_post_of_more_fields_than_mandrill_sends_is_refused_unread(cli: TestClie
     r = cli.post(URL, content=b'&' * 1_000_000, headers={**FORM, 'X-Mandrill-Signature': 'anything'})
     assert (r.status_code, r.json()) == (403, {'message': 'invalid signature'})
     queued.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        b'mandrill_events=%5B%7B%22a%22%3A+%22b+c%22%7D%5D',
+        b'a=1&b=&c&&a=2',
+        b'a=%2B+%20&%61=b%3Dc=d',
+        b'a=100%&b=%zz&c=%4',
+        b'a=' + b'%41' * 50 + b'x%4',
+        b'',
+    ],
+)
+def test_form_fields_are_read_as_python_reads_them_at_any_slice_size(body, monkeypatch):
+    expected = dict(parse_qsl(body.decode(), keep_blank_values=True))
+    for slice_bytes in (3, 4, 7, 1024):
+        monkeypatch.setattr(webhooks, 'FORM_DECODE_SLICE_BYTES', slice_bytes)
+        assert webhooks._form_fields(body) == expected
 
 
 def test_body_that_is_not_text_is_refused(cli: TestClient, settings, queued):

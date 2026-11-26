@@ -2,10 +2,9 @@ import base64
 import hashlib
 import logging
 import string
-import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from email.policy import SMTP
+from email.policy import SMTP, EmailPolicy
 from email.utils import format_datetime
 from unittest.mock import Mock
 
@@ -14,18 +13,21 @@ import dns.exception
 import dns.name
 import dns.resolver
 import pytest
+from bs4 import PageElement, Tag
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
 from app.inbound.reply import read_reply
-from app.inbound.reply_text import body_text, latest_reply
+from app.inbound.reply_text import REPLY_PARSE_LIMIT, body_text, latest_reply
 from app.inbound.sender_proof import (
     DKIM_KEY_RECORD_LIMIT_BYTES,
     HEADER_VALUE_LIMIT_BYTES,
     HEADERS_LIMIT_BYTES,
+    PART_HEADER_VALUE_LIMIT_BYTES,
     PART_LINES_LIMIT,
     RAW_LINES_LIMIT,
     SIGNED_HEADER_NAMES_LIMIT,
+    WHITESPACE_RUNS_LIMIT,
     DkimDnsError,
     readable_message,
 )
@@ -541,13 +543,34 @@ def test_headers_over_the_size_limit_are_unreadable(resolve):
     resolve.assert_not_called()
 
 
-def test_headers_near_the_size_limit_are_read_quickly():
-    folded = '\r\n '.join(['x' * 60] * (HEADERS_LIMIT_BYTES // 80))
+def test_headers_near_the_size_limit_are_read():
+    """In the shape the limit is for: as many folded lines as fit, which the signature checker joins one by one."""
+    folded = '\r\n '.join(['x'] * (HEADERS_LIMIT_BYTES // 5))
     raw = signed(raw_email(headers=[*email_headers(), ('X-Folded', folded)]))
     assert HEADERS_LIMIT_BYTES * 0.7 < len(raw.partition('\r\n\r\n')[0]) < HEADERS_LIMIT_BYTES
-    started = time.monotonic()
     assert read(raw)['proof'] == 'recipient_signed'
-    assert time.monotonic() - started < 5
+
+
+def test_text_of_more_words_than_the_signature_checker_can_hold_is_unreadable(resolve):
+    """It holds memory for every run of spaces in the body, hundreds of times the email's size."""
+    raw = signed(raw_email(body='a ' * (WHITESPACE_RUNS_LIMIT + 1)))
+    assert_not_proven(read(raw), 'unreadable', from_address=None)
+    resolve.assert_not_called()
+
+
+def test_large_attached_file_is_not_counted_as_words():
+    email = built_email()
+    email.set_content('Homework attached.')
+    email.add_attachment(b' ' * 3 * WHITESPACE_RUNS_LIMIT, maintype='application', subtype='pdf', filename='work.pdf')
+    payload = read(signed(email.as_bytes(policy=SMTP)))
+    assert (payload['proof'], payload['attachment_names']) == ('recipient_signed', ['work.pdf'])
+
+
+def test_group_inside_a_group_of_recipients_is_unreadable(resolve):
+    """Python 3.12 raises AttributeError reading it."""
+    raw = signed(raw_email(headers=email_headers(Cc='g:g:;;')))
+    assert_not_proven(read(raw), 'unreadable', from_address=None)
+    resolve.assert_not_called()
 
 
 def test_header_python_reads_over_the_size_limit_is_unreadable(resolve):
@@ -575,6 +598,41 @@ def test_long_header_on_a_part_of_the_email_is_unreadable(resolve):
     assert b'(a)(a)' in raw
     assert_not_proven(read(signed(raw)), 'unreadable', from_address=None)
     resolve.assert_not_called()
+
+
+def test_header_on_a_part_is_held_to_a_lower_limit_than_one_on_the_email(resolve):
+    comments = '(a)' * ((PART_HEADER_VALUE_LIMIT_BYTES + 100) // 3)
+    assert PART_HEADER_VALUE_LIMIT_BYTES < len(comments) < HEADER_VALUE_LIMIT_BYTES - 100
+    on_the_email = signed(raw_email(headers=email_headers(Subject=f'Re: {comments}')))
+    assert read(on_the_email)['proof'] == 'recipient_signed'
+    on_a_part = _with_a_file().replace(
+        b'Content-Type: application/pdf', b'Content-Type: application/pdf ' + comments.encode()
+    )
+    assert_not_proven(read(signed(on_a_part)), 'unreadable', from_address=None)
+
+
+def test_each_header_is_worked_out_once_for_an_email(monkeypatch):
+    """Python works a header out again on every read, and a part's headers are read many times over."""
+    worked_out = []
+    header_fetch_parse = EmailPolicy.header_fetch_parse
+
+    def counted(self, name, value):
+        worked_out.append((name.lower(), value))
+        return header_fetch_parse(self, name, value)
+
+    raw = signed(_with_a_file())
+    monkeypatch.setattr(EmailPolicy, 'header_fetch_parse', counted)
+    payload = read(raw)
+    assert (payload['proof'], payload['attachment_names']) == ('recipient_signed', ['work.pdf'])
+    assert ('content-type', 'application/pdf') in worked_out
+    assert len(worked_out) == len(set(worked_out))
+
+
+def test_what_a_header_meant_is_not_kept_for_the_next_email():
+    first = readable_message(_with_a_file())
+    second = readable_message(_with_a_file())
+    assert first.policy.parsed is not second.policy.parsed
+    assert first.policy.parsed and second.policy.parsed
 
 
 def test_header_on_a_part_that_python_cannot_read_is_unreadable():
@@ -741,25 +799,34 @@ def test_checking_a_signature_logs_nothing(caplog):
 
 
 @pytest.mark.parametrize(
-    'html',
-    ['<div>' * 19_000 + 'Tuesday works.', '<p>a' * 24_000, 'a<br>' * 19_000],
+    'html,text',
+    [
+        ('<div>' * 19_000 + 'Tuesday works.', 'Tuesday works.'),
+        ('<p>a' * 24_000, 'a' * REPLY_PARSE_LIMIT),
+        ('a<br>' * 19_000, '\n'.join(['a'] * (REPLY_PARSE_LIMIT // 2))),
+    ],
     ids=['nested', 'unclosed', 'line breaks'],
 )
-def test_html_written_to_be_slow_to_read_is_read_quickly(html):
-    """Nested or repeated as far as the body limit allows; read in one pass, it takes a fraction of a second."""
+def test_html_is_read_without_changing_what_was_parsed(html, text, monkeypatch):
+    """
+    Taking an element out of the parsed HTML, or adding to one, takes time that grows with how many are beside or
+    inside it: seconds for HTML nested or repeated as far as the body limit allows.
+    """
+    for change in ('decompose', 'extract', 'append', 'insert', 'replace_with'):
+        monkeypatch.setattr(PageElement, change, Mock(side_effect=AssertionError(change)), raising=False)
+        monkeypatch.setattr(Tag, change, Mock(side_effect=AssertionError(change)), raising=False)
     raw = raw_email(body=html).replace(b'text/plain', b'text/html')
-    started = time.monotonic()
     payload = read(signed(raw))
-    assert time.monotonic() - started < 5
-    assert payload['proof'] == 'recipient_signed'
-    assert payload['text'].startswith(('Tuesday works.', 'a'))
+    assert (payload['proof'], payload['text']) == ('recipient_signed', text)
 
 
-def test_html_comments_are_not_text():
-    html = '<!DOCTYPE html><!-- a note --><p>Tuesday works.</p><![CDATA[kept]]>'
+def test_html_that_is_not_shown_is_not_text():
+    html = (
+        '<!DOCTYPE html><!-- a note --><p>Tuesday<br hidden> works.<br style="display: none">'
+        '<span hidden>unseen<br></span></p><![CDATA[a section]]>'
+    )
     raw = raw_email(body=html).replace(b'text/plain', b'text/html')
-    assert read(signed(raw))['text'].startswith('Tuesday works.')
-    assert 'a note' not in read(signed(raw))['text']
+    assert read(signed(raw))['text'] == 'Tuesday works.'
 
 
 def test_text_in_a_character_set_python_does_not_know_is_read():

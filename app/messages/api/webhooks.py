@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from urllib.parse import parse_qsl
+from urllib.parse import unquote_to_bytes
 
 from fastapi import APIRouter, Form, Header, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -29,6 +29,7 @@ MAX_INBOUND_POST_BYTES = 15 * 1024 * 1024
 # Mandrill posts one field. A body of millions of empty fields costs seconds and hundreds of megabytes to read
 # into a form, and anybody can post one: the signature can only be checked once the fields are known
 MAX_INBOUND_POST_FIELDS = 10
+FORM_DECODE_SLICE_BYTES = 1024 * 1024
 # an address a chat email gave out to reply to: a mailbox name, then a plus tag of 26 base32 characters. Only
 # TutorCruncher knows whose it is; an email for any other address is not worth a worker's time
 CHAT_REPLY_ADDRESS = re.compile(r'^[^+@\s]+\+[a-z2-7]{26}@', re.IGNORECASE)
@@ -106,9 +107,43 @@ async def mandrill_inbound_view(request: Request):
     return await run_in_threadpool(_queue_inbound_replies, body, signature)
 
 
+def _form_value(encoded: bytes) -> str:
+    """
+    One name or value of a form-encoded body, decoded. Python's own decoding splits the whole value at every
+    escape, which for a value of megabytes of escapes holds twenty times its size, before any signature has
+    been checked; this decodes a slice at a time. Bytes that are not UTF-8 raise `ValueError`.
+    """
+    encoded = encoded.replace(b'+', b' ')
+    decoded = []
+    start = 0
+    while start < len(encoded):
+        end = min(start + FORM_DECODE_SLICE_BYTES, len(encoded))
+        # an escape is three bytes ("%41"): never cut one in two
+        if end < len(encoded) and (escape := encoded.rfind(b'%', end - 2, end)) != -1:
+            end = escape
+        decoded.append(unquote_to_bytes(encoded[start:end]))
+        start = end
+    return b''.join(decoded).decode()
+
+
+def _form_fields(body: bytes) -> dict[str, str]:
+    """
+    The fields of a form-encoded POST body, as `urllib.parse.parse_qsl` reads them (blank values kept, the last
+    of a repeated name). More than `MAX_INBOUND_POST_FIELDS`, or bytes that are not UTF-8, raise `ValueError`.
+    """
+    if body.count(b'&') >= MAX_INBOUND_POST_FIELDS:
+        raise ValueError('too many fields')
+    fields = {}
+    for pair in body.split(b'&'):
+        if pair:
+            name, __, value = pair.partition(b'=')
+            fields[_form_value(name)] = _form_value(value)
+    return fields
+
+
 def _queue_inbound_replies(body: bytes, signature: str) -> str:
     try:
-        fields = dict(parse_qsl(body.decode(), keep_blank_values=True, max_num_fields=MAX_INBOUND_POST_FIELDS))
+        fields = _form_fields(body)
     except ValueError:
         # not text, or more fields than Mandrill posts: nothing Mandrill signed
         raise HTTP403('invalid signature')

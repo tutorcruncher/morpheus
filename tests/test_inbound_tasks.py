@@ -149,6 +149,22 @@ def test_error_while_posting_goes_to_sentry_and_is_not_raised(settings, monkeypa
     deliver_chat_reply.delay(payload())
     capture_exception.assert_called_once_with(error)
     assert worker_messages(caplog) == ['inbound reply 9f2c0e5d6c0c: not delivered, RuntimeError']
+    assert [record.levelname for record in caplog.records if record.name == 'worker'] == ['WARNING']
+
+
+def test_post_that_outlasts_the_time_limit_is_retried(settings, monkeypatch, retries, caplog):
+    monkeypatch.setattr(tasks, 'post_chat_reply', Mock(side_effect=SoftTimeLimitExceeded()))
+    deliver_chat_reply.delay(payload())
+    assert retries == [10, 60, 300, 900, 3600]
+    assert worker_messages(caplog) == [
+        'inbound reply 9f2c0e5d6c0c: not delivered after 6 tries, last failure SoftTimeLimitExceeded'
+    ]
+
+
+def test_post_waits_less_to_connect_than_for_an_answer(settings, dummy_state):
+    deliver_chat_reply.delay(payload())
+    (request,) = [request for request in dummy_state.log if request.url.path == TC2_PATH]
+    assert request.extensions['timeout'] == {'connect': 5, 'read': 20, 'write': 20, 'pool': 20}
 
 
 @pytest.mark.parametrize('how', ['delay', 'signature'])

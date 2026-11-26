@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Iterator
 from email.message import EmailMessage, MIMEPart
 
-from bs4 import BeautifulSoup, CData, MarkupResemblesLocatorWarning, NavigableString, Tag
+from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning, NavigableString, Tag
 from mailparser_reply import EmailReplyParser
 from mailparser_reply.constants import MAIL_LANGUAGES
 
@@ -51,12 +51,14 @@ def _visible_text(html: str) -> str:
             if element.name in BLOCK_ELEMENTS:
                 text.append('\n')
         elif isinstance(node, Tag):
-            if node.name == 'br':
+            if _is_hidden(node):
+                continue
+            elif node.name == 'br':
                 text.append('\n')
-            elif not _is_hidden(node):
+            else:
                 open_elements.append((node, iter(node.contents)))
-        elif type(node) in (NavigableString, CData):
-            # not a comment, a doctype or a processing instruction
+        elif type(node) is NavigableString:
+            # not a comment, a doctype, a processing instruction or a CDATA section, none of which is shown
             text.append(str(node))
     lines = [' '.join(line.split()) for line in ''.join(text).splitlines()]
     return '\n'.join(lines).strip()
