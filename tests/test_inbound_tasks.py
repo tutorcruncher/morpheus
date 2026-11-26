@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 import dns.exception
 import pytest
+from celery.exceptions import SoftTimeLimitExceeded
 
 from app.core.celery import celery_app
 from app.messages import tasks
@@ -124,16 +125,20 @@ def test_key_lookup_answered_on_a_later_try_sends_a_proof(settings, dummy_state,
     assert (posted['proof'], posted['proof_failure']) == ('recipient_signed', None)
 
 
-def test_error_while_reading_goes_to_sentry_and_is_not_raised(settings, dummy_server, monkeypatch, caplog):
+@pytest.mark.parametrize(
+    'error', [ValueError('could not read "Tuesday works" from client@example.org'), SoftTimeLimitExceeded()]
+)
+def test_error_while_reading_goes_to_sentry_and_is_not_raised(error, settings, dummy_server, monkeypatch, caplog):
     """An exception that leaves the task has its message logged by Celery and recorded by Logfire."""
-    error = ValueError('could not read "Tuesday works" from client@example.org')
     monkeypatch.setattr(tasks, 'read_reply', Mock(side_effect=error))
     capture_exception = Mock()
     monkeypatch.setattr(tasks.sentry_sdk, 'capture_exception', capture_exception)
     read(signed(raw_email()))
     capture_exception.assert_called_once_with(error)
     assert dummy_server.log == []
-    assert worker_messages(caplog) == ['inbound reply failed: ValueError']
+    assert worker_messages(caplog) == [f'inbound reply failed: {type(error).__name__}']
+    # a warning: an error would be a second Sentry event for the one failure
+    assert [record.levelname for record in caplog.records if record.name == 'worker'] == ['WARNING']
 
 
 def test_error_while_posting_goes_to_sentry_and_is_not_raised(settings, monkeypatch, caplog):
@@ -315,6 +320,20 @@ def test_event_from_reading_a_reply_keeps_a_message_of_our_own():
     frames = [('celery.app.trace', 'trace_task'), ('app.inbound.sender_proof', 'prove_sender')]
     event = before_send(sentry_event(frames), {})
     assert event == without_the_email(frames, 'could not read "Tuesday works"')
+
+
+def test_event_from_the_inbound_webhook_without_a_stack_is_sent_without_its_message():
+    event = {
+        'request': {'url': 'https://morpheus.example.com/webhook/mandrill/inbound/', 'data': 'the email'},
+        'exception': {'values': [{'type': 'ValueError', 'value': 'could not read "Tuesday works"'}]},
+    }
+    assert before_send(event, {}) == {'exception': {'values': [{'type': 'ValueError', 'value': '[Filtered]'}]}}
+
+
+def test_inbound_tasks_have_time_limits():
+    """They share worker children with every send, so neither may hold one for long."""
+    assert (read_inbound_reply.soft_time_limit, read_inbound_reply.time_limit) == (60, 90)
+    assert (deliver_chat_reply.soft_time_limit, deliver_chat_reply.time_limit) == (45, 60)
 
 
 def test_event_from_the_inbound_webhook_is_sent_without_the_request():

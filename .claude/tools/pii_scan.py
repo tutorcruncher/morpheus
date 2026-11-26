@@ -143,12 +143,15 @@ def load_denylist(path: Path | None = None) -> list[str]:
 
 
 def _email_hit(line: str) -> bool:
-    for m in EMAIL_RE.finditer(URL_CREDENTIAL_RE.sub('://', line)):
+    line = URL_CREDENTIAL_RE.sub('://', line)
+    for m in EMAIL_RE.finditer(line):
         address, domain = m.group(0).lower(), m.group(2).lower()
+        # a reserved name with more of a domain after it (`shop.example.` and then a real ending) is not under it
+        is_whole_domain = not re.match(r'\.[\w-]', line[m.end() :])
         if (
             address in ALLOWED_ADDRESSES
             or domain in ALLOWED_EMAIL_DOMAINS
-            or domain.endswith(RESERVED_EMAIL_DOMAIN_SUFFIXES)
+            or (is_whole_domain and domain.endswith(RESERVED_EMAIL_DOMAIN_SUFFIXES))
         ):
             continue
         return True

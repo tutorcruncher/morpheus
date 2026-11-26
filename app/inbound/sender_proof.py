@@ -68,6 +68,12 @@ PART_LINE = b'\n--'
 CONTENT_TYPE_LINE = re.compile(rb'^content-type:', re.IGNORECASE | re.MULTILINE)
 # both parsers hold every line of an email. A file at the size limit of a post from Mandrill is under 200,000
 RAW_LINES_LIMIT = 300_000
+# dkimpy joins the lines of a folded header one at a time, in time that grows with the square of their number
+# (measured on Python 3.12: 21 seconds for one header folded over 290,000 lines, and it reads the email twice).
+# The headers of real mail, signatures and delivery trail included, come to a few tens of kilobytes
+HEADERS_LIMIT_BYTES = 256 * 1024
+# the only signatures RFC 8301 lets a verifier accept: rsa-sha1 is not one
+SIGNATURE_ALGORITHMS = (b'rsa-sha256', b'ed25519-sha256')
 # dkimpy looks through every header once for each name a signature lists. Real signatures list under 40
 SIGNED_HEADER_NAMES_LIMIT = 100
 # dkimpy checks a signature in time that grows steeply with the size of the published key, and nothing can stop it
@@ -147,11 +153,12 @@ BOUNDED_HEADER_POLICY = _BoundedHeaderPolicy()  # ty:ignore[invalid-argument-typ
 
 def _is_cheap_to_parse(raw_message: bytes) -> bool:
     """
-    Whether Python's parser can read the email in a bounded time and memory: the number of parts it could have and
-    its lines are within their limits.
+    Whether both parsers can read the email in a bounded time and memory: its headers, the number of parts it
+    could have and its lines are within their limits.
     """
     return (
-        raw_message.count(PART_LINE) <= PART_LINES_LIMIT
+        len(headers_of(raw_message)) <= HEADERS_LIMIT_BYTES
+        and raw_message.count(PART_LINE) <= PART_LINES_LIMIT
         and len(CONTENT_TYPE_LINE.findall(raw_message)) <= PART_LINES_LIMIT
         and raw_message.count(b'\n') <= RAW_LINES_LIMIT
     )
@@ -208,7 +215,11 @@ def header_addresses(message: EmailMessage, name: str) -> list[str]:
         addresses = [address.addr_spec.lower() for address in header.addresses]
         as_written = next(value for raw_name, value in message.raw_items() if raw_name.lower() == name.lower())
         for text in (str(header), ''.join(as_written.splitlines())):
-            checked = [address.lower() for __, address in getaddresses([text], strict=True)]
+            try:
+                checked = [address.lower() for __, address in getaddresses([text], strict=True)]
+            except RecursionError:
+                # groups inside groups ("a:b:c:...") nest the second parser as deep as they go
+                raise ValueError(f'{name} header is nested too deeply') from None
             if addresses != checked:
                 raise ValueError(f'{name} header reads two ways')
         if not all(_is_address(address) for address in addresses):
@@ -244,11 +255,12 @@ def header_failure(message: EmailMessage) -> ProofFailure | None:
 def _dkim_txt(name: bytes, timeout: int) -> bytes | None:
     """
     The TXT record a signing key is published in. None when the domain publishes none under that name, or one over
-    `DKIM_KEY_RECORD_LIMIT_BYTES`, which dkimpy then treats as no key.
+    `DKIM_KEY_RECORD_LIMIT_BYTES`, which dkimpy then treats as no key. So is a name that cannot be looked up at
+    all (an empty or overlong label in the signature's selector): trying again would get the same.
     """
     try:
         answer = dns.resolver.resolve(name.decode(), 'TXT', lifetime=timeout)
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.exception.SyntaxError, dns.exception.FormError):
         return None
     except dns.exception.DNSException as e:
         raise DkimDnsError(type(e).__name__) from None
@@ -336,7 +348,8 @@ def prove_sender(
     reply_address = reply_address.lower()
     to_addresses = header_addresses(message, 'To')
     cc_addresses = header_addresses(message, 'Cc')
-    verifier = dkim.DKIM(raw_message, logger=DKIM_LOGGER, timeout=DNS_TIMEOUT_SECONDS)
+    # made when a signature first has to be verified: making it reads the whole email again
+    verifier = None
     failure = ProofFailure.NO_ALIGNED_SIGNATURE
     verified = 0
     # read as written, in the order dkimpy numbers them: Python's parser is not needed to read a signature
@@ -350,7 +363,9 @@ def prove_sender(
             continue
         signed_headers = [name.strip().lower() for name in tags.get(b'h', b'').decode(errors='replace').split(':')]
         expires = tags.get(b'x', b'').strip()
-        if b'l' in tags:
+        if tags.get(b'a', b'').strip().lower() not in SIGNATURE_ALGORITHMS:
+            failure = ProofFailure.SIGNATURE_INVALID
+        elif b'l' in tags:
             failure = ProofFailure.BODY_LENGTH_LIMITED
         elif 'from' not in signed_headers:
             failure = ProofFailure.FROM_NOT_SIGNED
@@ -369,6 +384,8 @@ def prove_sender(
             if verified == SIGNATURES_VERIFIED:
                 break
             verified += 1
+            if verifier is None:
+                verifier = dkim.DKIM(raw_message, logger=DKIM_LOGGER, timeout=DNS_TIMEOUT_SECONDS)
             try:
                 is_verified = verifier.verify(idx=index, dnsfunc=_dkim_txt)
             except dkim.DKIMException:

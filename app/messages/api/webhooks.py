@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Form, Header, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -25,6 +26,9 @@ INBOUND_EVENT = 'inbound'
 # Mandrill takes emails of up to 25 MB, and every email it posts here is held in Redis until a worker reads it.
 # A reply is a few kilobytes; one over this is not read.
 MAX_INBOUND_POST_BYTES = 15 * 1024 * 1024
+# Mandrill posts one field. A body of millions of empty fields costs seconds and hundreds of megabytes to read
+# into a form, and anybody can post one: the signature can only be checked once the fields are known
+MAX_INBOUND_POST_FIELDS = 10
 # an address a chat email gave out to reply to: a mailbox name, then a plus tag of 26 base32 characters. Only
 # TutorCruncher knows whose it is; an email for any other address is not worth a worker's time
 CHAT_REPLY_ADDRESS = re.compile(r'^[^+@\s]+\+[a-z2-7]{26}@', re.IGNORECASE)
@@ -83,7 +87,7 @@ async def mandrill_inbound_view(request: Request):
     Emails Mandrill received at chat reply addresses. Each is queued to be read by `read_inbound_reply`; nothing
     of an email is read or logged here.
 
-    The form is read from the request, not declared as `Form(...)` parameters: Logfire records the declared
+    The body is read from the request, not declared as `Form(...)` parameters: Logfire records the declared
     arguments of an endpoint, and this body is people's emails. Mandrill sends an email again when the answer
     is not 200, so only a POST that could succeed on another try is answered with anything else.
     """
@@ -95,15 +99,19 @@ async def mandrill_inbound_view(request: Request):
     if not content_length.isdigit() or int(content_length) > MAX_INBOUND_POST_BYTES:
         logger.warning('inbound post not read: it has no length or is over the size limit')
         return 'ok\n'
-    form = await request.form()
-    fields = {name: value for name, value in form.items() if isinstance(value, str)}
+    body = await request.body()
     signature = request.headers.get('x-mandrill-signature', '')
-    # checking the signature and reading the events take time that grows with the body, and queueing talks to
-    # Redis: none of it belongs on the event loop
-    return await run_in_threadpool(_queue_inbound_replies, fields, signature)
+    # reading the fields, checking the signature and reading the events take time that grows with the body, and
+    # queueing talks to Redis: none of it belongs on the event loop
+    return await run_in_threadpool(_queue_inbound_replies, body, signature)
 
 
-def _queue_inbound_replies(fields: dict[str, str], signature: str) -> str:
+def _queue_inbound_replies(body: bytes, signature: str) -> str:
+    try:
+        fields = dict(parse_qsl(body.decode(), keep_blank_values=True, max_num_fields=MAX_INBOUND_POST_FIELDS))
+    except ValueError:
+        # not text, or more fields than Mandrill posts: nothing Mandrill signed
+        raise HTTP403('invalid signature')
     sig_generated = _mandrill_signature(
         settings.mandrill_inbound_webhook_url, settings.mandrill_inbound_webhook_key, fields
     )

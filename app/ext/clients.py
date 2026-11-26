@@ -32,7 +32,9 @@ class ApiError(RuntimeError):
 
 _default_client = httpx.Client(timeout=30)
 
-CHAT_REPLY_TIMEOUT_SECONDS = 20
+# 20 seconds for TutorCruncher to answer. Connecting gets less: a host that does not answer at all should not
+# hold a worker as long as one that is working on its answer
+CHAT_REPLY_TIMEOUT = httpx.Timeout(20, connect=5)
 
 
 def post_chat_reply(payload: dict) -> httpx.Response:
@@ -47,7 +49,7 @@ def post_chat_reply(payload: dict) -> httpx.Response:
         default_settings.tc2_chat_reply_url,
         content=body,
         headers={'Content-Type': 'application/json', 'Webhook-Signature': signature},
-        timeout=CHAT_REPLY_TIMEOUT_SECONDS,
+        timeout=CHAT_REPLY_TIMEOUT,
     )
 
 

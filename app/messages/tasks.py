@@ -843,7 +843,14 @@ def purge_deleted_companies() -> int:
 INBOUND_DNS_RETRIES = 3
 INBOUND_DNS_RETRY_SECONDS = 120
 # how long after each failed post to TutorCruncher the next is made: about 1h20m in all, which covers a deploy
+# The last is as long as Celery's default visibility timeout on Redis, so a worker other than the one holding
+# that retry can be handed it too and the post made twice: TutorCruncher drops the second by its key.
 CHAT_REPLY_RETRYING = [10, 60, 300, 900, 3600]
+# These tasks share a queue and worker children with every email and SMS send. Reading an email is bounded by
+# the limits in `app.inbound`, and a post to TutorCruncher by its timeout; the limits here are for whatever
+# those miss. The soft one raises in the task, which reports it; the hard one ends the child.
+READ_REPLY_TIME_LIMITS = {'soft_time_limit': 60, 'time_limit': 90}
+DELIVER_REPLY_TIME_LIMITS = {'soft_time_limit': 45, 'time_limit': 60}
 PRIVATE_ARGS = '[Filtered]'
 
 
@@ -866,7 +873,11 @@ class _PrivateArgsTask(Task):
 # Neither task logs the reply address, the sender, the subject or the text, and neither lets an exception that
 # could quote the email leave it: the address posts to a chat as its owner, and the rest is what somebody wrote.
 @celery_app.task(
-    name='app.messages.tasks.read_inbound_reply', base=_PrivateArgsTask, bind=True, max_retries=INBOUND_DNS_RETRIES
+    name='app.messages.tasks.read_inbound_reply',
+    base=_PrivateArgsTask,
+    bind=True,
+    max_retries=INBOUND_DNS_RETRIES,
+    **READ_REPLY_TIME_LIMITS,
 )
 def read_inbound_reply(self: Task, raw_message: str, reply_address: str, received_at: str) -> None:
     """
@@ -883,8 +894,10 @@ def read_inbound_reply(self: Task, raw_message: str, reply_address: str, receive
     except Exception as e:
         # Not raised: Celery logs a failed task's exception message and Logfire records it on the task's span,
         # and a parser's message can quote the email. Sentry gets it through `before_send`, which filters it.
+        # Logged as a warning, as an error would be a second Sentry event for the one failure. `Exception`
+        # takes in the soft time limit.
         sentry_sdk.capture_exception(e)
-        main_logger.error('inbound reply failed: %s', type(e).__name__)
+        main_logger.warning('inbound reply failed: %s', type(e).__name__)
         return
     if payload is None:
         main_logger.info('inbound reply dropped: auto_reply')
@@ -897,6 +910,7 @@ def read_inbound_reply(self: Task, raw_message: str, reply_address: str, receive
     base=_PrivateArgsTask,
     bind=True,
     max_retries=len(CHAT_REPLY_RETRYING),
+    **DELIVER_REPLY_TIME_LIMITS,
 )
 def deliver_chat_reply(self: Task, payload: dict) -> None:
     """
@@ -914,7 +928,7 @@ def deliver_chat_reply(self: Task, payload: dict) -> None:
     except Exception as e:
         # not raised, for the reason given in `read_inbound_reply`
         sentry_sdk.capture_exception(e)
-        main_logger.error('inbound reply %s: not delivered, %s', key, type(e).__name__)
+        main_logger.warning('inbound reply %s: not delivered, %s', key, type(e).__name__)
         return
     else:
         if r.status_code == 200:
@@ -929,7 +943,8 @@ def deliver_chat_reply(self: Task, payload: dict) -> None:
             return
         elif r.status_code < 500:
             # 400 is a body TutorCruncher does not accept and 403 a signature it does not: the same post again
-            # would get the same answer
+            # would get the same answer. Its endpoint answers 200 or one of those; anything else under 500 is
+            # not it answering, and is not retried either
             main_logger.error('inbound reply %s: not delivered, TutorCruncher answered %s', key, r.status_code)
             return
         failure = f'status {r.status_code}'

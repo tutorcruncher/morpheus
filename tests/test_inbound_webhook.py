@@ -180,6 +180,22 @@ def test_events_that_are_not_emails_for_a_reply_address_are_left_out(cli: TestCl
     assert view_messages(caplog) == ['inbound post: 1 of 14 events queued']
 
 
+def test_post_of_more_fields_than_mandrill_sends_is_refused_unread(cli: TestClient, settings, queued):
+    """Read into a form, a body of empty fields costs far more than its size; it is refused at the eleventh."""
+    fields = {'mandrill_events': json.dumps([inbound(signed(raw_email()))]), **{f'f{n}': '' for n in range(10)}}
+    r = post_fields(cli, fields)
+    assert (r.status_code, r.json()) == (403, {'message': 'invalid signature'})
+    r = cli.post(URL, content=b'&' * 1_000_000, headers={**FORM, 'X-Mandrill-Signature': 'anything'})
+    assert (r.status_code, r.json()) == (403, {'message': 'invalid signature'})
+    queued.assert_not_called()
+
+
+def test_body_that_is_not_text_is_refused(cli: TestClient, settings, queued):
+    r = cli.post(URL, content=b'mandrill_events=\xff\xfe', headers={**FORM, 'X-Mandrill-Signature': 'anything'})
+    assert (r.status_code, r.json()) == (403, {'message': 'invalid signature'})
+    queued.assert_not_called()
+
+
 @pytest.mark.parametrize(
     'fields',
     [
@@ -232,7 +248,8 @@ def test_error_while_queueing_is_raised_so_mandrill_sends_the_emails_again(cli: 
 
 def test_webhook_logs_no_address_or_text(cli: TestClient, settings, caplog):
     caplog.set_level(logging.DEBUG, logger='views.webhooks')
-    post_events(cli, [inbound(signed(raw_email()))])
+    r = post_events(cli, [inbound(signed(raw_email()))])
+    assert (r.status_code, r.json()) == (200, 'ok\n')
     logged = '\n'.join(
         f'{record.getMessage()} {record.__dict__}' for record in caplog.records if 'views' in record.name
     )

@@ -2,6 +2,7 @@ import base64
 import hashlib
 import logging
 import string
+import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.policy import SMTP
@@ -10,6 +11,7 @@ from unittest.mock import Mock
 
 import dkim
 import dns.exception
+import dns.name
 import dns.resolver
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -20,6 +22,7 @@ from app.inbound.reply_text import body_text, latest_reply
 from app.inbound.sender_proof import (
     DKIM_KEY_RECORD_LIMIT_BYTES,
     HEADER_VALUE_LIMIT_BYTES,
+    HEADERS_LIMIT_BYTES,
     PART_LINES_LIMIT,
     RAW_LINES_LIMIT,
     SIGNED_HEADER_NAMES_LIMIT,
@@ -243,6 +246,19 @@ def test_from_headers_mail_apps_write_read_one_way(from_header):
     assert (payload['proof'], payload['from_address']) == ('recipient_signed', 'client@example.org')
 
 
+@pytest.mark.parametrize('from_header', ['client', 'Carla Client [Acme] <client@example.org>'])
+def test_from_that_one_parser_cannot_read_as_an_address_is_not_proven(from_header):
+    """A name alone is no address, and brackets in a name are read by one parser and not the other."""
+    payload = read(signed(raw_email(headers=email_headers(From=from_header))))
+    assert_not_proven(payload, 'from_not_one_address', from_address=None)
+
+
+def test_recipients_nested_too_deeply_to_read_are_not_proven(resolve):
+    payload = read(signed(raw_email(headers=email_headers(Cc='g:' * 1000))))
+    assert_not_proven(payload, 'from_not_one_address')
+    resolve.assert_not_called()
+
+
 def test_two_from_addresses_are_not_proven():
     headers = email_headers(From='client@example.org, attacker@evil.example')
     assert_not_proven(read(signed(raw_email(headers=headers))), 'from_not_one_address', from_address=None)
@@ -441,6 +457,25 @@ def test_expired_signature_is_not_proven(resolve):
     resolve.assert_not_called()
 
 
+def test_signature_made_with_sha1_is_not_proven(resolve):
+    raw = signed(raw_email(), signature_algorithm=b'rsa-sha1')
+    assert 'a=rsa-sha1' in raw
+    assert_not_proven(read(raw), 'signature_invalid')
+    resolve.assert_not_called()
+
+
+def test_email_is_read_by_the_signature_checker_only_when_a_signature_is_checked(monkeypatch):
+    """Making the checker reads the whole email again, so one with nothing to check does not pay for it."""
+    another_domains, not_bound = (
+        signed(raw_email(), domain='evil.example'),
+        signed(raw_email(), headers=('from', 'subject')),
+    )
+    monkeypatch.setattr('app.inbound.sender_proof.dkim.DKIM', Mock(side_effect=AssertionError('not needed')))
+    assert_not_proven(read(raw_email().decode()), 'no_aligned_signature')
+    assert_not_proven(read(another_domains), 'no_aligned_signature')
+    assert_not_proven(read(not_bound), 'not_bound_to_address')
+
+
 def test_signature_that_cannot_be_read_is_passed_over():
     raw = 'DKIM-Signature: not a signature\r\n' + raw_email().decode()
     assert_not_proven(read(raw), 'no_aligned_signature')
@@ -474,6 +509,13 @@ def test_published_key_over_the_size_limit_is_not_used(resolve):
     assert_not_proven(read(signed(raw_email())), 'signature_invalid')
 
 
+@pytest.mark.parametrize('error', [dns.name.EmptyLabel, dns.name.LabelTooLong, dns.name.NameTooLong])
+def test_key_name_that_cannot_be_looked_up_is_not_tried_again(error, resolve):
+    """As a selector with an empty or overlong label gives: the same lookup would fail the same way."""
+    resolve.side_effect = error
+    assert_not_proven(read(signed(raw_email())), 'signature_invalid')
+
+
 def test_key_lookup_with_no_answer_is_raised_to_be_tried_again(resolve):
     resolve.side_effect = dns.exception.Timeout
     with pytest.raises(DkimDnsError) as exc_info:
@@ -488,6 +530,24 @@ def test_key_lookup_with_no_answer_on_the_final_try_is_not_proven(resolve):
 
 
 # Size limits ----------------------------------------------------------------------------------------------------
+
+
+def test_headers_over_the_size_limit_are_unreadable(resolve):
+    """One header folded over thousands of lines, which the signature checker joins a line at a time."""
+    folded = '\r\n '.join(['x' * 60] * (HEADERS_LIMIT_BYTES // 60))
+    raw = signed(raw_email(headers=[*email_headers(), ('X-Folded', folded)]))
+    assert len(raw) > HEADERS_LIMIT_BYTES
+    assert_not_proven(read(raw), 'unreadable', from_address=None)
+    resolve.assert_not_called()
+
+
+def test_headers_near_the_size_limit_are_read_quickly():
+    folded = '\r\n '.join(['x' * 60] * (HEADERS_LIMIT_BYTES // 80))
+    raw = signed(raw_email(headers=[*email_headers(), ('X-Folded', folded)]))
+    assert HEADERS_LIMIT_BYTES * 0.7 < len(raw.partition('\r\n\r\n')[0]) < HEADERS_LIMIT_BYTES
+    started = time.monotonic()
+    assert read(raw)['proof'] == 'recipient_signed'
+    assert time.monotonic() - started < 5
 
 
 def test_header_python_reads_over_the_size_limit_is_unreadable(resolve):
@@ -678,6 +738,28 @@ def test_checking_a_signature_logs_nothing(caplog):
     assert read(signed(raw_email()))['proof'] == 'recipient_signed'
     assert [record.name for record in caplog.records if 'dkim' in record.name] == []
     assert 'example.org' not in caplog.text
+
+
+@pytest.mark.parametrize(
+    'html',
+    ['<div>' * 19_000 + 'Tuesday works.', '<p>a' * 24_000, 'a<br>' * 19_000],
+    ids=['nested', 'unclosed', 'line breaks'],
+)
+def test_html_written_to_be_slow_to_read_is_read_quickly(html):
+    """Nested or repeated as far as the body limit allows; read in one pass, it takes a fraction of a second."""
+    raw = raw_email(body=html).replace(b'text/plain', b'text/html')
+    started = time.monotonic()
+    payload = read(signed(raw))
+    assert time.monotonic() - started < 5
+    assert payload['proof'] == 'recipient_signed'
+    assert payload['text'].startswith(('Tuesday works.', 'a'))
+
+
+def test_html_comments_are_not_text():
+    html = '<!DOCTYPE html><!-- a note --><p>Tuesday works.</p><![CDATA[kept]]>'
+    raw = raw_email(body=html).replace(b'text/plain', b'text/html')
+    assert read(signed(raw))['text'].startswith('Tuesday works.')
+    assert 'a note' not in read(signed(raw))['text']
 
 
 def test_text_in_a_character_set_python_does_not_know_is_read():

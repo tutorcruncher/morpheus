@@ -2,15 +2,18 @@
 
 import re
 import warnings
+from collections.abc import Iterator
 from email.message import EmailMessage, MIMEPart
 
-from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
+from bs4 import BeautifulSoup, CData, MarkupResemblesLocatorWarning, NavigableString, Tag
 from mailparser_reply import EmailReplyParser
 from mailparser_reply.constants import MAIL_LANGUAGES
 
 # an email body is cut to this before anything parses it
 BODY_LIMIT = 100_000
 HIDDEN_STYLES = ('display:none', 'visibility:hidden')
+UNSHOWN_ELEMENTS = ('script', 'style', 'head', 'title')
+BLOCK_ELEMENTS = ('p', 'div', 'li', 'tr', 'blockquote')
 # what the parser that cuts the quoted email is given: its time grows with the square of a long line or a run of
 # blank lines. Twice the 4,000 characters of TutorCruncher's longest chat message: a reply longer than a chat
 # message is refused whatever follows it
@@ -18,27 +21,44 @@ REPLY_PARSE_LIMIT = 8000
 BLANK_LINES = re.compile(r'\n\s*\n(?:\s*\n)+')
 
 
+def _is_hidden(element: Tag) -> bool:
+    """Whether a mail app shows nothing of the element: it is not page content, or is marked or styled hidden."""
+    return (
+        element.name in UNSHOWN_ELEMENTS
+        or element.has_attr('hidden')
+        or any(style in ''.join(str(element.get('style') or '').lower().split()) for style in HIDDEN_STYLES)
+    )
+
+
 def _visible_text(html: str) -> str:
-    """The text of an HTML body that a mail app would show."""
+    """
+    The text of an HTML body that a mail app would show, with a new line at each line break and after each
+    block. The parsed tree is read in one pass and never changed: taking an element out of it, or adding to one,
+    takes time that grows with how many are beside or inside it, which an email written for that makes seconds.
+    """
     with warnings.catch_warnings():
         # an HTML part that is only a link or a file's name is still what the sender wrote
         warnings.simplefilter('ignore', MarkupResemblesLocatorWarning)
         soup = BeautifulSoup(html, 'html.parser')
-    for element in soup(['script', 'style', 'head', 'title']):
-        element.decompose()
-    for element in soup.find_all(hidden=True):
-        element.decompose()
-    for element in soup.find_all(style=True):
-        # an element inside one already removed has gone with it
-        if not element.decomposed and any(
-            style in ''.join(str(element['style']).lower().split()) for style in HIDDEN_STYLES
-        ):
-            element.decompose()
-    for line_break in soup.find_all('br'):
-        line_break.replace_with('\n')
-    for block in soup.find_all(['p', 'div', 'li', 'tr', 'blockquote']):
-        block.append('\n')
-    lines = [' '.join(line.split()) for line in soup.get_text().splitlines()]
+    text = []
+    # the elements being read, outermost first, each with what is left of its contents
+    open_elements: list[tuple[Tag, Iterator]] = [(soup, iter(soup.contents))]
+    while open_elements:
+        element, contents = open_elements[-1]
+        node = next(contents, None)
+        if node is None:
+            open_elements.pop()
+            if element.name in BLOCK_ELEMENTS:
+                text.append('\n')
+        elif isinstance(node, Tag):
+            if node.name == 'br':
+                text.append('\n')
+            elif not _is_hidden(node):
+                open_elements.append((node, iter(node.contents)))
+        elif type(node) in (NavigableString, CData):
+            # not a comment, a doctype or a processing instruction
+            text.append(str(node))
+    lines = [' '.join(line.split()) for line in ''.join(text).splitlines()]
     return '\n'.join(lines).strip()
 
 
