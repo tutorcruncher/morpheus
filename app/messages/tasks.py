@@ -13,8 +13,9 @@ from typing import Optional
 import chevron
 import httpx
 import redis as redis_lib
+import sentry_sdk
 from celery import Task
-from celery.exceptions import MaxRetriesExceededError
+from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 from chevron import ChevronError
 from phonenumbers import (
     NumberParseException,
@@ -34,7 +35,9 @@ from ua_parser.user_agent_parser import Parse as ParseUserAgent
 from app.core.celery import celery_app
 from app.core.config import settings
 from app.core.database import get_session
-from app.ext.clients import ApiError, Mandrill, MessageBird
+from app.ext.clients import ApiError, Mandrill, MessageBird, post_chat_reply
+from app.inbound.reply import read_reply
+from app.inbound.sender_proof import DkimDnsError
 from app.messages.models import DELETED_COMPANY_PREFIX, Company, Event, Link, Message, MessageGroup, MessageStatus
 from app.messages.schemas import (
     BaseWebhook,
@@ -834,3 +837,120 @@ def purge_deleted_companies() -> int:
         delete_company_messages.delay([company_id], 'sweep')
         main_logger.info('re-queued stranded purge for company=%s', company_id)
     return len(company_ids)
+
+
+# a reply whose signing key could not be looked up is read again this many times, this far apart
+INBOUND_DNS_RETRIES = 3
+INBOUND_DNS_RETRY_SECONDS = 120
+# how long after each failed post to TutorCruncher the next is made: about 1h20m in all, which covers a deploy
+# The last is as long as Celery's default visibility timeout on Redis, so a worker other than the one holding
+# that retry can be handed it too and the post made twice: TutorCruncher drops the second by its key.
+CHAT_REPLY_RETRYING = [10, 60, 300, 900, 3600]
+# These tasks share a queue and worker children with every email and SMS send. Reading an email is bounded by
+# the limits in `app.inbound`, and a post to TutorCruncher by its timeout; the limits here are for whatever
+# those miss. The soft one raises in the task, which reports it; the hard one ends the child.
+READ_REPLY_TIME_LIMITS = {'soft_time_limit': 60, 'time_limit': 90}
+DELIVER_REPLY_TIME_LIMITS = {'soft_time_limit': 45, 'time_limit': 60}
+PRIVATE_ARGS = '[Filtered]'
+
+
+class ChatReplyNotDelivered(Exception):
+    """A post to TutorCruncher that is tried again: it timed out, did not connect or was answered 5xx."""
+
+
+class _PrivateArgsTask(Task):
+    """
+    A task whose arguments are never written to a log. Celery sends the start of every task's arguments with it
+    (`argsrepr`) and puts that in the records it logs when the task is received, succeeds or fails, which the
+    Logfire handler forwards. Every way of queueing a task, a retry included, goes through `apply_async`.
+    """
+
+    def apply_async(self, args=None, kwargs=None, **options):  # ty:ignore[invalid-method-override]
+        options.update(argsrepr=PRIVATE_ARGS, kwargsrepr=PRIVATE_ARGS)
+        return super().apply_async(args, kwargs, **options)
+
+
+# Neither task logs the reply address, the sender, the subject or the text, and neither lets an exception that
+# could quote the email leave it: the address posts to a chat as its owner, and the rest is what somebody wrote.
+@celery_app.task(
+    name='app.messages.tasks.read_inbound_reply',
+    base=_PrivateArgsTask,
+    bind=True,
+    max_retries=INBOUND_DNS_RETRIES,
+    **READ_REPLY_TIME_LIMITS,
+)
+def read_inbound_reply(self: Task, raw_message: str, reply_address: str, received_at: str) -> None:
+    """
+    Read one email Mandrill received at a chat reply address, and queue what was read of it for TutorCruncher.
+    The email itself goes no further than this task: `deliver_chat_reply` is a second task so that a retried
+    post to TutorCruncher neither holds the email in the queue nor looks its signing key up again.
+    """
+    final_try = (self.request.retries or 0) >= INBOUND_DNS_RETRIES
+    try:
+        payload = read_reply(raw_message, reply_address, datetime.fromisoformat(received_at), final_try=final_try)
+    except DkimDnsError as e:
+        # its message is the name of the DNS error and nothing else
+        raise self.retry(exc=e, countdown=INBOUND_DNS_RETRY_SECONDS)
+    except Exception as e:
+        # Not raised: Celery logs a failed task's exception message and Logfire records it on the task's span,
+        # and a parser's message can quote the email. Sentry gets it through `before_send`, which filters it.
+        # Logged as a warning, as an error would be a second Sentry event for the one failure. `Exception`
+        # takes in the soft time limit.
+        sentry_sdk.capture_exception(e)
+        main_logger.warning('inbound reply failed: %s', type(e).__name__)
+        return
+    if payload is None:
+        main_logger.info('inbound reply dropped: auto_reply')
+    else:
+        deliver_chat_reply.delay(payload)
+
+
+@celery_app.task(
+    name='app.messages.tasks.deliver_chat_reply',
+    base=_PrivateArgsTask,
+    bind=True,
+    max_retries=len(CHAT_REPLY_RETRYING),
+    **DELIVER_REPLY_TIME_LIMITS,
+)
+def deliver_chat_reply(self: Task, payload: dict) -> None:
+    """
+    Post what `read_inbound_reply` read of one email to TutorCruncher, which decides whether it becomes a chat
+    message. TutorCruncher drops a repeat of the same `idempotency_key`, so a post is safe to make again.
+    """
+    key = str(payload.get('idempotency_key'))[:12]
+    if not settings.inbound_replies_set_up:
+        main_logger.error('inbound reply %s: not delivered, inbound replies are not set up', key)
+        return
+    try:
+        r = post_chat_reply(payload)
+    except (httpx.TransportError, SoftTimeLimitExceeded) as e:
+        # the soft time limit is TutorCruncher answering a little at a time for longer than any one read waits
+        failure = type(e).__name__
+    except Exception as e:
+        # not raised, for the reason given in `read_inbound_reply`
+        sentry_sdk.capture_exception(e)
+        main_logger.warning('inbound reply %s: not delivered, %s', key, type(e).__name__)
+        return
+    else:
+        if r.status_code == 200:
+            try:
+                answer = r.json()
+            except ValueError:
+                answer = None
+            if not isinstance(answer, dict):
+                answer = {}
+            outcome, reason = str(answer.get('outcome'))[:40], str(answer.get('reason') or '')[:40]
+            main_logger.info('inbound reply %s: outcome=%s reason=%s', key, outcome, reason)
+            return
+        elif r.status_code < 500:
+            # 400 is a body TutorCruncher does not accept and 403 a signature it does not: the same post again
+            # would get the same answer. Its endpoint answers 200 or one of those; anything else under 500 is
+            # not it answering, and is not retried either
+            main_logger.error('inbound reply %s: not delivered, TutorCruncher answered %s', key, r.status_code)
+            return
+        failure = f'status {r.status_code}'
+    retries = self.request.retries or 0
+    if retries >= len(CHAT_REPLY_RETRYING):
+        main_logger.error('inbound reply %s: not delivered after %s tries, last failure %s', key, retries + 1, failure)
+        return
+    raise self.retry(exc=ChatReplyNotDelivered(failure), countdown=CHAT_REPLY_RETRYING[retries])

@@ -62,19 +62,20 @@ Settings come from environment variables or `.env` (`app/core/config.py`, pydant
 | `app/worker.py` | Worker entry point: Sentry before fork; Logfire and the small DB pool after fork |
 | `app/common/auth.py` | `AdminAuth`, `UserSession` |
 | `app/common/api/errors.py` | `HTTP400`/`403`/`404`/`409`/`422` and the `{"message": ...}` error handler |
-| `app/ext/clients.py` | `Mandrill`, `MessageBird`, shared `_default_client` |
+| `app/ext/clients.py` | `Mandrill`, `MessageBird`, `post_chat_reply` (signed POST to TutorCruncher), shared `_default_client` |
 | `app/messages/models.py` | `Company`, `MessageGroup`, `Message`, `Event`, `Link`, send-method and status enums |
 | `app/messages/schemas.py` | Request and webhook models (`EmailSendModel`, `SmsSendModel`, `MandrillSingleWebhook`, `MessageBirdWebHook`, …) |
 | `app/messages/api/email.py` | `POST /send/email/` |
 | `app/messages/api/sms.py` | `POST /send/sms/`, `GET /validate/sms/`, `GET /billing/{method}/{company_code}/`, `_get_or_create_company` |
 | `app/messages/api/subaccounts.py` | Mandrill subaccount create and delete |
 | `app/messages/api/messages.py` | `/messages/{method}/` list, aggregation and detail views |
-| `app/messages/api/webhooks.py` | `/webhook/mandrill/`, `/webhook/messagebird/`, `/webhook/test/` |
+| `app/messages/api/webhooks.py` | `/webhook/mandrill/`, `/webhook/mandrill/inbound/`, `/webhook/messagebird/`, `/webhook/test/` |
 | `app/messages/api/common.py` | Index page and the `/l{token}` click redirect |
-| `app/messages/tasks.py` | Celery tasks: send, webhook status updates, click storage, aggregation refresh, deletes |
+| `app/messages/tasks.py` | Celery tasks: send, webhook status updates, click storage, aggregation refresh, deletes, `read_inbound_reply` and `deliver_chat_reply` |
+| `app/inbound/` | Reads an email received at a chat reply address: DKIM sender proof (`sender_proof.py`), the reply text (`reply_text.py`), what TutorCruncher is sent (`reply.py`) |
 | `app/render/` | Message rendering (chevron, mistune, libsass); also published as `morpheus-mail` |
 | `app/templates/`, `app/static/` | Jinja2 pages and static files |
-| `tests/conftest.py`, `tests/dummy_server.py` | Test fixtures and the mocked Mandrill / MessageBird routes |
+| `tests/conftest.py`, `tests/dummy_server.py` | Test fixtures and the mocked Mandrill / MessageBird / TutorCruncher routes |
 | `packaging/morpheus-mail/` | PyPI packaging for `app/render/` |
 
 ## Rules
@@ -87,6 +88,11 @@ Settings come from environment variables or `.env` (`app/core/config.py`, pydant
 - Get a session with `db: DBSession = Depends(get_db)`. On high-volume endpoints, call `db.close()`
   before slow work such as a Celery enqueue loop or template rendering (see `email.py`, `sms.py`,
   `common.py`; MORPHEUS-3DNG).
+- `/webhook/mandrill/inbound/` reads its form from the request (`await request.body()`), never from
+  `Form(...)` parameters, so Logfire never records it: the body is people's emails. Nothing of an
+  inbound email (reply address, sender, subject, text) is logged, and the two inbound tasks keep
+  their arguments out of Celery's log records (`_PrivateArgsTask`) and their exception messages
+  out of Sentry (`app/sentry/setup.py`).
 - Raise the classes in `app/common/api/errors.py`, not bare `HTTPException`; they produce the
   `{"message": ...}` body clients expect.
 - Protect TC2-facing endpoints with `AdminAuth` (the `Authorization` header must equal `AUTH_KEY`),

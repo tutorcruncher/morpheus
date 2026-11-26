@@ -1,4 +1,4 @@
-"""Sync httpx.MockTransport routes for Mandrill / Messagebird stand-in."""
+"""Sync httpx.MockTransport routes for Mandrill / Messagebird / TutorCruncher stand-in."""
 
 import json
 import re
@@ -134,6 +134,21 @@ def make_handler(state: DummyState):
                 {'id': '6a23b2037595620ca8459a3b00026003', 'recipients': {'totalCount': len(data['recipients'])}},
                 201,
             )
+
+        # TutorCruncher ----------------------------------
+        if path == '/tc2/comms/chat/email-reply/inbound/' and method == 'POST':
+            text = data.get('text') or ''
+            if '__tc2_timeout__' in text:
+                raise httpx.ReadTimeout('simulated timeout', request=request)
+            elif '__tc2_500__' in text:
+                return _text('', 500)
+            elif '__tc2_403__' in text:
+                return _text('', 403)
+            elif '__tc2_400__' in text:
+                return _json({'message': 'invalid'}, 400)
+            elif '__tc2_not_json__' in text:
+                return _text('ok')
+            return _json({'outcome': 'posted', 'reason': ''})
 
         return _text(f'no dummy route for {method} {path}', 404)
 

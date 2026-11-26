@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import logging
 
@@ -29,6 +31,26 @@ class ApiError(RuntimeError):
 
 
 _default_client = httpx.Client(timeout=30)
+
+# 20 seconds for TutorCruncher to answer. Connecting gets less: a host that does not answer at all should not
+# hold a worker as long as one that is working on its answer
+CHAT_REPLY_TIMEOUT = httpx.Timeout(20, connect=5)
+
+
+def post_chat_reply(payload: dict) -> httpx.Response:
+    """
+    Post what was read of one email received at a chat reply address to TutorCruncher. The body is serialised
+    once and those bytes are signed (`Webhook-Signature`: hex HMAC-SHA256 with the shared key), so what
+    TutorCruncher verifies is exactly what it received. Any status is returned; the caller decides on a retry.
+    """
+    body = json.dumps(payload).encode()
+    signature = hmac.new(default_settings.tc2_chat_reply_key.encode(), body, hashlib.sha256).hexdigest()
+    return _default_client.post(
+        default_settings.tc2_chat_reply_url,
+        content=body,
+        headers={'Content-Type': 'application/json', 'Webhook-Signature': signature},
+        timeout=CHAT_REPLY_TIMEOUT,
+    )
 
 
 class ApiSession:

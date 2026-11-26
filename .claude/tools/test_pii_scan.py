@@ -41,6 +41,14 @@ def test_allowlisted_addresses_pass():
     assert pii_scan.scan_text(text, 'x.py') == []
 
 
+def test_reserved_domains_pass_and_lookalikes_hit():
+    text = "to = ['a@reply.example.com', 'b@mail.example.org', 'c@sub.example.net', 'd@evil.example']"
+    assert pii_scan.scan_text(text, 'x.py') == []
+    # a real domain that only ends in the same letters, or has a reserved name in front of it
+    for domain in ('notexample.com', 'example.com.co', 'mail.notexample', 'shop.example.xn--p1ai', 'a.example.com2'):
+        assert [h.rule for h in pii_scan.scan_text('person' + AT + domain, 'x.py')] == ['email'], domain
+
+
 def test_package_version_pins_pass():
     assert pii_scan.scan_text('https://cdn.jsdelivr.net/npm/xterm' + AT + '5.3.0/lib/xterm.js', 'x.sh') == []
     assert [h.rule for h in pii_scan.scan_text('person' + AT + 'mail.co.uk', 'x.py')] == ['email']

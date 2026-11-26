@@ -32,6 +32,10 @@ dependencies = [
     "jinja2==3.1.6",
     "pydantic[email]",
     "mistune==3.3.4",
+    "dkimpy==1.1.8",
+    "dnspython==2.9.2",
+    "mail-parser-reply==1.36",
+    "beautifulsoup4==4.15.0",
 ]
 
 [dependency-groups]
@@ -48,6 +52,7 @@ dev = [
     "dirty-equals==0.11",
     "ipython==9.17.1",
     "toml==0.10.2",
+    "cryptography==50.0.2",
 ]
 
 [tool.ruff]
