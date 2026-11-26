@@ -1,9 +1,10 @@
 """What somebody wrote in an email they sent in reply to one of ours."""
 
 import re
+import warnings
 from email.message import EmailMessage, MIMEPart
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
 from mailparser_reply import EmailReplyParser
 from mailparser_reply.constants import MAIL_LANGUAGES
 
@@ -19,7 +20,10 @@ BLANK_LINES = re.compile(r'\n\s*\n(?:\s*\n)+')
 
 def _visible_text(html: str) -> str:
     """The text of an HTML body that a mail app would show."""
-    soup = BeautifulSoup(html, 'html.parser')
+    with warnings.catch_warnings():
+        # an HTML part that is only a link or a file's name is still what the sender wrote
+        warnings.simplefilter('ignore', MarkupResemblesLocatorWarning)
+        soup = BeautifulSoup(html, 'html.parser')
     for element in soup(['script', 'style', 'head', 'title']):
         element.decompose()
     for element in soup.find_all(hidden=True):

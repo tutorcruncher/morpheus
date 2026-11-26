@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     mandrill_url: str = 'https://mandrillapp.com/api/1.0'
     mandrill_webhook_key: str = ''
 
+    # Replies by email to TutorCruncher chat emails. Mandrill posts each email received at a reply address to
+    # /webhook/mandrill/inbound/, signed with the inbound route's own key, and what Morpheus could prove of it
+    # is posted to `tc2_chat_reply_url`, signed with `tc2_chat_reply_key`. While any of the three is unset the
+    # webhook answers 200 and does nothing, so Mandrill can save the route before its key exists.
+    mandrill_inbound_webhook_key: str = ''
+    tc2_chat_reply_url: str = ''
+    tc2_chat_reply_key: str = ''
+
     messagebird_key: str = ''
     messagebird_url: str = 'https://rest.messagebird.com'
 
@@ -82,6 +90,14 @@ class Settings(BaseSettings):
     @property
     def mandrill_webhook_url(self) -> str:
         return f'https://{self.host_name}/webhook/mandrill/'
+
+    @property
+    def mandrill_inbound_webhook_url(self) -> str:
+        return f'https://{self.host_name}/webhook/mandrill/inbound/'
+
+    @property
+    def inbound_replies_set_up(self) -> bool:
+        return bool(self.mandrill_inbound_webhook_key and self.tc2_chat_reply_url and self.tc2_chat_reply_key)
 
     @property
     def pg_host(self) -> str:

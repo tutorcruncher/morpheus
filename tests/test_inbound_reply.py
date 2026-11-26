@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 import string
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -664,6 +665,19 @@ def test_html_hidden_inside_hidden_html_is_left_out():
     html = '<div style="display:none"><span style="display:none">preview</span></div><p>Tuesday works.</p>'
     raw = raw_email(body=html).replace(b'text/plain', b'text/html')
     assert read(signed(raw))['text'] == 'Tuesday works.'
+
+
+@pytest.mark.parametrize('html', ['https://example.com/notes', 'notes.txt'])
+def test_html_that_is_only_a_link_or_a_file_name_is_read(html):
+    raw = raw_email(body=html).replace(b'text/plain', b'text/html')
+    assert read(signed(raw))['text'] == html
+
+
+def test_checking_a_signature_logs_nothing(caplog):
+    caplog.set_level(logging.DEBUG)
+    assert read(signed(raw_email()))['proof'] == 'recipient_signed'
+    assert [record.name for record in caplog.records if 'dkim' in record.name] == []
+    assert 'example.org' not in caplog.text
 
 
 def test_text_in_a_character_set_python_does_not_know_is_read():

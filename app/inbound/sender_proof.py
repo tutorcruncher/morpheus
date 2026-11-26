@@ -4,6 +4,7 @@ from the email as it arrived, and the signature is verified here against the key
 """
 
 import hashlib
+import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -74,6 +75,13 @@ SIGNED_HEADER_NAMES_LIMIT = 100
 DKIM_KEY_RECORD_LIMIT_BYTES = 1500
 # how far an email's signed Date may be from when it reached us, under the rule that reads the Date
 SIGNED_DATE_WINDOW = timedelta(hours=24)
+
+
+# dkimpy logs the signature it is checking, the headers it hashed and the domain a key lookup failed for. This
+# logger is handed to it in place of its own and its level is above any dkimpy logs at, whatever level the
+# application logs at.
+DKIM_LOGGER = logging.getLogger('app.inbound.dkim')
+DKIM_LOGGER.setLevel(logging.CRITICAL + 1)
 
 
 class ProofRule(str, Enum):
@@ -328,7 +336,7 @@ def prove_sender(
     reply_address = reply_address.lower()
     to_addresses = header_addresses(message, 'To')
     cc_addresses = header_addresses(message, 'Cc')
-    verifier = dkim.DKIM(raw_message, timeout=DNS_TIMEOUT_SECONDS)
+    verifier = dkim.DKIM(raw_message, logger=DKIM_LOGGER, timeout=DNS_TIMEOUT_SECONDS)
     failure = ProofFailure.NO_ALIGNED_SIGNATURE
     verified = 0
     # read as written, in the order dkimpy numbers them: Python's parser is not needed to read a signature
