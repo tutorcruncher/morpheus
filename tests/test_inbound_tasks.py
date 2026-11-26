@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from unittest.mock import Mock
 
 import dns.exception
@@ -11,6 +12,7 @@ import pytest
 from app.core.celery import celery_app
 from app.messages import tasks
 from app.messages.tasks import CHAT_REPLY_RETRYING, deliver_chat_reply, read_inbound_reply
+from app.sentry.setup import before_send, init_sentry
 from tests.test_inbound_reply import PUBLISHED_KEY, REPLY_ADDRESS, SENT_SUBJECT, email_headers, raw_email, signed
 
 TC2_PATH = '/tc2/comms/chat/email-reply/inbound/'
@@ -245,3 +247,140 @@ def test_log_lines_hold_no_address_subject_or_text(settings, resolve, retries, c
     assert 'inbound reply' in logged
     for private in ('reply+', 'reply.example.com', 'client@', 'example.org', 'Tuesday', 'unread messages'):
         assert private not in logged, private
+
+
+# Sentry ---------------------------------------------------------------------------------------------------------
+
+
+def sentry_event(frames: list[tuple[str, str]], url: str | None = None) -> dict:
+    """An event as Sentry builds one for an exception raised through `frames`, each a module and a function."""
+    event = {
+        'exception': {
+            'values': [
+                {
+                    'type': 'HeaderParseError',
+                    'value': 'could not read "Tuesday works"',
+                    'stacktrace': {
+                        'frames': [
+                            {'module': module, 'function': function, 'vars': {'raw': 'the email'}}
+                            for module, function in frames
+                        ]
+                    },
+                }
+            ]
+        },
+    }
+    if url is not None:
+        event['request'] = {'url': url, 'data': {'mandrill_events': 'the email'}}
+    return event
+
+
+def without_the_email(frames: list[tuple[str, str]], value: str) -> dict:
+    return {
+        'exception': {
+            'values': [
+                {
+                    'type': 'HeaderParseError',
+                    'value': value,
+                    'stacktrace': {'frames': [{'module': module, 'function': function} for module, function in frames]},
+                }
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    'ours',
+    [
+        ('app.inbound.reply', 'read_reply'),
+        ('app.inbound', 'anything'),
+        ('app.messages.tasks', 'read_inbound_reply'),
+        ('app.messages.tasks', 'deliver_chat_reply'),
+        ('app.messages.api.webhooks', 'mandrill_inbound_view'),
+        ('app.messages.api.webhooks', '_queue_inbound_replies'),
+    ],
+)
+def test_event_from_reading_a_reply_is_sent_without_the_email(ours):
+    frames = [('celery.app.trace', 'trace_task'), ours, ('email.parser', 'parsestr')]
+    assert before_send(sentry_event(frames), {}) == without_the_email(frames, '[Filtered]')
+
+
+@pytest.mark.parametrize('raised_in', ['encodings.utf_8', 'httpx._client', 'tests.test_inbound_tasks', ''])
+def test_event_from_reading_a_reply_loses_the_message_of_any_code_but_ours(raised_in):
+    frames = [('app.messages.tasks', 'read_inbound_reply'), (raised_in, 'decode')]
+    assert before_send(sentry_event(frames), {}) == without_the_email(frames, '[Filtered]')
+
+
+def test_event_from_reading_a_reply_keeps_a_message_of_our_own():
+    frames = [('celery.app.trace', 'trace_task'), ('app.inbound.sender_proof', 'prove_sender')]
+    event = before_send(sentry_event(frames), {})
+    assert event == without_the_email(frames, 'could not read "Tuesday works"')
+
+
+def test_event_from_the_inbound_webhook_is_sent_without_the_request():
+    """Raised before any of our own frames, as by the form parser: only the path says what the event holds."""
+    frames = [('starlette.routing', 'app'), ('json.decoder', 'decode')]
+    event = before_send(sentry_event(frames, url='https://morpheus.example.com/webhook/mandrill/inbound/?a=b'), {})
+    assert event == without_the_email(frames, '[Filtered]')
+
+
+@pytest.mark.parametrize(
+    'frames,url',
+    [
+        ([('app.messages.tasks', 'send_email'), ('email.parser', 'parsestr')], None),
+        ([('app.messages.api.webhooks', 'mandrill_webhook_view')], 'https://morpheus.example.com/webhook/mandrill/'),
+        ([('app.inbounds', 'other')], 'https://morpheus.example.com/webhook/mandrill/inbound/more/'),
+    ],
+)
+def test_other_events_keep_their_request_and_variables(frames, url):
+    event = sentry_event(frames, url=url)
+    assert before_send(sentry_event(frames, url=url), {}) == event
+
+
+@pytest.mark.parametrize('event', [{}, {'message': 'inbound reply failed: ValueError'}, {'exception': None}])
+def test_event_without_an_exception_is_left_alone(event):
+    assert before_send(dict(event), {}) == event
+
+
+def test_sentry_is_set_up_to_filter_events_and_never_send_task_arguments(settings, monkeypatch):
+    monkeypatch.setattr(settings, 'sentry_dsn', 'https://example@sentry.io/1')
+    init = Mock()
+    monkeypatch.setattr('sentry_sdk.init', init)
+    init_sentry()
+    assert init.call_args.kwargs['send_default_pii'] is False
+    assert init.call_args.kwargs['before_send'] is before_send
+
+
+def test_failed_task_reaches_sentry_without_the_email(settings, monkeypatch):
+    """The real SDK, with a transport that keeps the events: arguments, variables and the message are all gone."""
+    import sentry_sdk
+    from sentry_sdk.transport import Transport
+
+    sent = []
+
+    class KeepEvents(Transport):
+        def capture_envelope(self, envelope):
+            sent.extend(item.payload.json for item in envelope.items if item.type == 'event')
+
+    def read_reply(raw, *args, **kwargs):
+        # the email package raises a ValueError that quotes the start of the email
+        return parsedate_to_datetime(raw[:40])
+
+    monkeypatch.setattr(tasks, 'read_reply', read_reply)
+    monkeypatch.setattr(settings, 'sentry_dsn', 'https://example@sentry.io/1')
+    with sentry_sdk.isolation_scope(), sentry_sdk.new_scope():
+        client = sentry_sdk.Client(
+            dsn=settings.sentry_dsn, transport=KeepEvents, send_default_pii=False, before_send=before_send
+        )
+        sentry_sdk.get_current_scope().set_client(client)
+        read(signed(raw_email()))
+        client.flush()
+    assert len(sent) >= 1
+    for event in sent:
+        text = json.dumps(event)
+        for private in ('reply+', 'client@example.org', 'Tuesday', 'DKIM-Signature', 'unread messages'):
+            assert private not in text, private
+    (exception,) = [e for event in sent for e in (event.get('exception') or {}).get('values', [])]
+    assert (exception['type'], exception['value']) == ('ValueError', '[Filtered]')
+    assert exception['stacktrace']['frames'][-1]['module'] == 'email.utils'
+    assert all('vars' not in frame for frame in exception['stacktrace']['frames'])
